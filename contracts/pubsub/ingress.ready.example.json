@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "trace_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "tenant_id": "t_acme9k2l1mn4",
+  "store_id": "s_acme0001a4b7",
+  "source_id": "shopify_pos_v2",
+  "bronze_ref": "a1b2c3d4-e5f6-4a5b-9c0d-1e2f3a4b5c6d",
+  "gcs_uri": "gs://ithina-bronze-raw/tenant/t_acme9k2l1mn4/source/shopify_pos_v2/yyyy=2026/mm=05/dd=27/f47ac10b-58cc-4372-a567-0e02b2c3d479.csv",
+  "received_ts": "2026-05-27T14:32:18.123Z",
+  "replay": false
+}
