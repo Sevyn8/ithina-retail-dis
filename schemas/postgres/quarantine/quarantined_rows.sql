@@ -13,7 +13,7 @@
 -- topic published by services/streaming-consumer on per-row failure.
 --
 -- Read by:
---   - services/dis-api, for the tenant-facing quarantine console (rows view).
+--   - services/dis-ui-server, for the tenant-facing quarantine console (rows view).
 --   - Ops investigation queries.
 --
 -- ----------------------------------------------------------------------------
@@ -86,8 +86,8 @@ CREATE TABLE quarantine.quarantined_rows (
         ON DELETE RESTRICT,
 
     CONSTRAINT fk_qr_store
-        FOREIGN KEY (store_id)
-        REFERENCES identity_mirror.stores (store_id)
+        FOREIGN KEY (tenant_id, store_id)
+        REFERENCES identity_mirror.stores (tenant_id, store_id)
         ON DELETE RESTRICT,
 
     CONSTRAINT fk_qr_mapping_version

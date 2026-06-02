@@ -24,7 +24,7 @@ ithina-dis/
 ├── Makefile                 # common dev commands (make test/lint/build)
 │
 ├── docs/                    # architecture docs, ADRs, runbooks, slices, API specs
-├── services/                # containerised services (eleven, one per dir; see §2)
+├── services/                # containerised services (twelve, one per dir; see §2)
 ├── libs/                    # shared Python libraries (nine; see §3)
 ├── ui/                      # DIS UI (TypeScript/React, single container)
 ├── schemas/                 # SQL DDL + dbt models for Cloud SQL and BQ
@@ -40,7 +40,7 @@ ithina-dis/
 
 ## 2. Services
 
-One subdirectory per deployable service. Eleven in total; six ship in v1.0, the others are designed-for but deferred.
+One subdirectory per deployable service. Twelve in total; seven ship in v1.0 (six backend services plus `dis-ui` frontend), the others are designed-for but deferred.
 
 ### services/receiver-api/
 
@@ -105,8 +105,10 @@ services/receiver-api/            # API/webhook ingress receiver (deferred, not 
 
 ### services/csv-ingest-worker/
 
+The Phase 1 signed-URL endpoint lives in `services/dis-ui-server/` as a handler (per `decisions.md` D36), not here. This service is the GCS-event-triggered worker that runs the heavy work after the upload lands in GCS.
+
 ```
-services/csv-ingest-worker/     # manual CSV upload receiver (v1.0)
+services/csv-ingest-worker/       # GCS-event-triggered CSV ingest worker (Phase 2 of CSV upload; v1.0)
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml
@@ -116,12 +118,8 @@ services/csv-ingest-worker/     # manual CSV upload receiver (v1.0)
 ├── src/
 │   └── csv_ingest_worker/
 │       ├── __init__.py
-│       ├── main.py
+│       ├── main.py             # Pub/Sub subscriber entrypoint
 │       ├── config.py
-│       │
-│       ├── handlers/
-│       │   ├── __init__.py
-│       │   └── upload.py       # POST /upload: issues signed URL, returns to caller
 │       │
 │       ├── notifications/      # GCS object-finalized event handler
 │       │   ├── __init__.py
@@ -130,7 +128,7 @@ services/csv-ingest-worker/     # manual CSV upload receiver (v1.0)
 │       ├── enrichment/         # runs on notification, before bronze write
 │       │   ├── __init__.py
 │       │   ├── identity.py     # call Identity Service resolve_from_upload
-│       │   ├── trace.py
+│       │   ├── trace.py        # read trace_id from GCS path; this service does NOT mint trace_ids
 │       │   └── pii.py          # tokenize PII before any persisted reference
 │       │
 │       ├── preflight/          # DuckDB-driven CSV pre-flight after upload completes
@@ -140,8 +138,9 @@ services/csv-ingest-worker/     # manual CSV upload receiver (v1.0)
 │       │
 │       ├── sinks/
 │       │   ├── __init__.py
-│       │   ├── bronze.py       # write metadata row (post-notification)
-│       │   └── pubsub.py       # publish ingress.ready
+│       │   ├── bronze.py       # write metadata row
+│       │   ├── pubsub.py       # publish ingress.ready
+│       │   └── quarantine.py   # publish to quarantine topic on preflight failure
 │       │
 │       └── clients/
 │           ├── __init__.py
@@ -151,20 +150,19 @@ services/csv-ingest-worker/     # manual CSV upload receiver (v1.0)
 │   ├── unit/
 │   │   ├── test_preflight.py
 │   │   ├── test_enrichment.py
-│   │   ├── test_handlers.py
+│   │   ├── test_idempotency.py
 │   │   └── test_notification_handler.py
 │   ├── integration/
 │   │   ├── conftest.py
-│   │   ├── test_signed_url_issue.py
 │   │   ├── test_object_finalized_flow.py
 │   │   ├── test_csv_malformed.py
-│   │   └── test_csv_too_large.py
+│   │   ├── test_csv_too_large.py
+│   │   └── test_csv_empty.py
 │   └── fixtures/
 │       └── csvs/               # sample CSVs (good, malformed, edge cases)
 │
 ├── scripts/
-│   ├── run-local.sh
-│   └── upload-local.sh
+│   └── run-local.sh
 │
 └── deploy/
     ├── service.yaml
@@ -619,6 +617,18 @@ services/nightly-batch/           # daily BQ export + retention eviction (v1.0)
     └── README.md
 ```
 
+### services/dis-ui/
+
+The DIS frontend application. Single containerized service hosting the user-facing UI (tenant + ops surfaces). Auth via Customer Master. Calls one backend: `dis-ui-server`.
+
+**Status:** scaffolding placeholder (v1.0). Stack, build tooling, and folder layout chosen in build-guide Slice 19 (DIS UI foundation). Until that slice runs, this directory only reserves the service slot.
+
+```
+services/dis-ui/                  # DIS frontend application (v1.0; structure decided in Slice 19)
+├── CLAUDE.md
+└── README.md
+```
+
 ### services/dis-ui-server/
 
 ```
@@ -642,6 +652,7 @@ services/dis-ui-server/                 # BFF for DIS UI; hosts onboarding sub-m
 │       │
 │       ├── handlers/           # one per DIS UI sub-module (FastAPI routers)
 │       │   ├── __init__.py
+│       │   ├── upload_session.py  # Phase 1 of CSV upload: signed PUT URL issuance (D36)
 │       │   ├── sample_upload.py
 │       │   ├── onboarding_review.py
 │       │   ├── mapping_crud.py

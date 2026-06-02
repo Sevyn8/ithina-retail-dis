@@ -80,8 +80,18 @@ CREATE TABLE identity_mirror.stores (
         -- When DIS last refreshed this row from CM.
 
     -- ---------- Primary key ----------
+    -- NOTE: the composite PK (tenant_id, store_id) enforces tenant-scoped FK
+    -- integrity — canonical.* / staging.* / bronze / quarantine declare
+    -- composite FKs on (tenant_id, store_id), guaranteeing a row's store
+    -- belongs to its tenant. The separate uq_ims_store_id UNIQUE below keeps
+    -- store_id globally unique (UUIDv7) and provides the supporting index for
+    -- store_id-only lookups (e.g. identity-service resolve paths).
     CONSTRAINT pk_ims
-        PRIMARY KEY (store_id),
+        PRIMARY KEY (tenant_id, store_id),
+
+    -- ---------- Global uniqueness ----------
+    CONSTRAINT uq_ims_store_id
+        UNIQUE (store_id),
 
     -- ---------- Foreign key ----------
     CONSTRAINT fk_ims_tenant

@@ -10,7 +10,7 @@
 -- Read by:
 --   - services/daily-compute on the slow/bootstrap path when yesterday's
 --     signal_history row is missing in Cloud SQL.
---   - services/dis-api for tenant-facing historical analytics queries.
+--   - services/dis-ui-server for tenant-facing historical analytics queries.
 --   - DIS analytics consumers (ROOS-side; future).
 --   - DIS engineering for ad-hoc ops investigations.
 --

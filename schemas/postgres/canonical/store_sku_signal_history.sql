@@ -31,8 +31,8 @@
 --
 -- 1. Schemas exist: canonical, identity_mirror.
 -- 2. uuidv7() function installed.
--- 3. Target FK tables exist: identity_mirror.tenants_known,
---    identity_mirror.stores_known.
+-- 3. Target FK tables exist: identity_mirror.tenants,
+--    identity_mirror.stores.
 -- 4. Apply this DDL.
 -- 5. Set up partition-creation job (creates next day's partition daily).
 --
@@ -40,7 +40,7 @@
 -- Dependencies
 -- ----------------------------------------------------------------------------
 --   - schema: canonical
---   - schema: identity_mirror, with tables tenants_known, stores_known
+--   - schema: identity_mirror, with tables tenants, stores
 --   - function: uuidv7()
 -- ============================================================================
 
@@ -113,11 +113,11 @@ CREATE TABLE canonical.store_sku_signal_history (
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_sssh_tenant
         FOREIGN KEY (tenant_id)
-        REFERENCES identity_mirror.tenants_known (tenant_id),
+        REFERENCES identity_mirror.tenants (tenant_id),
 
     CONSTRAINT fk_sssh_store
-        FOREIGN KEY (store_id)
-        REFERENCES identity_mirror.stores_known (store_id),
+        FOREIGN KEY (tenant_id, store_id)
+        REFERENCES identity_mirror.stores (tenant_id, store_id),
 
     -- ---------- Check constraints ----------
     CONSTRAINT ck_sssh_velocity_7day_non_negative
@@ -211,10 +211,10 @@ COMMENT ON COLUMN canonical.store_sku_signal_history.as_of_date IS
 'Partition key. The date these signals describe, not the date the compute job ran. A row with as_of_date = 2026-05-27 was typically computed on 2026-05-28.';
 
 COMMENT ON COLUMN canonical.store_sku_signal_history.tenant_id IS
-'Tenant owning this row. FK to identity_mirror.tenants_known. RLS scopes every read and write by this column.';
+'Tenant owning this row. FK to identity_mirror.tenants. RLS scopes every read and write by this column.';
 
 COMMENT ON COLUMN canonical.store_sku_signal_history.store_id IS
-'Store this signal row pertains to. FK to identity_mirror.stores_known.';
+'Store this signal row pertains to. FK to identity_mirror.stores.';
 
 COMMENT ON COLUMN canonical.store_sku_signal_history.store_sku_current_position_id IS
 'Soft cross-reference to canonical.store_sku_current_position.id at compute time. Not a FK: lifecycle independence (signal history outlives current_position rows) and bootstrap (a new SKU''s first signal may be written before current_position exists). NULL when not available.';

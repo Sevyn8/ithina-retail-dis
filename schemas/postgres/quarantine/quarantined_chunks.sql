@@ -17,14 +17,14 @@
 -- failure (and by receivers on pre-ingest PII failure).
 --
 -- Read by:
---   - services/dis-api, for the tenant-facing quarantine console.
+--   - services/dis-ui-server, for the tenant-facing quarantine console.
 --   - Ops investigation queries.
 --
 -- ----------------------------------------------------------------------------
 -- RLS: enabled and forced
 -- ----------------------------------------------------------------------------
 -- Tenant-identifiable data. Quarantine drainer SETs app.tenant_id per row
--- before insert. dis-api SETs it for tenant queries.
+-- before insert. dis-ui-server SETs it for tenant queries.
 --
 -- ----------------------------------------------------------------------------
 -- Dependencies
@@ -79,8 +79,8 @@ CREATE TABLE quarantine.quarantined_chunks (
         ON DELETE RESTRICT,
 
     CONSTRAINT fk_qc_store
-        FOREIGN KEY (store_id)
-        REFERENCES identity_mirror.stores (store_id)
+        FOREIGN KEY (tenant_id, store_id)
+        REFERENCES identity_mirror.stores (tenant_id, store_id)
         ON DELETE RESTRICT,
 
     -- ---------- Check constraints ----------
@@ -171,7 +171,7 @@ CREATE POLICY tenant_isolation
 -- ----------------------------------------------------------------------------
 
 COMMENT ON TABLE quarantine.quarantined_chunks IS
-'One row per ingress event that failed entirely (no canonical rows produced). Written by services/quarantine-drainer from the quarantine Pub/Sub topic. Read by services/dis-api for the tenant-facing quarantine console. Tenant-isolated via RLS.';
+'One row per ingress event that failed entirely (no canonical rows produced). Written by services/quarantine-drainer from the quarantine Pub/Sub topic. Read by services/dis-ui-server for the tenant-facing quarantine console. Tenant-isolated via RLS.';
 
 COMMENT ON COLUMN quarantine.quarantined_chunks.id IS
 'Surrogate PK. UUIDv7. Referenced by the quarantine UI to fetch failure detail.';

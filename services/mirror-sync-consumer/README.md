@@ -18,7 +18,7 @@ DB-pull persists past launch as a reconciliation mechanism even after Pub/Sub go
 **Process — Pub/Sub mode.**
 - Receive event; ack-extend if processing time approaches deadline.
 - Dispatch by `entity` type to the corresponding sync function (`sync/tenants.py` or `sync/stores.py`).
-- For `created` and `updated`: upsert into `identity_mirror.tenants_known` or `stores_known` with `source_ts` as conflict-resolution key (older events don't overwrite newer).
+- For `created` and `updated`: upsert into `identity_mirror.tenants` or `stores` with `source_ts` as conflict-resolution key (older events don't overwrite newer).
 - For `deactivated`: soft-delete via `is_active = false` (do not hard-delete; canonical rows may still reference).
 - Emit audit event with `trace_id` derived from event metadata.
 - Ack message on successful commit.
@@ -37,7 +37,7 @@ DB-pull persists past launch as a reconciliation mechanism even after Pub/Sub go
 **Process — DB-pull mode.**
 - Open a read-only session against Customer Master's Postgres.
 - Read `tenants` and `stores` tables in full (or by `updated_at` watermark on subsequent runs).
-- For each row: upsert into `identity_mirror.tenants_known` or `stores_known` using the same sync functions Pub/Sub mode uses (`sync/tenants.py`, `sync/stores.py`).
+- For each row: upsert into `identity_mirror.tenants` or `stores` using the same sync functions Pub/Sub mode uses (`sync/tenants.py`, `sync/stores.py`).
 - Apply soft-delete semantics for any row whose Customer Master state is inactive.
 - Emit audit events at run start and run completion (one per entity type); emit per-row events only on failure to keep audit volume bounded.
 
@@ -75,8 +75,8 @@ services/mirror-sync-consumer/
 │       │
 │       ├── sync/               # shared upsert logic for both modes
 │       │   ├── __init__.py
-│       │   ├── tenants.py      # upsert tenants_known
-│       │   └── stores.py       # upsert stores_known (soft-delete via is_active)
+│       │   ├── tenants.py      # upsert tenants
+│       │   └── stores.py       # upsert stores (soft-delete via is_active)
 │       │
 │       └── sinks/
 │           ├── __init__.py

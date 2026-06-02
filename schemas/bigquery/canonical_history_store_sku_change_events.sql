@@ -14,7 +14,7 @@
 -- Read by:
 --   - services/daily-compute on the slow/bootstrap path (stock_age_days from
 --     INVENTORY RECEIPT events; unit_cost_trend_30day from COST events).
---   - services/dis-api for tenant-facing historical analytics.
+--   - services/dis-ui-server for tenant-facing historical analytics.
 --   - DIS analytics consumers (ROOS-side; future).
 --   - DIS engineering for ad-hoc ops investigations.
 --

@@ -7,7 +7,7 @@
 -- in gcs_uri. Bronze does NOT carry payload bytes.
 --
 -- Written by:
---   - Receivers (services/receiver-csv-upload, receiver-api, receiver-csv-erp,
+--   - Receivers (services/csv-ingest-worker, receiver-api, receiver-csv-erp,
 --     receiver-reverse-api). The receiver inserts with processing_status =
 --     'RECEIVED' or 'PUBLISHED' after Pub/Sub publish completes.
 --   - Streaming consumer (services/streaming-consumer). UPDATEs
@@ -17,7 +17,7 @@
 -- Read by:
 --   - Streaming consumer: fetches gcs_uri to read the payload.
 --   - Quarantine drainer: looks up event metadata for quarantine rows.
---   - dis-api ingress-history handler: tenant-facing view of submissions.
+--   - dis-ui-server ingress-history handler: tenant-facing view of submissions.
 --   - Ops dashboards: processing_status counts, throughput, errors.
 --   - Replay tooling: reconstructs events from gcs_uri + metadata.
 --
@@ -27,7 +27,7 @@
 -- This table contains tenant-identifiable data (per-tenant ingress history).
 -- Tenant operators viewing their own ingress logs must not see other tenants'
 -- events. Receivers SET LOCAL app.tenant_id after auth; streaming consumer
--- SET LOCAL app.tenant_id per event; dis-api SET LOCAL for tenant queries.
+-- SET LOCAL app.tenant_id per event; dis-ui-server SET LOCAL for tenant queries.
 --
 -- ----------------------------------------------------------------------------
 -- Phase 0 migration order
@@ -100,8 +100,8 @@ CREATE TABLE bronze.data_ingress_events (
         ON DELETE RESTRICT,
 
     CONSTRAINT fk_bdie_store
-        FOREIGN KEY (store_id)
-        REFERENCES identity_mirror.stores (store_id)
+        FOREIGN KEY (tenant_id, store_id)
+        REFERENCES identity_mirror.stores (tenant_id, store_id)
         ON DELETE RESTRICT,
 
     -- ---------- Check constraints ----------

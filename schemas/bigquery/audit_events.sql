@@ -7,7 +7,7 @@
 -- telemetry for a given trace_id across services.
 --
 -- Written by:
---   - services/receiver-csv-upload, receiver-api, receiver-csv-erp,
+--   - services/csv-ingest-worker, receiver-api, receiver-csv-erp,
 --     receiver-reverse-api (RECEIVED, PII_TOKENIZED, BRONZE_WRITTEN,
 --     INGRESS_PUBLISHED).
 --   - services/streaming-consumer (MAPPING_LOOKED_UP, IDENTITY_VALIDATED,
@@ -15,10 +15,10 @@
 --     CANONICAL_WRITTEN, QUARANTINED).
 --   - services/daily-compute (SIGNAL_COMPUTED).
 --   - services/nightly-batch (BQ_EXPORTED, PARTITION_DROPPED).
---   - services/quarantine-drainer, dis-api, mirror-sync-consumer.
+--   - services/quarantine-drainer, dis-ui-server, mirror-sync-consumer.
 --
 -- Read by:
---   - services/dis-api audit handler (tenant-facing trace lookup).
+--   - services/dis-ui-server audit handler (tenant-facing trace lookup).
 --   - DIS engineering for ops investigations.
 --   - dbt source-freshness checks on pipeline health.
 --
@@ -62,7 +62,7 @@
 --    When an ingress event is replayed (e.g., after a mapping fix), the
 --    streaming consumer reprocesses with potentially the same trace_id but
 --    new audit-event ids. The audit table accumulates two (or more) sequences
---    for the same data_ingress_event_id. dis-api's audit handler shows all
+--    for the same data_ingress_event_id. dis-ui-server's audit handler shows all
 --    events ordered by event_timestamp; same data_ingress_event_id may have
 --    multiple runs. Not a bug; expected behavior.
 --
@@ -118,7 +118,7 @@
 --    Pub/Sub for at-least-once delivery and bursting buffer.
 --
 -- C. Replay pass identifier. When replay produces parallel audit sequences,
---    dis-api currently orders by event_timestamp to show both runs. A
+--    dis-ui-server currently orders by event_timestamp to show both runs. A
 --    replay_pass_id column would simplify "show me only the latest replay"
 --    queries. Not v1.
 --
@@ -132,7 +132,7 @@
 -- ----------------------------------------------------------------------------
 --   - dataset: audit (must exist)
 --   - emitter: libs/dis-core BqClient (or a libs/dis-audit lib if it grows)
---   - reader:  services/dis-api audit handler; dbt source-freshness tests
+--   - reader:  services/dis-ui-server audit handler; dbt source-freshness tests
 -- ============================================================================
 
 
@@ -155,7 +155,7 @@ CREATE TABLE `audit.audit_events`
     data_ingress_event_id           STRING               OPTIONS(description="Reference to bronze.data_ingress_events.id. NULL for events outside the ingress lifecycle (e.g., scheduled jobs like daily-compute and nightly-batch)."),
 
     -- ---------- Stage identification (cluster keys 2-3) ----------
-    service_name                    STRING      NOT NULL OPTIONS(description="The DIS service that emitted this event. Cluster key 2. Vocabulary: receiver_csv_upload, receiver_api, receiver_csv_erp, receiver_reverse_api, streaming_consumer, quarantine_drainer, daily_compute, nightly_batch, dis_api, mirror_sync_consumer."),
+    service_name                    STRING      NOT NULL OPTIONS(description="The DIS service that emitted this event. Cluster key 2. Vocabulary: csv_ingest_worker, receiver_api, receiver_csv_erp, receiver_reverse_api, streaming_consumer, quarantine_drainer, daily_compute, nightly_batch, dis_ui_server, mirror_sync_consumer."),
     service_version                 STRING               OPTIONS(description="Version of the service that emitted (e.g., git SHA, semantic version). For ops forensics and replay debugging."),
     stage                           STRING      NOT NULL OPTIONS(description="The pipeline stage. Cluster key 3. Vocabulary: RECEIVED, PII_TOKENIZED, BRONZE_WRITTEN, INGRESS_PUBLISHED, MAPPING_LOOKED_UP, IDENTITY_VALIDATED, PRE_MAPPING_VALIDATED, MAPPING_EXECUTED, POST_MAPPING_VALIDATED, CANONICAL_WRITTEN, QUARANTINED, SIGNAL_COMPUTED, BQ_EXPORTED, PARTITION_DROPPED, etc. Documented per service."),
 

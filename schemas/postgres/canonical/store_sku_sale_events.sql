@@ -30,8 +30,8 @@
 --
 -- 1. Schemas exist: canonical, identity_mirror, config.
 -- 2. uuidv7() function installed.
--- 3. Target FK tables exist: identity_mirror.tenants_known,
---    identity_mirror.stores_known, config.source_mappings.
+-- 3. Target FK tables exist: identity_mirror.tenants,
+--    identity_mirror.stores, config.source_mappings.
 -- 4. canonical.tax_treatment_enum exists (created by the
 --    store_sku_current_position DDL, or here if applied first).
 -- 5. Apply this DDL.
@@ -41,7 +41,7 @@
 -- Dependencies
 -- ----------------------------------------------------------------------------
 --   - schema: canonical
---   - schema: identity_mirror, with tables tenants_known, stores_known
+--   - schema: identity_mirror, with tables tenants, stores
 --   - schema: config, with table source_mappings
 --   - function: uuidv7()
 --   - type:     canonical.tax_treatment_enum
@@ -155,11 +155,11 @@ CREATE TABLE canonical.store_sku_sale_events (
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_ssse_tenant
         FOREIGN KEY (tenant_id)
-        REFERENCES identity_mirror.tenants_known (tenant_id),
+        REFERENCES identity_mirror.tenants (tenant_id),
 
     CONSTRAINT fk_ssse_store
-        FOREIGN KEY (store_id)
-        REFERENCES identity_mirror.stores_known (store_id),
+        FOREIGN KEY (tenant_id, store_id)
+        REFERENCES identity_mirror.stores (tenant_id, store_id),
 
     CONSTRAINT fk_ssse_mapping_version
         FOREIGN KEY (mapping_version_id)
@@ -318,10 +318,10 @@ COMMENT ON COLUMN canonical.store_sku_sale_events.event_date IS
 'Partition key. DATE derived from source_sale_timestamp::date at UTC. CHECK constraint enforces the derivation. Cheap to drop a partition for eviction.';
 
 COMMENT ON COLUMN canonical.store_sku_sale_events.tenant_id IS
-'Tenant owning this row. FK to identity_mirror.tenants_known. RLS scopes every read and write by this column.';
+'Tenant owning this row. FK to identity_mirror.tenants. RLS scopes every read and write by this column.';
 
 COMMENT ON COLUMN canonical.store_sku_sale_events.store_id IS
-'Store where the sale occurred. FK to identity_mirror.stores_known.';
+'Store where the sale occurred. FK to identity_mirror.stores.';
 
 COMMENT ON COLUMN canonical.store_sku_sale_events.sku_id IS
 'SKU identifier as received from the source. Same trimming/casing normalization rules as in store_sku_current_position.';

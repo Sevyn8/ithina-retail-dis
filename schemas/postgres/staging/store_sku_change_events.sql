@@ -91,8 +91,8 @@
 --
 -- 1. Schemas exist: canonical, identity_mirror, config.
 -- 2. uuidv7() function installed.
--- 3. Target FK tables exist: identity_mirror.tenants_known,
---    identity_mirror.stores_known, config.source_mappings.
+-- 3. Target FK tables exist: identity_mirror.tenants,
+--    identity_mirror.stores, config.source_mappings.
 -- 4. Apply this DDL.
 -- 5. Set up partition-creation job.
 --
@@ -100,7 +100,7 @@
 -- Dependencies
 -- ----------------------------------------------------------------------------
 --   - schema: canonical
---   - schema: identity_mirror, with tables tenants_known, stores_known
+--   - schema: identity_mirror, with tables tenants, stores
 --   - schema: config, with table source_mappings
 --   - function: uuidv7()
 -- ============================================================================
@@ -208,11 +208,11 @@ CREATE TABLE staging.store_sku_change_events (
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_st_ssce_tenant
         FOREIGN KEY (tenant_id)
-        REFERENCES identity_mirror.tenants_known (tenant_id),
+        REFERENCES identity_mirror.tenants (tenant_id),
 
     CONSTRAINT fk_st_ssce_store
-        FOREIGN KEY (store_id)
-        REFERENCES identity_mirror.stores_known (store_id),
+        FOREIGN KEY (tenant_id, store_id)
+        REFERENCES identity_mirror.stores (tenant_id, store_id),
 
     CONSTRAINT fk_st_ssce_mapping_version
         FOREIGN KEY (mapping_version_id)
@@ -341,10 +341,10 @@ COMMENT ON COLUMN staging.store_sku_change_events.event_date IS
 'Partition key. DATE derived from source_event_timestamp::date at UTC. CHECK constraint enforces the derivation.';
 
 COMMENT ON COLUMN staging.store_sku_change_events.tenant_id IS
-'Tenant owning this row. FK to identity_mirror.tenants_known. RLS scopes every read and write.';
+'Tenant owning this row. FK to identity_mirror.tenants. RLS scopes every read and write.';
 
 COMMENT ON COLUMN staging.store_sku_change_events.store_id IS
-'Store where the change occurred. FK to identity_mirror.stores_known.';
+'Store where the change occurred. FK to identity_mirror.stores.';
 
 COMMENT ON COLUMN staging.store_sku_change_events.store_sku_current_position_id IS
 'Soft cross-reference to staging.store_sku_current_position.id at write time. Not a FK: lifecycle independence and bootstrap. NULL when not available.';

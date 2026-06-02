@@ -292,3 +292,30 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 - **Pre-seed identity_mirror with a hand-written SQL script for local; build a separate Cloud SQL sync for cloud.** Rejected: two mechanisms for the same job. The DB-pull tool serves local and cloud identically.
 - **Block all dependent slices until Customer Master emits `identity.changed`.** Rejected: cross-team blocking. CM's emit work is on its own timeline; DIS development cannot pause that long.
 - **Direct Postgres FK across instances.** Rejected upfront (D11): physically impossible.
+
+---
+
+### D36 CSV upload — Phase 1 is a dis-ui-server endpoint, not a separate receiver service; Phase 2 ships as `csv-ingest-worker`
+
+**Decision.** The CSV upload flow is split into two operational halves:
+1. **Phase 1 (synchronous, UI-driven).** Lives as an endpoint inside `dis-ui-server` (e.g. `POST /v1/upload-sessions`). Validates the Customer Master session, generates `trace_id`, builds the canonical GCS path via `libs/dis-storage`, returns a short-lived signed PUT URL, emits audit.
+2. **Phase 2 (asynchronous, GCS-event-driven).** Lives as a standalone worker service `services/csv-ingest-worker/`. Triggered by GCS object-finalized notifications. Runs DuckDB preflight, PII tokenization, bronze metadata write, `ingress.ready` publish, audit emission, idempotency.
+
+**Why.**
+- The DIS UI is the only initiator of CSV upload Phase 1. Having a separate `receiver-csv-upload` service for this means the browser talks to two backends (dis-ui-server for everything else + receiver for upload start). That defeats the purpose of having a BFF (D26).
+- Phase 1 is small: auth + trace_id + signed-URL issuance. It doesn't merit a separate deployable; folding it into dis-ui-server as an endpoint is the right size.
+- Phase 2 is genuinely different: long-running, large payloads, event-triggered, retries on failure, scales with data volume rather than UI concurrency. It belongs on its own scaling path as a worker, not a request-receiving service. Renaming it `csv-ingest-worker` reflects its actual nature (queue consumer, not HTTP receiver).
+
+**Scope of this decision.**
+- Applies only to CSV-upload because the UI itself is the data source.
+- Other receivers stay as their own services: API/webhook, ERP CSV POST, reverse-API pull. None of these are UI-initiated; each has its own auth profile, trigger, and scaling shape.
+
+**Implications.**
+- `services/receiver-csv-upload/` is renamed to `services/csv-ingest-worker/`; its scope shrinks to Phase 2 only.
+- `services/dis-ui-server/` gains an `upload_session` handler (a new sub-module). Build-guide Slice 8 lands the handler in dis-ui-server, not in a receiver service.
+- The frontend talks to one backend (dis-ui-server) for all UI flows including starting a CSV upload.
+- Identity Service `resolve_from_upload(upload_id)` is still used; called by the `csv-ingest-worker` in Phase 2 when the GCS notification fires (the upload session ID is encoded in the GCS object path).
+
+**Alternatives considered.**
+- **Keep `receiver-csv-upload` as a separate service for Phase 1.** Rejected: forces the UI to know two backend URLs and duplicates Customer Master auth integration. The "per-channel receiver" pattern is correct when the channel has its own auth and trigger profile; CSV-upload-from-UI is just dis-ui-server's data-ingest counterpart, not a separate channel.
+- **Merge Phase 2 into dis-ui-server as well.** Rejected: Phase 2 is async, event-triggered, and CPU-heavy (DuckDB preflight on multi-MB CSVs). Coupling its scaling and process model to a UI BFF is wrong.

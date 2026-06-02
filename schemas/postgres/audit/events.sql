@@ -10,18 +10,18 @@
 -- schema lives at schemas/bigquery/audit_events.sql and mirrors this one.
 --
 -- Written by:
---   - services/receiver-csv-upload, receiver-api, receiver-csv-erp,
+--   - services/csv-ingest-worker, receiver-api, receiver-csv-erp,
 --     receiver-reverse-api (RECEIVED, PII_TOKENIZED, BRONZE_WRITTEN,
 --     INGRESS_PUBLISHED).
 --   - services/streaming-consumer (MAPPING_LOOKED_UP, IDENTITY_VALIDATED,
 --     PRE_MAPPING_VALIDATED, MAPPING_EXECUTED, POST_MAPPING_VALIDATED,
 --     CANONICAL_WRITTEN, QUARANTINED).
 --   - services/daily-compute (SIGNAL_COMPUTED).
---   - services/quarantine-drainer, dis-api, mirror-sync-consumer.
+--   - services/quarantine-drainer, dis-ui-server, mirror-sync-consumer.
 --   - services/nightly-batch (BQ_EXPORTED, PARTITION_DROPPED) — Phase 3.
 --
 -- Read by:
---   - services/dis-api audit handler (tenant-facing trace lookup).
+--   - services/dis-ui-server audit handler (tenant-facing trace lookup).
 --   - DIS engineering for ops investigations.
 --
 -- ----------------------------------------------------------------------------
@@ -29,7 +29,7 @@
 -- ----------------------------------------------------------------------------
 -- This table contains tenant-identifiable data. Tenant operators viewing
 -- their own audit trail must not see other tenants'. Emitters SET LOCAL
--- app.tenant_id per event; dis-api SET LOCAL for tenant queries.
+-- app.tenant_id per event; dis-ui-server SET LOCAL for tenant queries.
 --
 -- ----------------------------------------------------------------------------
 -- Audit volume model (Option B)
@@ -187,7 +187,7 @@ CREATE TABLE audit.events (
 CREATE INDEX ix_audit_events_trace_id
     ON audit.events (trace_id);
 
--- Tenant-scoped time-range queries from dis-api.
+-- Tenant-scoped time-range queries from dis-ui-server.
 CREATE INDEX ix_audit_events_tenant_time
     ON audit.events (tenant_id, event_timestamp DESC)
     WHERE tenant_id IS NOT NULL;

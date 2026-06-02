@@ -295,11 +295,20 @@ Personal identifiers (phone, email, loyalty_id, PAN, Aadhaar, and other fields p
 
 This section describes each major module at a high level: what it is, what it does, and the role it plays. Implementation details (libraries, schemas, code) are deliberately omitted; those belong in module-level design docs.
 
-### 4.1 Receivers
-**What it is.** A set of containerized services, one per ingress channel (API/webhook, manual CSV upload via DIS UI, per-tenant ERP CSV POST endpoint, external-API puller). In v1.0 only csv-upload ships; the other three are designed for but deferred.
-**Role.** The system's boundary. Authenticates the caller, attaches identity (`tenant_id`, `store_id`) and tracing (`trace_id`), **tokenizes PII fields (`decisions.md` D24)**, persists the raw payload to GCS and a metadata-only enriched chunk record to bronze Postgres, and notifies the pipeline by publishing to Pub/Sub `ingress.ready`. Receivers are permissive: they accept anything structurally valid and let the pipeline handle semantic validation.
-**Why it exists separately.** Channels differ in auth and parsing, but they all converge on the same downstream contract. Splitting per-channel keeps each receiver simple and lets channels be deployed and scaled independently.
-**Auth posture.** API/webhook and reverse-API: machine credentials (bearer token, API key, mTLS). CSV manual upload: Customer Master session token forwarded from dis-ui-server. ERP CSV POST: per-tenant API key or mTLS. All identity is resolved via the Identity Service after auth (`decisions.md` D2).
+### 4.1 Receivers and the CSV-upload worker
+**What it is.** The system's ingress surface. v1.0 ships **CSV upload via DIS UI** in two operational halves:
+- **Phase 1 — `upload_session` endpoint inside `dis-ui-server`.** A synchronous handler called by the DIS UI to start an upload. Validates the user's Customer Master session, resolves identity, mints `trace_id`, builds the canonical GCS path via `libs/dis-storage`, and returns a 15-minute signed PUT URL. No bronze write, no Pub/Sub publish.
+- **Phase 2 — `csv-ingest-worker` service.** A Pub/Sub-subscribed worker triggered by GCS object-finalized notifications when the tenant's PUT completes. Runs DuckDB structural preflight, PII tokenization, bronze metadata write via `libs/dis-rls`, `ingress.ready` publish, and audit emission. Reads (never mints) `trace_id` from the GCS object path.
+
+Future channels (API/webhook, per-tenant ERP CSV POST, external-API puller) each ship as their own receiver service. All deferred for v1.0.
+
+**Role.** Whichever the channel, the ingress surface authenticates the caller (or runs under an already-authenticated context, for the dis-ui-server endpoint), attaches identity (`tenant_id`, `store_id`) and tracing (`trace_id`), **tokenizes PII fields (`decisions.md` D24)** when applicable, persists the raw payload to GCS and a metadata-only enriched chunk record to bronze Postgres, and notifies the pipeline by publishing to Pub/Sub `ingress.ready`. The ingress surface is permissive: it accepts anything structurally valid and lets the pipeline handle semantic validation.
+
+**Why the CSV-upload split (`decisions.md` D36).** The DIS UI is the only initiator of CSV upload Phase 1. Spinning up a separate `receiver-csv-upload` service for what amounts to "validate session + mint trace_id + sign GCS URL" would force the UI to talk to two backends and duplicate the Customer Master auth integration. Folding Phase 1 into `dis-ui-server` keeps the BFF promise (D26): one URL the UI calls. Phase 2 stays a separate service because it has a genuinely different shape: event-triggered (not request-response), CPU-heavy (DuckDB preflight on multi-MB CSVs), scales with data volume rather than UI concurrency, and retries on transient failure. Calling Phase 2 a "worker" (not a "receiver") reflects its operational nature: queue consumer, not HTTP request handler.
+
+**Why future channels each get their own receiver service.** API/webhook, ERP CSV POST, and reverse-API pull each have distinct auth profiles (machine credentials, per-tenant API keys, endpoint-config-bound identity), distinct triggers (push vs. pull), and distinct rate profiles. Splitting per-channel keeps each receiver simple and lets channels be deployed and scaled independently. CSV-upload is the outlier because it's UI-initiated and trivially small in Phase 1.
+
+**Auth posture.** CSV upload Phase 1 (`dis-ui-server` endpoint): Customer Master session token, verified by `dis-ui-server`'s `auth/` module. CSV upload Phase 2 (worker): no caller to authenticate; identity is inherited from the upload session via `Identity Service.resolve_from_upload`. API/webhook and reverse-API: machine credentials (bearer token, API key, mTLS). ERP CSV POST: per-tenant API key or mTLS. All identity is resolved via the Identity Service after auth (`decisions.md` D2).
 
 ### 4.2 Tenant/Store Identity Service
 **What it is.** A small containerized service backed by an in-memory or Redis cache, sitting in front of **Customer Master** (the Auth0-integrated identity system; see §2.8).
@@ -413,9 +422,9 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 
 ### 4.17 dis-ui-server (BFF for DIS UI)
 **What it is.** The single backend-for-frontend service the DIS UI calls. Per-sub-module handlers; one Customer Master integration; never writes to canonical.
-**Role.** Serves every read and write the DIS UI needs. Reads from Cloud SQL read replica, config schema, quarantine schema, BigQuery audit. Writes only to `config.source_mappings` (mapping CRUD, onboarding promotion) and publishes `ingress.resubmit` (resubmit action from quarantine console) and `mapping.changed` (mapping CRUD and promotions). Hosts the onboarding sub-module in-process (`decisions.md` D16).
-**Handlers.** sample_upload, onboarding_review, mapping_crud, quarantine, audit, duckdb_query, auth (cross-cutting FastAPI dependency).
-**Why one BFF.** One Customer Master integration. One URL for the UI. Per-domain APIs multiply auth integrations and deploy units for no v0 benefit. See `decisions.md` D26.
+**Role.** Serves every read and write the DIS UI needs. Reads from Cloud SQL read replica, config schema, quarantine schema, Cloud SQL `audit.events` (BigQuery `audit_events` from Phase 3 onward). Writes only to `config.source_mappings` (mapping CRUD, onboarding promotion); publishes `ingress.resubmit` (resubmit action from quarantine console) and `mapping.changed` (mapping CRUD and promotions). Hosts the onboarding sub-module in-process (`decisions.md` D16). Hosts the **upload-session endpoint** that issues signed PUT URLs to start a CSV upload from the UI: validates the session, generates `trace_id`, builds the canonical GCS path, returns the signed URL, emits audit (`decisions.md` D36). The UI never calls a separate receiver service to start an upload.
+**Handlers.** sample_upload, onboarding_review, mapping_crud, quarantine, audit, duckdb_query, upload_session, auth (cross-cutting FastAPI dependency).
+**Why one BFF.** One Customer Master integration. One URL for the UI. Per-domain APIs multiply auth integrations and deploy units for no v0 benefit. See `decisions.md` D26 and D36.
 
 ### 4.18 PII Tokenization Module (lib, not a service)
 **What it is.** A library (`libs/dis-pii`) used by every receiver. HMAC-based deterministic tokenization with per-tenant keys; key vault; field-name and pattern-based PII detection; per-source policy.

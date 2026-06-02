@@ -24,7 +24,7 @@ ithina-dis/
 ├── .env.example                 # Required env vars
 │
 ├── services/                    # Containerised services
-│   ├── csv-ingest-worker/     # Manual CSV upload receiver (v1.0)
+│   ├── csv-ingest-worker/       # GCS-event-triggered CSV ingest worker (Phase 2; v1.0). Phase 1 lives in dis-ui-server per D36.
 │   ├── receiver-api/            # API/webhook receiver (deferred)
 │   ├── receiver-csv-erp/        # Per-tenant ERP CSV POST (deferred)
 │   ├── receiver-reverse-api/    # Reverse-API puller (deferred)
@@ -34,6 +34,7 @@ ithina-dis/
 │   ├── quarantine-drainer/      # Quarantine Pub/Sub → Cloud SQL drainer (v1.0)
 │   ├── nightly-batch/           # Daily BQ export + retention eviction (v1.0)
 │   ├── daily-compute/           # Postgres-local signal compute (v1.0)
+│   ├── dis-ui/                  # DIS frontend application (v1.0; placeholder until Slice 19)
 │   └── dis-ui-server/                 # BFF for DIS UI (v1.0)
 │
 ├── libs/                        # Shared Python libraries
@@ -68,7 +69,8 @@ Each service has its own `README.md` (full EPE — Entry / Process / Exit — bl
 
 | Service | Status | Purpose |
 |---|---|---|
-| [`csv-ingest-worker`](services/csv-ingest-worker/README.md) | v1.0 | Manual CSV upload receiver. Two-phase upload pattern. |
+| [`csv-ingest-worker`](services/csv-ingest-worker/README.md) | v1.0 | GCS-event-triggered CSV ingest worker (Phase 2). Phase 1 upload-URL endpoint lives in dis-ui-server per `decisions.md` D36. |
+| [`dis-ui`](services/dis-ui/README.md) | v1.0 | DIS frontend application. Placeholder until build-guide Slice 19 (DIS UI foundation). |
 | [`receiver-api`](services/receiver-api/README.md) | deferred | API/webhook ingress receiver. |
 | [`receiver-csv-erp`](services/receiver-csv-erp/README.md) | deferred | Per-tenant ERP CSV POST endpoint. |
 | [`receiver-reverse-api`](services/receiver-reverse-api/README.md) | deferred | Reverse-API puller (cursor-based). |

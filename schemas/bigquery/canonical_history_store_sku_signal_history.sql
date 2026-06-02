@@ -14,7 +14,7 @@
 -- Read by:
 --   - services/daily-compute on the slow/bootstrap path (read yesterday's
 --     signals when Cloud SQL retention has aged them out).
---   - services/dis-api for tenant-facing time-series queries
+--   - services/dis-ui-server for tenant-facing time-series queries
 --     ("how did velocity_7day evolve daily for SKU X?").
 --   - DIS analytics consumers (ROOS-side backtesting; future).
 --
