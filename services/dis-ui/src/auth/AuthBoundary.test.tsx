@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { SignJWT } from 'jose'
 import { MemoryRouter } from 'react-router'
@@ -11,13 +12,18 @@ import { writeToken } from './storage'
 
 const KEY = new TextEncoder().encode(STUB_SECRET)
 
+// The protected Home page fetches via TanStack Query, so the full route tree
+// needs a QueryClientProvider.
 function renderAt(path: string) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <AuthProvider>
-      <MemoryRouter initialEntries={[path]}>
-        <AppRoutes />
-      </MemoryRouter>
-    </AuthProvider>,
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthProvider>
+    </QueryClientProvider>,
   )
 }
 
@@ -47,7 +53,7 @@ describe('AuthBoundary', () => {
   it('renders the protected page when a valid token is stored', async () => {
     writeToken(await signStubToken(PERSONAS[0]))
     renderAt('/')
-    expect(await screen.findByText(/Signed in as tenant\.admin@acme-retail\.example/)).toBeInTheDocument()
+    expect(await screen.findByText(/Hello, tenant\.admin@acme-retail\.example/)).toBeInTheDocument()
   })
 
   it('redirects to /dev/login when no token is stored', async () => {
