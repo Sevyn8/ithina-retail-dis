@@ -60,8 +60,8 @@ db-revision:
 
 db-reset:
 	@echo "Dropping and recreating ithina_dis_db..."
-	@docker compose exec -T postgres psql -U ithina_dis_user -d postgres -c "DROP DATABASE IF EXISTS ithina_dis_db;"
-	@docker compose exec -T postgres psql -U ithina_dis_user -d postgres -c "CREATE DATABASE ithina_dis_db;"
+	@docker compose exec -T postgres psql -U ithina_dis_admin -d postgres -c "DROP DATABASE IF EXISTS ithina_dis_db;"
+	@docker compose exec -T postgres psql -U ithina_dis_admin -d postgres -c "CREATE DATABASE ithina_dis_db;"
 	@$(MAKE) db-migrate
 
 topics-create:
