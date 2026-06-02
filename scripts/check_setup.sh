@@ -256,10 +256,80 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Tier 4 — DB state (migrations, role posture)
+# Tier 4 — Customer Master read access (Mirror Sync DB-pull mode)
 # ----------------------------------------------------------------------------
 
-section "Tier 4: DB state"
+section "Tier 4: Customer Master read access"
+
+# CM_DB_URL must be set
+if [[ -n "${CM_DB_URL:-}" ]]; then
+    pass "CM_DB_URL is set"
+else
+    fail "CM_DB_URL not set" "ensure .env has CM_DB_URL (see .env.example)"
+fi
+
+# CM Postgres reachable
+if [[ -n "${CM_DB_URL:-}" ]] && command -v pg_isready >/dev/null 2>&1; then
+    cm_host="${CM_DB_HOST:-localhost}"
+    cm_port="${CM_DB_PORT:-5432}"
+    if pg_isready -h "$cm_host" -p "$cm_port" >/dev/null 2>&1; then
+        pass "Customer Master Postgres accepting connections on ${cm_host}:${cm_port}"
+    else
+        fail "Customer Master Postgres not reachable on ${cm_host}:${cm_port}" \
+             "start Customer Master devbox separately (its own docker-compose)"
+    fi
+fi
+
+# dis_mirror_reader can connect
+if [[ -n "${CM_DB_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
+    if psql "$CM_DB_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+        pass "dis_mirror_reader can connect to Customer Master"
+    else
+        fail "dis_mirror_reader cannot connect to Customer Master" \
+             "run infra/customer-master/create-dis-mirror-reader.sql against CM as superuser; verify CM_DB_URL"
+    fi
+fi
+
+# RLS smoke test: no-GUC reads return 0 (proves RLS is enforced for this role)
+if [[ -n "${CM_DB_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
+    count_no_guc=$(psql "$CM_DB_URL" -tAc \
+        "SELECT set_config('app.tenant_id', NULL, FALSE); \
+         SELECT set_config('app.user_type', NULL, FALSE); \
+         SELECT COUNT(*) FROM core.tenants;" 2>/dev/null | tail -n 1)
+    if [[ "$count_no_guc" == "0" ]]; then
+        pass "Customer Master RLS enforced (no-GUC read returns 0)"
+    elif [[ -z "$count_no_guc" ]]; then
+        skip "RLS no-GUC check (could not query core.tenants)"
+    else
+        fail "Customer Master RLS may be bypassed (no-GUC read returned $count_no_guc rows)" \
+             "verify dis_mirror_reader is NOBYPASSRLS; re-run create-dis-mirror-reader.sql"
+    fi
+fi
+
+# PLATFORM smoke test: reads succeed under correct GUCs
+if [[ -n "${CM_DB_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
+    count_platform=$(psql "$CM_DB_URL" -tAc \
+        "BEGIN; \
+         SELECT set_config('app.tenant_id', NULL, TRUE); \
+         SELECT set_config('app.user_type', 'PLATFORM', TRUE); \
+         SELECT COUNT(*) FROM core.tenants; \
+         ROLLBACK;" 2>/dev/null | tail -n 2 | head -n 1)
+    if [[ -n "$count_platform" && "$count_platform" =~ ^[0-9]+$ ]]; then
+        if [[ "$count_platform" -gt 0 ]]; then
+            pass "Customer Master PLATFORM read returns $count_platform tenants"
+        else
+            skip "PLATFORM read returned 0 tenants (Customer Master may be empty)"
+        fi
+    else
+        skip "PLATFORM smoke test (could not parse count)"
+    fi
+fi
+
+# ----------------------------------------------------------------------------
+# Tier 5 — DB state (migrations, role posture)
+# ----------------------------------------------------------------------------
+
+section "Tier 5: DB state"
 
 if command -v uv >/dev/null 2>&1 && [[ -f "alembic.ini" ]]; then
     if uv run alembic current >/dev/null 2>&1; then
@@ -313,10 +383,10 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Tier 5 — Code state (deps, dbt config)
+# Tier 6 — Code state (deps, dbt config)
 # ----------------------------------------------------------------------------
 
-section "Tier 5: Code state"
+section "Tier 6: Code state"
 
 # uv.lock in sync
 if uv lock --check >/dev/null 2>&1; then
