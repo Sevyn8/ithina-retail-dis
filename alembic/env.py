@@ -1,6 +1,10 @@
+import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 from alembic import context
 
@@ -19,10 +23,63 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 target_metadata = None
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+
+def _resolve_admin_url() -> str:
+    """Resolve the migration connection URL, environment-portable.
+
+    Precedence:
+      1. POSTGRES_ADMIN_URL from the process environment (set by `make`, which
+         does `include .env; export`, and by cloud deploy environments).
+      2. POSTGRES_ADMIN_URL loaded from the repo-root .env as a fallback, so a
+         bare `uv run alembic ...` (not via make) still works locally.
+      3. sqlalchemy.url from alembic.ini (intentionally blank by default).
+
+    No host/port/role is hardcoded here. A missing URL is a hard, explicit
+    failure rather than a silent fallback to a wrong target.
+    """
+    url = os.environ.get("POSTGRES_ADMIN_URL")
+
+    if not url:
+        # Fallback: load the repo-root .env (dependency available in the venv).
+        # override=False so a real environment variable always wins.
+        try:
+            from dotenv import load_dotenv
+
+            repo_root = Path(__file__).resolve().parents[1]
+            load_dotenv(repo_root / ".env", override=False)
+            url = os.environ.get("POSTGRES_ADMIN_URL")
+        except Exception:  # pragma: no cover - dotenv is best-effort here
+            url = None
+
+    if not url:
+        url = config.get_main_option("sqlalchemy.url") or None
+
+    if not url:
+        raise RuntimeError(
+            "No migration database URL. Set POSTGRES_ADMIN_URL in the "
+            "environment (local: it lives in .env and `make` exports it; "
+            "cloud: export it before `alembic upgrade head`)."
+        )
+
+    return url
+
+
+def _log_target(url: str) -> None:
+    """Print the resolved target host/port/database (never the password) so it
+    can be eyeballed before any DDL runs. Guards against pointing the migration
+    at the wrong instance (e.g. Customer Master on 5432)."""
+    parsed = make_url(url)
+    sys.stderr.write(
+        f"[alembic] migration target -> host={parsed.host} port={parsed.port} "
+        f"database={parsed.database} user={parsed.username}\n"
+    )
+    sys.stderr.flush()
+
+
+# Resolve once and make the URL authoritative for both offline and online modes.
+_ADMIN_URL = _resolve_admin_url()
+_log_target(_ADMIN_URL)
+config.set_main_option("sqlalchemy.url", _ADMIN_URL)
 
 
 def run_migrations_offline() -> None:
@@ -37,9 +94,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=_ADMIN_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

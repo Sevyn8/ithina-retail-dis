@@ -129,7 +129,7 @@ CREATE TABLE audit.events (
 
     -- ---------- Primary key ----------
     CONSTRAINT pk_audit_events
-        PRIMARY KEY (id),
+        PRIMARY KEY (id, event_date),
 
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_audit_events_tenant
@@ -158,7 +158,8 @@ CREATE TABLE audit.events (
 
     CONSTRAINT ck_audit_events_event_date_matches
         CHECK (event_date = (event_timestamp AT TIME ZONE 'UTC')::DATE)
-);
+)
+PARTITION BY RANGE (event_date);
 
 
 -- ----------------------------------------------------------------------------
@@ -173,10 +174,10 @@ CREATE TABLE audit.events (
 -- partitions to BigQuery before dropping.
 -- ----------------------------------------------------------------------------
 
--- Partitioning to be added in the Alembic migration (PARTITION BY RANGE
--- (event_date)). Initial migration creates the parent table and the first
--- N daily partitions; subsequent partitions are created by a Cloud Scheduler
--- job (Phase 1) or a daily-compute side task.
+-- The parent table above is declared PARTITION BY RANGE (event_date). The
+-- bootstrap migration (alembic/versions/0001_bootstrap.py) creates the initial
+-- daily partitions; subsequent partitions are created by a Cloud Scheduler job
+-- (Phase 1) or a daily-compute side task.
 
 
 -- ----------------------------------------------------------------------------

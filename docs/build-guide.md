@@ -86,7 +86,9 @@ Each slice is one end-to-end vertical cut. Slice docs live in `docs/slices/slice
 
 ### Bootstrap
 
-- `TODO` Slice 1: Bootstrap Alembic migration. Applying migrations creates every DIS schema (canonical, bronze, config, identity_mirror, quarantine, staging, audit, plus UUIDv7 extension) in local Postgres; `\dn` lists them. After table creation, `ithina_dis_user` has the minimum privileges needed (USAGE on schemas, table-level grants) so service code can read/write but cannot bypass RLS.
+- `DONE` Slice 1: Bootstrap Alembic migration (`alembic/versions/0001_bootstrap.py`). Applying migrations creates every DIS schema (canonical, bronze, config, identity_mirror, quarantine, staging, audit, plus the `public.uuidv7()` function) in local Postgres; `\dn` lists them. The migration is a manifest that applies the `schemas/postgres/` DDL files verbatim in dependency order, then authors the 7 `CREATE SCHEMA`s, a centralized grants block, and 7 daily partitions for each of the 7 partitioned parents (canonical/staging event + signal_history tables, and `audit.events`). `ithina_dis_user` gets USAGE on schemas + table SELECT/INSERT/UPDATE/DELETE + sequence USAGE (incl. `ALTER DEFAULT PRIVILEGES` so later partitions inherit) so service code can read/write but cannot bypass RLS. `env.py` resolves the connection from `POSTGRES_ADMIN_URL` (no hardcoded host/port/role) and a `current_database()` guard refuses to run against the wrong DB (protects Customer Master on 5432).
+
+  **Cloud bootstrap run-order** (Cloud SQL; run once per fresh instance, the role step is NOT part of the migration): (1) run `schemas/postgres/00_bootstrap/roles.sql` as the Cloud SQL admin against the DIS database, passing `-v dis_admin_password=... -v dis_user_password=...`; (2) export `POSTGRES_ADMIN_URL` pointing at the DIS database as `ithina_dis_admin`; (3) `alembic upgrade head`. Locally these roles come from docker-compose + `infra/local/postgres-init.sql` instead.
 
 ### Test infrastructure
 
