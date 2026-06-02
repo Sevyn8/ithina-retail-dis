@@ -175,7 +175,7 @@ Publishes failed rows/chunks to the `quarantine` Pub/Sub topic. Includes the sui
 The Cloud SQL circuit-breaker fallback. When Cloud SQL is unhealthy, the canonical sink fails over to publishing batches to `pipeline.dlq`. The drainer (or a recovery job) replays from DLQ when health restores. Why separate from `canonical.py`. DLQ is an exceptional path; isolating it keeps the canonical sink's happy-path readable.
 
 **`audit.py`.**
-Emits structured audit events to BigQuery for every stage of every row. Why a sink (not a pipeline stage). Audit fires for both valid and invalid paths; it is not gated by the branch. Treating it as a sink (emit-on-event) rather than a stage (in the transform chain) is correct.
+Emits structured audit events for every stage of every row via `libs/dis-audit`. Phase 1 destination is Cloud SQL `audit.events`; Phase 3 adds the BigQuery archive (see `decisions.md` D34). Why a sink (not a pipeline stage). Audit fires for both valid and invalid paths; it is not gated by the branch. Treating it as a sink (emit-on-event) rather than a stage (in the transform chain) is correct.
 
 ### 3.6 `src/streaming_consumer/health/` — circuit breaker and probes
 

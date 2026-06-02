@@ -73,7 +73,7 @@ Each service has its own `README.md` (full EPE — Entry / Process / Exit — bl
 | [`receiver-csv-erp`](services/receiver-csv-erp/README.md) | deferred | Per-tenant ERP CSV POST endpoint. |
 | [`receiver-reverse-api`](services/receiver-reverse-api/README.md) | deferred | Reverse-API puller (cursor-based). |
 | [`identity-service`](services/identity-service/README.md) | v1.0 | Tenant/store resolution; mediates Customer Master access. |
-| [`mirror-sync-consumer`](services/mirror-sync-consumer/README.md) | v1.0 | Maintains `identity_mirror` schema. |
+| [`mirror-sync-consumer`](services/mirror-sync-consumer/README.md) | v1.0 | Maintains `identity_mirror` schema. DB-pull from Customer Master DB in v1.0; Pub/Sub consumer post-v1.0. |
 | [`streaming-consumer`](services/streaming-consumer/README.md) | v1.0 | The ELT pipeline. Atomic dual-write to canonical hot + event tables. |
 | [`quarantine-drainer`](services/quarantine-drainer/README.md) | v1.0 | Writes quarantine events to Cloud SQL. |
 | [`nightly-batch`](services/nightly-batch/README.md) | v1.0 | Daily BQ export + Cloud SQL partition eviction. |
@@ -86,12 +86,12 @@ Each service has its own `README.md` (full EPE — Entry / Process / Exit — bl
 
 | Lib | Purpose |
 |---|---|
-| [`dis-core`](libs/dis-core/README.md) | Logging, IDs (UUIDv7), BqClient, audit helpers, error types. |
+| [`dis-core`](libs/dis-core/README.md) | Logging, IDs (UUIDv7), audit helpers, error types. BqClient stub in Phase 1 (real in Phase 3). |
 | [`dis-canonical`](libs/dis-canonical/README.md) | Canonical schema models (Pydantic). |
 | [`dis-mapping`](libs/dis-mapping/README.md) | Mapping engine. Four sub-stages: rename, normalize, cast, derive. |
 | [`dis-validation`](libs/dis-validation/README.md) | Pandera suites. |
 | [`dis-rls`](libs/dis-rls/README.md) | RLS-aware DB session helpers. |
-| [`dis-audit`](libs/dis-audit/README.md) | Audit event emission. |
+| [`dis-audit`](libs/dis-audit/README.md) | Audit event emission. Writes to Cloud SQL `audit.events` in Phase 1; BigQuery archive in Phase 3. |
 | [`dis-pii`](libs/dis-pii/README.md) | PII tokenization. |
 | [`dis-storage`](libs/dis-storage/README.md) | GCS access; canonical path scheme. |
 | [`dis-testing`](libs/dis-testing/README.md) | Test fixtures and helpers. |
@@ -104,7 +104,7 @@ Each service has its own `README.md` (full EPE — Entry / Process / Exit — bl
 - **`contracts/`** — External-system contract files (identity-service OpenAPI/proto, Customer Master JWT claims contract).
 - **`infra/`** — Terraform for GCP, Kubernetes manifests, CI config.
 - **`tools/`** — Codegen, replay utilities, load-test scaffolding.
-- **`alembic/`** — Postgres migrations (canonical, config, bronze, identity_mirror, quarantine, staging).
+- **`alembic/`** — Postgres migrations (canonical, config, bronze, identity_mirror, quarantine, staging, audit).
 - **`dbt/`** — BigQuery dbt project (`canonical_history.*` models + freshness tests).
 - **`tests/`** — Cross-service integration tests and e2e suites.
 

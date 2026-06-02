@@ -86,7 +86,9 @@ Error budget: 5% over 30 days. Breach triggers a review (not an auto-page, since
 - **Replay.** Both tenant-side resubmit (fresh ingress) and Ithina-side replay from bronze/GCS are supported.
 
 ### 2.7 Audit
-Every event carries a `trace_id` from receiver onward. Every pipeline stage emits a per-row audit event keyed by `trace_id` to BigQuery `audit_events`. Debugging a row is a `SELECT ... WHERE trace_id = '...'`.
+Every event carries a `trace_id` from receiver onward. Every pipeline stage emits a per-row audit event keyed by `trace_id`. Debugging a row is a `SELECT ... WHERE trace_id = '...'`.
+
+Phase 1 lands audit events in Cloud SQL `audit.events` so the dis-api audit-lookup feature can ship without waiting on the cloud-project setup BigQuery requires (see `decisions.md` D34). Phase 3 adds the Cloud SQL → BigQuery archive job for `audit_events`; BigQuery remains the long-term audit home as in `decisions.md` D7 and D29.
 
 ### 2.8 Identity store isolation
 Tenant and store metadata lives in **Customer Master**, the Auth0-integrated identity, auth, and RBAC system that is the single source of truth for user identity and authorization across Sevyn8 products (not just DIS). Customer Master is physically separate from the data-platform DB; the data platform never queries it directly. Access is mediated by a **Tenant/Store Identity Service** (DIS-internal, see `decisions.md` D2) that wraps Customer Master with a cache and circuit breaker. Cross-DB FK is impossible at the engine level; equivalent guarantees are reconstructed via a replicated mirror table inside the data-platform DB with real Postgres FKs pointing to it.
@@ -315,9 +317,10 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 **Why it exists.** Physical separation of Customer Master is non-negotiable, and direct cross-DB calls would couple ingress latency to Customer Master latency. The service provides a single, cached, audited access point, with channel-specific resolve methods so each receiver type uses the right identity source.
 
 ### 4.3 Mirror Sync Consumer
-**What it is.** A containerized subscriber on the `identity.changed` Pub/Sub topic.
+**What it is.** A containerized service that maintains the `identity_mirror` schema. Ships with two modes: a Pub/Sub subscriber on `identity.changed` (the architectural target), and a DB-pull mode that reads tenant/store records directly from Customer Master's Postgres database.
 **Role.** Maintains a small mirror of identity data (`tenants_known`, `stores_known`) inside the data-platform Postgres. Acts as the local source of truth for FK references from canonical tables. Treats deletes as soft (sets `is_active = false`), so canonical rows do not get cascade-killed by a Customer Master cleanup.
-**Why it exists.** Postgres FK cannot reach across instances. The mirror reconstitutes equivalent integrity inside the data-platform DB, at the cost of seconds of replication lag.
+**Why it exists.** Postgres FK cannot reach across instances. The mirror reconstitutes equivalent integrity inside the data-platform DB.
+**Two modes (see `decisions.md` D35).** DB-pull is the v1.0 launch mode and ships first, because Customer Master does not yet emit `identity.changed`. Pub/Sub consumer mode activates once Customer Master emits the events. Both modes share the same upsert path, so canonical FK behaviour is identical. DB-pull persists past launch as a reconciliation mechanism even after Pub/Sub is live.
 
 ### 4.4 Bronze
 **What it is.** A landing zone for enriched ingress chunks, split between Cloud SQL Postgres (chunk metadata + small payloads) and GCS (raw blobs for CSV).
@@ -355,10 +358,11 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 **Role.** The asynchronous error channel. Failed rows land here with their original payload, the reason for failure (in human-readable form when GE or Pandera is in use), and links back to the ingress chunk for replay.
 **Why it exists.** Receivers are permissive by design; the failure surface has to be somewhere. Quarantine gives tenants and ops a single place to see, understand, and act on bad data.
 
-### 4.10 Audit Store (BigQuery `audit_events`)
-**What it is.** A BigQuery table partitioned by date and clustered by `trace_id` and `tenant_id`.
+### 4.10 Audit Store
+**What it is.** A structured per-event audit record store. Phase 1: Cloud SQL `audit.events`. Phase 3 onward: BigQuery `audit_events` as the long-term archive, with Cloud SQL serving as a rolling buffer (35-day retention matching event tables).
 **Role.** Captures one row per (trace_id, stage, status) emitted by the pipeline. Provides the end-to-end traceability the system promises: any row's lifecycle is one SQL query away.
 **Why it exists.** Logs are not queryable enough for production debugging at scale. A dedicated structured store, separate from operational logs, makes audit a first-class concern.
+**Why Phase 1 in Cloud SQL (see `decisions.md` D34).** The dis-api audit-lookup feature needs SQL-queryable audit. Routing audit through Cloud SQL during Phase 1 avoids waiting on the cloud-project setup BigQuery requires. The BigQuery target remains the architectural endpoint, added in Phase 3 alongside the rest of the BigQuery offload (build-guide.md Slice 16).
 
 ### 4.11 Analytics Store (BigQuery `canonical_history`)
 **What it is.** The long-term home of history data, populated by a nightly batch job from Cloud SQL.

@@ -85,6 +85,20 @@ These hold across every service and lib. Violations are bugs, not preferences.
 
 ---
 
+## Code-quality rules
+
+These are not preferences. They're enforced on review.
+
+1. **Plan mode before code.** Every code-writing turn is preceded by plan mode. Operator may waive for trivial single-file edits.
+2. **Read before code.** Any unfamiliar service, lib, or schema gets a `view` before any edit. Don't infer structure from filenames.
+3. **Tests in the same commit as code.** Every new function/handler/sink/transform ships with a test. "Tests come later" is not a phase.
+4. **No silent fallbacks.** `config.get("x", "default")` is forbidden for required values. Required missing → raise a domain error from `libs/dis-core/errors.py`.
+5. **Errors carry context.** Every raise / log.error includes `tenant_id`, `trace_id`, and the load-bearing identifier (e.g., `source_id`, `mapping_version_id`). "Failed" with no context is a bug.
+6. **No swallowed exceptions.** `except Exception: log.error(...)` without re-raise is forbidden, except in audit emission (Hard rule 11).
+7. **One concern per function.** Functions that parse AND validate AND persist get split before merge.
+
+---
+
 ## Build pattern
 
 Slice-driven. Each iteration of work is one slice from `docs/slices/`. The slice doc names: goal, hard constraints, failure-mode categories, plan-mode prompts per checkpoint.
@@ -131,16 +145,20 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 
 ---
 
-## Local devbox specifics
+## Local devbox
 
-- Postgres on **port 5433** (not 5432). Customer Master runs on 5432.
-- **Two Postgres roles:**
-  - `ithina_dis_admin` — superuser, runs migrations (Alembic uses this).
-  - `ithina_dis_user` — NOSUPERUSER NOBYPASSRLS, used by all service code.
-- Pub/Sub emulator on `localhost:8085`; topics created via `make topics-create`.
-- GCS emulator on `localhost:4443` (fake-gcs-server).
-- Redis on `localhost:6379`.
-- `make check` runs `scripts/check_setup.sh` — 5 tiers of pre-flight checks. Run at the start of every session and any time something feels off.
+**Facts:**
+- Postgres on **port 5433** (Customer Master holds 5432).
+- Two Postgres roles: `ithina_dis_admin` (superuser, used by Alembic) and `ithina_dis_user` (NOSUPERUSER NOBYPASSRLS, used by service code).
+- Pub/Sub emulator on `localhost:8085`; GCS emulator on `localhost:4443`; Redis on `localhost:6379`.
+
+**Commands:**
+- `make run-local` — bring up the stack, create topics, apply migrations.
+- `make check` — runs `scripts/check_setup.sh` (5-tier preflight). Run at session start and any time something feels off. Expect 52/52 PASS.
+- `make reset-local` — wipe data volumes for a clean slate.
+- `make test` / `make lint` / `make format` / `make db-migrate` — daily commands.
+
+**Rule:** if a tool call against the local stack fails (Postgres unreachable, topics missing, GCS down), the first response is `make check`. Don't improvise.
 
 ---
 

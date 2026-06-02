@@ -240,3 +240,55 @@ to filter to the current truth. dbt models in BigQuery `canonical_history.*` exp
 **Tradeoff acknowledged.** Slightly larger event-table storage (every correction is preserved). At v1.0 beta scale (~150K events/day, expected correction rate <1%) this is negligible (~1500 additional rows/day). Reports and dashboards over event tables must filter to latest by default; the "show me all corrections" query is the unusual one.
 
 **Forward note.** Trace-level dedup at streaming-consumer entry (check audit for prior `CANONICAL_WRITTEN` on the same `trace_id` before reprocessing) is a future compute-saving optimisation, not correctness-critical. See `architecture.md` §9.2.
+
+
+---
+
+### D34 Audit events to Cloud SQL `audit.events` during Phase 1; BigQuery archive deferred to Phase 3
+
+**Decision.** Audit events are written to a Cloud SQL `audit.events` table during Phase 1. BigQuery `audit_events` remains the long-term archive (per D29's spirit) but its ingestion is deferred to Phase 3 alongside the rest of the nightly batch + BigQuery work.
+
+**Why.**
+- BigQuery streaming ingest requires a live cloud project. v1.0 launch infrastructure (Terraform, `ithina-dis-dev`, `ithina-dis-staging`, `ithina-dis-prod`) is deferred to a later trigger. Routing audit through Cloud SQL for Phase 1 lets the audit-lookup feature (dis-api) ship without waiting on cloud setup.
+- Cloud SQL is the same datastore everything else writes to in Phase 1, so the audit emitter doesn't need a separate transport during initial development.
+- Beta-scale audit volume (10 + F events per ingress event, ~150K events/day) sits comfortably in Cloud SQL with daily partitioning.
+
+**Architectural intent unchanged.** BigQuery `audit_events` is still the long-term home (decisions D7 and D29 hold). Phase 3 adds the Cloud SQL → BigQuery archive job for audit, alongside the canonical_history archive (build-guide.md Slice 16). After that, Cloud SQL `audit.events` becomes a short-term rolling buffer (35-day retention matching event tables).
+
+**Implications.**
+- New Postgres `audit` schema; new `audit.events` table; DDL at `schemas/postgres/audit/events.sql`. Mirrors the column shape of `schemas/bigquery/audit_events.sql`.
+- `libs/dis-audit` Phase 1 writer targets Cloud SQL. Phase 3 adds the BigQuery archive path; the writer interface stays stable.
+- dis-api's audit lookup (build-guide Slice 12) reads from Cloud SQL.
+- `libs/dis-core` BqClient is a stub during Phase 1; real implementation lands with Phase 3.
+
+**Alternatives considered.**
+- **BigQuery from day one with a real cloud project provisioned in Phase 0.** Rejected: cloud setup is deferred precisely because no slice yet needs it; advancing it just to support audit is the tail wagging the dog.
+- **Cloud Logging only.** Rejected: dis-api needs SQL-queryable audit for the tenant-facing audit lookup feature. Cloud Logging without a SQL home blocks Slice 12.
+
+---
+
+### D35 Mirror Sync Consumer ships in two modes; DB-pull is the v1.0 launch mode; Pub/Sub consumer is deferred
+
+**Decision.** The `mirror-sync-consumer` service ships with two operational modes:
+1. **DB-pull mode** (v1.0 launch): reads tenant and store records directly from Customer Master's Postgres database (port 5432 locally; Cloud SQL in cloud); upserts into `identity_mirror.tenants` and `identity_mirror.stores`. On-demand and schedulable.
+2. **Pub/Sub consumer mode** (deferred): subscribes to `identity.changed` from Customer Master; applies upserts the same way. Activates once Customer Master emits these events.
+
+Both modes call the same upsert logic in `sync/`. Different entry points; same write path.
+
+**Why.**
+- Customer Master does not currently emit `identity.changed`. The Pub/Sub design (D2, D11) is the architectural target, but waiting for CM's emit work would block every DIS slice that needs populated `identity_mirror` (receivers, streaming consumer, dis-api).
+- DB-pull works against the same Customer Master DB schema the eventual Pub/Sub events would carry. It's not a workaround for local dev only: same code runs against CM's Cloud SQL in production.
+- Reconciliation use case persists. Even after Pub/Sub goes live, a periodic DB-pull serves as cheap reconciliation (catch missed events, recover from outages). DB-pull stays in v1.0; doesn't retire when Pub/Sub activates.
+
+**Architectural intent unchanged.** D2 (Identity Service mediates Customer Master) and D11 (mirror via `identity.changed`) remain the canonical architecture. DB-pull is an *additional* mode, not a replacement.
+
+**Implications.**
+- `services/mirror-sync-consumer/` carries both modes: `pull/` subdirectory for DB-pull; `consumer/` for Pub/Sub.
+- Build-guide.md Slice 7 ships DB-pull mode. Pub/Sub mode is a later slice, triggered when Customer Master emits.
+- Operator runs DB-pull on-demand at first; can schedule via Cloud Scheduler or a CronJob later.
+- Tests bypass this service entirely via Slice 2's fixture seeder (which writes to `identity_mirror` directly).
+
+**Alternatives considered.**
+- **Pre-seed identity_mirror with a hand-written SQL script for local; build a separate Cloud SQL sync for cloud.** Rejected: two mechanisms for the same job. The DB-pull tool serves local and cloud identically.
+- **Block all dependent slices until Customer Master emits `identity.changed`.** Rejected: cross-team blocking. CM's emit work is on its own timeline; DIS development cannot pause that long.
+- **Direct Postgres FK across instances.** Rejected upfront (D11): physically impossible.

@@ -12,7 +12,6 @@ Part of the Ithina Data Platform. Operates alongside Customer Master (identity/a
 
 ```bash
 # One-time devbox setup; see docs/local-setup.md for the full walkthrough.
-cd ~/ithina-dis
 make run-local       # docker stack + Pub/Sub topics + Alembic migrations
 make check           # pre-flight checks (expect 52/52 PASS)
 ```
@@ -47,6 +46,7 @@ make reset-local     # nuke local data; start clean
 | `tests/` | Cross-service integration and e2e tests |
 | `docs/` | Architecture, decisions, slices, runbooks |
 | `scripts/` | Operator scripts (`check_setup.sh`) |
+| `.github/` | CI workflows |
 
 For directory trees in detail, see `docs/repo-structure.md`.
 
@@ -73,7 +73,7 @@ For Claude Code, the load-bearing files are:
 
 ## Stack
 
-Python 3.12 · FastAPI · Postgres 15 · BigQuery · Pub/Sub · GCS · Redis · Pandera · Polars · DuckDB · Alembic · dbt-bigquery · uv (workspace manager).
+Python 3.12 · FastAPI · Postgres 15 · BigQuery · Pub/Sub · GCS · Redis · Pandera · Polars · DuckDB · Alembic · dbt-bigquery · OpenTelemetry · uv (workspace manager).
 
 GCP managed-first; everything runnable locally via emulators (Pub/Sub emulator, fake-gcs-server, dockerised Postgres + Redis).
 
@@ -81,6 +81,6 @@ GCP managed-first; everything runnable locally via emulators (Pub/Sub emulator, 
 
 ## Status
 
-Phase 0 (foundation): in progress. Workspace scaffolding, dependencies, local stack, Phase 0 schemas in place. Service implementation begins with Slice 1.
+Phase 0 (foundation) substantially complete: workspace, dependencies, local stack, schemas, contracts, services + libs scaffolded, docs, root commit on `main`. GitHub push and CI pending. Slice 1 (bootstrap Alembic migration) is the next work item.
 
-For phase definitions and slice-by-slice build status, see `docs/build-guide.md`.
+For slice-by-slice build status, see `docs/build-guide.md`.

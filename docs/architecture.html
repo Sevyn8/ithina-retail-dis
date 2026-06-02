@@ -898,7 +898,7 @@
       </div>
       <ul style="margin-top: 8px">
         <li>Resolve returns <code>{tenant_id, store_id, +metadata}</code> from cache; miss falls through to admin DB</li>
-        <li>Publishes <code>identity.changed</code> on admin DB writes</li>
+        <li>Publishes <code>identity.changed</code> on admin DB writes <em>(deferred; Customer Master does not yet emit — Mirror Sync uses DB-pull mode at launch)</em></li>
         <li> <strong>Stale-while-error caching:</strong> on admin DB error, cache continues to serve entries up to 5 min stale. Bounded; counted and alerted.</li>
         <li> <strong>Receiver-local fallback for <code>validate()</code>:</strong> the streaming consumer reads <code>identity_mirror</code> directly when Identity Service circuit-breaker is open. Resolve paths cannot fall back (machine credential lookup needs admin DB), but the cache covers steady state.</li>
       </ul>
@@ -908,10 +908,11 @@
 
     <div class="box managed">
       <p class="box-title">Mirror Sync Consumer</p>
-      <p class="box-sub">Containerized service</p>
+      <p class="box-sub">Containerized service &middot; two modes</p>
       <ul>
-        <li>Subscribes to <code>identity.changed</code></li>
         <li>Maintains mirror tables in data-platform DB</li>
+        <li><strong>DB-pull mode (v1.0 launch):</strong> reads tenants/stores directly from Customer Master Postgres; on-demand + schedulable</li>
+        <li><strong>Pub/Sub subscriber (deferred):</strong> subscribes to <code>identity.changed</code>; activates when CM emits</li>
         <li>Soft-delete via <code>is_active</code></li>
       </ul>
     </div>
@@ -1064,11 +1065,11 @@
     </div>
 
     <div class="box bq">
-      <p class="box-title">BigQuery &middot; audit_events</p>
-      <p class="box-sub">Streaming inserts</p>
+      <p class="box-title">Audit &middot; audit.events</p>
+      <p class="box-sub">Cloud SQL in Phase 1; BigQuery archive in Phase 3</p>
       <ul>
         <li>One row per (trace_id, stage)</li>
-        <li>Partition by date; cluster by <code>trace_id</code>, <code>tenant_id</code></li>
+        <li>Postgres partition by date (Phase 1); BQ partition by date + cluster by <code>trace_id</code>, <code>tenant_id</code> (Phase 3 archive)</li>
         <li>Debug: <code>SELECT * WHERE trace_id = '...'</code></li>
         <li> Latency SLO computed from <code>commit_ts - received_ts</code> per (tenant, source). Targets: <strong>p50 &lt; 3s, p95 &lt; 8s, p99 &lt; 15s</strong>. Error budget 5% of p95 in 30-day window.</li>
       </ul>
@@ -1139,7 +1140,7 @@
       </div>
       <div style="background: rgba(255,255,255,0.6); border: 1px dashed var(--ithina-border); border-radius: 2px; padding: 8px 10px;">
         <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--ithina-border); text-transform: uppercase; margin-bottom: 4px;">Audit / trace lookup</div>
-        <div style="font-size: 12.5px;">Search BigQuery <code>audit_events</code> by <code>trace_id</code>, tenant, store, time range.</div>
+        <div style="font-size: 12.5px;">Search Cloud SQL <code>audit.events</code> by <code>trace_id</code>, tenant, store, time range (Phase 1). BigQuery archive in Phase 3.</div>
       </div>
       <div style="background: rgba(255,255,255,0.6); border: 1px dashed var(--ithina-border); border-radius: 2px; padding: 8px 10px; grid-column: span 2;">
         <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--ithina-border); text-transform: uppercase; margin-bottom: 4px;">DuckDB query panel (ops only) <span class="new">NEW</span></div>
@@ -1180,7 +1181,7 @@
       </div>
       <div style="background: rgba(255,255,255,0.6); border: 1px dashed var(--ithina-border); border-radius: 2px; padding: 8px 10px;">
         <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--ithina-border); text-transform: uppercase; margin-bottom: 4px;">Audit handler</div>
-        <div style="font-size: 12.5px;">Queries BigQuery <code>audit_events</code> by <code>trace_id</code>, tenant, store, time range. Read-only.</div>
+        <div style="font-size: 12.5px;">Queries Cloud SQL <code>audit.events</code> by <code>trace_id</code>, tenant, store, time range. Read-only. BigQuery archive becomes a secondary read source in Phase 3.</div>
       </div>
       <div style="background: rgba(255,255,255,0.6); border: 1px dashed var(--ithina-border); border-radius: 2px; padding: 8px 10px; grid-column: span 2;">
         <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--ithina-border); text-transform: uppercase; margin-bottom: 4px;">DuckDB query handler (ops only)</div>
@@ -1191,7 +1192,7 @@
     <div style="margin-top: 12px; padding: 10px 12px; background: rgba(255,255,255,0.5); border: 1px dashed var(--ithina-border); border-radius: 2px; font-size: 12.5px;">
       <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; margin-bottom: 4px;">Data access posture</div>
       <ul style="margin: 0; padding-left: 18px;">
-        <li><strong>Reads from:</strong> Cloud SQL read replica (canonical hot tables for inspection), <code>config</code> schema, <code>quarantine</code> schema, BigQuery (audit events).</li>
+        <li><strong>Reads from:</strong> Cloud SQL read replica (canonical hot tables for inspection), <code>config</code> schema, <code>quarantine</code> schema, <code>audit</code> schema (Phase 1; BigQuery audit becomes a read source in Phase 3).</li>
         <li><strong>Writes to:</strong> <code>config.source_mappings</code> via mapping CRUD only. Never writes to canonical, history, identity_mirror, or bronze.</li>
         <li><strong>Calls:</strong> Onboarding Service (sample inference, promotion coordination). Does not call Identity Service for auth (Customer Master owns user auth).</li>
         <li><strong>Auth posture:</strong> trusts Customer Master tokens. Validates signature and claims; does not re-resolve identity.</li>
@@ -1331,7 +1332,6 @@
 
 <footer>
   <span>DIS &middot; ITHINA DATA PLATFORM &middot; ARCHITECTURE</span>
-  <span>DRAFT FOR REVIEW</span>
 </footer>
 
 </div>

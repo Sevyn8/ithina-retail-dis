@@ -31,7 +31,7 @@ ithina-dis/
 ├── contracts/               # Pub/Sub Avro/Proto, gRPC, Customer Master JWT contract
 ├── infra/                   # Terraform, k8s manifests, per-env config
 ├── tools/                   # operator tooling (replay, load test, codegen)
-├── alembic/                 # Postgres migrations (canonical, config, bronze, etc.)
+├── alembic/                 # Postgres migrations (canonical, config, bronze, identity_mirror, quarantine, staging, audit)
 ├── dbt/                     # BigQuery dbt project (canonical_history.* models)
 └── tests/                   # cross-cutting tests (integration, e2e, contract)
 ```
@@ -395,15 +395,21 @@ services/mirror-sync-consumer/    # maintains identity_mirror schema (v1.0)
 ├── src/
 │   └── mirror_sync_consumer/
 │       ├── __init__.py
-│       ├── main.py             # Pub/Sub subscriber entrypoint
+│       ├── main.py             # entrypoint (dispatches to consumer or pull mode)
 │       ├── config.py
 │       │
-│       ├── consumer/
+│       ├── consumer/           # Pub/Sub mode (deferred until CM emits)
 │       │   ├── __init__.py
 │       │   ├── subscribe.py    # Pub/Sub pull loop
 │       │   └── handler.py      # dispatch by event type
 │       │
-│       ├── sync/               # the actual mirror logic
+│       ├── pull/               # DB-pull mode (v1.0 launch path)
+│       │   ├── __init__.py
+│       │   ├── runner.py       # CLI / scheduler entrypoint
+│       │   ├── reader.py       # reads CM Postgres tenants + stores
+│       │   └── reconcile.py    # flags drift between mirror and source
+│       │
+│       ├── sync/               # shared upsert logic (used by both modes)
 │       │   ├── __init__.py
 │       │   ├── tenants.py      # upsert tenants_known
 │       │   └── stores.py       # upsert stores_known (soft-delete via is_active)
@@ -669,7 +675,7 @@ services/dis-api/                 # BFF for DIS UI; hosts onboarding sub-module 
 │       │   ├── canonical_replica.py    # reads from Cloud SQL read replica
 │       │   ├── config.py               # config.source_mappings CRUD
 │       │   ├── quarantine.py           # quarantine.* table queries
-│       │   └── audit_bq.py             # BigQuery audit_events queries
+│       │   └── audit.py               # audit.events queries (Cloud SQL in Phase 1; BQ-augmented in Phase 3)
 │       │
 │       ├── duckdb_runner/      # ad-hoc query panel (ops-restricted)
 │       │   ├── __init__.py
@@ -877,14 +883,16 @@ libs/dis-rls/             # RLS-aware DB session helpers
 ### libs/dis-audit/
 
 ```
-libs/dis-audit/           # audit event emission to BQ audit_events
+libs/dis-audit/           # audit event emission
 ├── pyproject.toml
 ├── README.md
 ├── src/
 │   └── dis_audit/
 │       ├── __init__.py
 │       ├── event.py            # AuditEvent Pydantic model
-│       ├── emit.py             # BigQuery streaming insert client
+│       ├── writer.py           # backend-selecting writer (Phase 1: postgres; Phase 3: + bigquery)
+│       ├── postgres_writer.py  # writes to Cloud SQL audit.events (Phase 1 active)
+│       ├── bigquery_writer.py  # writes to BigQuery audit_events (Phase 3 stub)
 │       └── stages.py           # enum of pipeline stages
 └── tests/
     └── unit/
