@@ -619,10 +619,10 @@ services/nightly-batch/           # daily BQ export + retention eviction (v1.0)
     └── README.md
 ```
 
-### services/dis-api/
+### services/dis-ui-server/
 
 ```
-services/dis-api/                 # BFF for DIS UI; hosts onboarding sub-module in-process (v1.0)
+services/dis-ui-server/                 # BFF for DIS UI; hosts onboarding sub-module in-process (v1.0)
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml
@@ -630,7 +630,7 @@ services/dis-api/                 # BFF for DIS UI; hosts onboarding sub-module 
 ├── .dockerignore
 │
 ├── src/
-│   └── dis_api/
+│   └── dis_ui_server/
 │       ├── __init__.py
 │       ├── main.py             # HTTP server entrypoint (FastAPI)
 │       ├── config.py

@@ -34,7 +34,7 @@ make reset-local     # nuke local data; start clean
 
 | Directory | Purpose |
 |---|---|
-| `services/` | Containerised services (receivers, identity, streaming consumer, drainers, dis-api) |
+| `services/` | Containerised services (receivers, identity, streaming consumer, drainers, dis-ui-server) |
 | `libs/` | Shared Python libraries (dis-core, dis-canonical, dis-mapping, dis-validation, dis-rls, dis-audit, dis-pii, dis-storage, dis-testing) |
 | `ui/` | DIS UI (TypeScript + React) |
 | `schemas/` | SQL DDL: `postgres/<schema>/*.sql`, `bigquery/*.sql` |

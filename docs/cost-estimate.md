@@ -31,10 +31,10 @@ v1.0 beta target:
 | Cloud SQL read replica | Same size, single zone | $120-150 |
 | Pub/Sub | <1B messages, <10GB throughput (`ingress.*`, `quarantine`, `pipeline.dlq`, `mapping.changed`, `identity.changed`) | $40-80 |
 | BigQuery storage | ~50GB active + 100GB long-term (canonical_history + audit_events) | $5-15 |
-| BigQuery streaming inserts + queries | Audit events + dis-api analytics queries via BqClient | $20-50 |
+| BigQuery streaming inserts + queries | Audit events + dis-ui-server analytics queries via BqClient | $20-50 |
 | GCS | ~100GB standard + lifecycle to Nearline/Coldline (bronze + dlq + replay-staging) | $5-15 |
 | Identity cache (Memorystore Redis Basic) | 1GB | $35-50 |
-| Other containerised services (receiver-csv-upload + identity-service + mirror-sync-consumer + quarantine-drainer + nightly-batch + daily-compute + dis-api) | ~7 small services in v1.0 | $80-180 |
+| Other containerised services (receiver-csv-upload + identity-service + mirror-sync-consumer + quarantine-drainer + nightly-batch + daily-compute + dis-ui-server) | ~7 small services in v1.0 | $80-180 |
 | Cloud Scheduler | A few cron jobs (nightly batch, daily compute, identity tasks) | <$5 |
 | Cloud Logging + Monitoring | Standard ingestion, default retention | $30-80 |
 | Networking (egress, NAT, load balancers) | Modest internal traffic, some egress | $50-100 |

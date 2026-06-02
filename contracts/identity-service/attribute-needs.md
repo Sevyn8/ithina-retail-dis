@@ -2,7 +2,7 @@
 
 **Purpose.** This document lists every attribute identity-service needs to do its job for the v1.0 launch scope (manual CSV upload from DIS UI). For each attribute: what it is, why identity-service needs it, the expected shape/format, and a placeholder for source (DIS UI passes / Customer Master serves / derived / cached).
 
-**Scope.** v1.0 launch: authenticated user uploads CSV via DIS UI. csv-upload receiver. Streaming consumer. Mirror-sync. dis-api. All other ingress paths (API/webhook, ERP POST, reverse-API) are deferred and out of scope here.
+**Scope.** v1.0 launch: authenticated user uploads CSV via DIS UI. csv-upload receiver. Streaming consumer. Mirror-sync. dis-ui-server. All other ingress paths (API/webhook, ERP POST, reverse-API) are deferred and out of scope here.
 
 **How to read this.** Each row is an attribute identity-service needs at some point. The Source column is empty for you to decide. The Notes column carries constraints and reasoning.
 
@@ -10,7 +10,7 @@
 
 ## 1. To verify the caller (every incoming request to identity-service)
 
-identity-service is called by other DIS services (csv-upload, streaming-consumer, dis-api). It must verify the caller is a legitimate DIS service before serving any data.
+identity-service is called by other DIS services (csv-upload, streaming-consumer, dis-ui-server). It must verify the caller is a legitimate DIS service before serving any data.
 
 | Attribute | What | Expected shape | Source | Notes |
 |---|---|---|---|---|
@@ -33,7 +33,7 @@ When the DIS UI uploads a CSV (via csv-upload phase 1), csv-upload calls identit
 | Tenant ID | Tenant the user belongs to | `^t_[a-z0-9]{12}$` | | The most load-bearing attribute. Drives RLS, scoping, all downstream writes. |
 | Store ID (optional) | Store the user is scoped to, if any | `^s_[a-z0-9]{12}$`, or null | | Some users may be tenant-wide (no store scope). For CSV upload, the user typically uploads on behalf of a specific store; if so, that store_id is here. If null, the upload UI must collect the target store from the user. |
 | User roles | What the user is allowed to do within their tenant | Array of strings | | Drives RBAC checks. Expected vocabulary for the DIS UI at launch: `dis:upload` (can upload CSV), `dis:mapping_admin` (can edit/promote mappings), `dis:ops` (Ithina-side ops, cross-tenant), `dis:read` (read-only). The vocabulary is DIS-side; Customer Master is the issuer. |
-| Tenant active flag | Whether the tenant is currently active in Customer Master | Boolean | | If the tenant is deactivated, every action by users of that tenant must be rejected. identity-service surfaces this; receivers and dis-api enforce. |
+| Tenant active flag | Whether the tenant is currently active in Customer Master | Boolean | | If the tenant is deactivated, every action by users of that tenant must be rejected. identity-service surfaces this; receivers and dis-ui-server enforce. |
 | Store active flag | Whether the store is currently active in Customer Master | Boolean | | Same as tenant active flag, scoped to store. |
 | User active flag (optional) | Whether the user record is currently active in Customer Master | Boolean | | A deactivated user should not be able to act even if their token has not expired. Less critical than tenant/store flags but useful for defense in depth. |
 | Tenant metadata (optional) | Additional fields about the tenant | Object, free-form | | Examples: PII tokenization policy version, region, source config defaults. Pass-through; identity-service does not interpret. |
@@ -103,8 +103,8 @@ Pinning these answers fills the Source column above.
 For boundary clarity, things people sometimes assume identity-service needs but actually doesn't:
 
 - **User passwords or credentials.** Customer Master handles authentication entirely. identity-service only sees post-auth tokens.
-- **The user's email, name, or display fields.** Not used by DIS data plane. dis-api may want them for audit display; that's a separate dis-api → Customer Master call, not an identity-service concern.
-- **RBAC policy definitions.** identity-service just receives the user's `roles` list and surfaces it. The mapping of "role X can do Y" is enforced in dis-api (for UI actions) and receivers (for data-plane actions), not in identity-service.
+- **The user's email, name, or display fields.** Not used by DIS data plane. dis-ui-server may want them for audit display; that's a separate dis-ui-server → Customer Master call, not an identity-service concern.
+- **RBAC policy definitions.** identity-service just receives the user's `roles` list and surfaces it. The mapping of "role X can do Y" is enforced in dis-ui-server (for UI actions) and receivers (for data-plane actions), not in identity-service.
 - **Audit logs of user activity.** Customer Master's audit and DIS's audit are separate concerns.
 - **OAuth flows, login screens, password resets.** Customer Master owns these entirely.
 

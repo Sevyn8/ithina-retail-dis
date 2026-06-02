@@ -1,4 +1,4 @@
-# `services/dis-api/` — *v1.0*
+# `services/dis-ui-server/` — *v1.0*
 
 The single backend-for-frontend (BFF) for the DIS UI. Per-sub-module handlers; one Customer Master auth integration; never writes to canonical.
 
@@ -9,7 +9,7 @@ The single backend-for-frontend (BFF) for the DIS UI. Per-sub-module handlers; o
 - Inputs: bearer token (Customer Master-issued), path-based handler routing, body or query params per handler.
 - Preconditions: token signature valid; claims include `tenant_id` for tenant-scoped handlers; ops role required for ops-only handlers (DuckDB query panel).
 
-**Process (per handler).** dis-api has seven distinct surfaces; each handler has its own EPE. Common-process steps (Customer Master JWT verification, `tenant_id` scoping, FastAPI dependency injection of repos and clients) are applied uniformly.
+**Process (per handler).** dis-ui-server has seven distinct surfaces; each handler has its own EPE. Common-process steps (Customer Master JWT verification, `tenant_id` scoping, FastAPI dependency injection of repos and clients) are applied uniformly.
 
 - **`sample_upload`.** Entry: POST sample from §5 ui for source onboarding. Process: store sample in GCS onboarding-staging path via `dis-storage`; invoke in-process `onboarding/inference` (DuckDB schema inference) and `onboarding/suggestion` (mapping + normalization proposal) and `onboarding/validation_draft` (suite proposals); return draft mapping. Exit: 2xx with `{draft_mapping_id, inferred_schema, proposed_validation_suites}`. Failures: 400 (sample malformed), 422 (inference cannot proceed), 500 (DuckDB error).
 - **`onboarding_review`.** Entry: GET/PUT from §5 ui for the operator review surface. Process: read/write `config.source_mappings` rows with `status='staged'`; coordinate dry-run renders against the sample; on approval transition `staged → active` (with shadow-rollout coordination via `onboarding/shadow`). On active transition, publishes `mapping.changed` Pub/Sub for §3.7 streaming-consumer side-input refresh. Exit: 2xx with mapping state. Failures: 403 (not authorized for tenant), 404 (mapping not found), 409 (concurrent edit).
@@ -22,12 +22,12 @@ The single backend-for-frontend (BFF) for the DIS UI. Per-sub-module handlers; o
 **Exit (service-wide).**
 - Success: HTTP 2xx per handler. Writes (only via `mapping_crud`, `onboarding_review`, and resubmit triggers in `quarantine`) commit to `config.source_mappings` or publish to `ingress.resubmit` or `mapping.changed` Pub/Sub. Reads return data scoped by tenant.
 - Failure modes handled: per-handler as above; cross-cutting failure (token expired, downstream DB unavailable) handled by FastAPI middleware and returned as standard error envelope.
-- Failure modes propagated: data-plane failures (mapping that fails at runtime in §3 streaming consumer) are not dis-api's concern; surfaced via quarantine handler later.
-- Edge case: token expires mid-request — the §5 ui is responsible for refresh; dis-api returns 401 and the UI retries after refresh.
+- Failure modes propagated: data-plane failures (mapping that fails at runtime in §3 streaming consumer) are not dis-ui-server's concern; surfaced via quarantine handler later.
+- Edge case: token expires mid-request — the §5 ui is responsible for refresh; dis-ui-server returns 401 and the UI retries after refresh.
 
 
 ```
-services/dis-api/
+services/dis-ui-server/
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml
@@ -35,7 +35,7 @@ services/dis-api/
 ├── .dockerignore
 │
 ├── src/
-│   └── dis_api/
+│   └── dis_ui_server/
 │       ├── __init__.py
 │       ├── main.py             # HTTP server entrypoint (FastAPI)
 │       ├── config.py
@@ -131,9 +131,9 @@ services/dis-api/
 
 **Why `handlers/` are thin FastAPI routers.** Each file is an `APIRouter` exposing one sub-module's endpoints; `main.py` mounts them. Handlers delegate to either `repos/` (for read-dominant operations like quarantine views) or to `onboarding/` (for sample analysis and shadow rollout). They contain no business logic of their own.
 
-**Why `onboarding/` lives inside this service.** Earlier drafts had `services/onboarding-service/` as a separate process called by dis-api. Reconsidered: dis-api was the only caller, the CPU profile of sample inference does not warrant process isolation, and the architecture v0.5 decision chose a single BFF over per-domain APIs. The internal structure (inference / suggestion / validation_draft / shadow) is preserved as folders, not as a separate service. If onboarding work later blocks BFF latency in production, the sub-module is designed for clean extraction into its own service in a single refactor.
+**Why `onboarding/` lives inside this service.** Earlier drafts had `services/onboarding-service/` as a separate process called by dis-ui-server. Reconsidered: dis-ui-server was the only caller, the CPU profile of sample inference does not warrant process isolation, and the architecture v0.5 decision chose a single BFF over per-domain APIs. The internal structure (inference / suggestion / validation_draft / shadow) is preserved as folders, not as a separate service. If onboarding work later blocks BFF latency in production, the sub-module is designed for clean extraction into its own service in a single refactor.
 
-**Why `repos/` instead of `sinks/`.** Sinks are write-side (emit to a sink). Repos are read-side (read from a source). The dis-api read surface (canonical replica, config, quarantine, audit) is repo-shaped; injected via FastAPI `Depends()`. Write paths (mapping CRUD into `config.source_mappings`, staged-to-active promotion) go through the same repos.
+**Why `repos/` instead of `sinks/`.** Sinks are write-side (emit to a sink). Repos are read-side (read from a source). The dis-ui-server read surface (canonical replica, config, quarantine, audit) is repo-shaped; injected via FastAPI `Depends()`. Write paths (mapping CRUD into `config.source_mappings`, staged-to-active promotion) go through the same repos.
 
 **Why `duckdb_runner/` is its own folder.** Ops-restricted ad-hoc SQL execution is a security-sensitive surface. Isolating it makes the auth gate explicit (this handler requires ops role) and makes the runner separately auditable.
 

@@ -34,7 +34,7 @@ ithina-dis/
 │   ├── quarantine-drainer/      # Quarantine Pub/Sub → Cloud SQL drainer (v1.0)
 │   ├── nightly-batch/           # Daily BQ export + retention eviction (v1.0)
 │   ├── daily-compute/           # Postgres-local signal compute (v1.0)
-│   └── dis-api/                 # BFF for DIS UI (v1.0)
+│   └── dis-ui-server/                 # BFF for DIS UI (v1.0)
 │
 ├── libs/                        # Shared Python libraries
 │   ├── dis-core/                # Logging, IDs, BqClient, audit helpers
@@ -78,7 +78,7 @@ Each service has its own `README.md` (full EPE — Entry / Process / Exit — bl
 | [`quarantine-drainer`](services/quarantine-drainer/README.md) | v1.0 | Writes quarantine events to Cloud SQL. |
 | [`nightly-batch`](services/nightly-batch/README.md) | v1.0 | Daily BQ export + Cloud SQL partition eviction. |
 | [`daily-compute`](services/daily-compute/README.md) | v1.0 | Incremental signal compute. |
-| [`dis-api`](services/dis-api/README.md) | v1.0 | BFF for DIS UI. Hosts onboarding sub-module in-process. |
+| [`dis-ui-server`](services/dis-ui-server/README.md) | v1.0 | BFF for DIS UI. Hosts onboarding sub-module in-process. |
 
 ---
 

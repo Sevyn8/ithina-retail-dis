@@ -22,7 +22,7 @@ This service is detailed first because it is the most internally complex of the 
 **Entry.**
 - Trigger: Pub/Sub message on `ingress.ready` subscription. Ordering key: `tenant_id`.
 - Upstream producers: receivers (§§4.1, 4.2, 4.3, 4.4). In v1.0 only §4.2 csv-upload publishes.
-- Inputs: message envelope `{trace_id, tenant_id, store_id, source_id, bronze_ref, gcs_uri, received_ts, replay?}`; side-inputs (refreshing cache): mapping config from `config.source_mappings` (written by §4.10 dis-api mapping-CRUD handler) and `identity_mirror` (maintained by §4.6 mirror-sync-consumer).
+- Inputs: message envelope `{trace_id, tenant_id, store_id, source_id, bronze_ref, gcs_uri, received_ts, replay?}`; side-inputs (refreshing cache): mapping config from `config.source_mappings` (written by §4.10 dis-ui-server mapping-CRUD handler) and `identity_mirror` (maintained by §4.6 mirror-sync-consumer).
 - Preconditions: Cloud SQL canonical schema reachable; Identity Service (§4.5) reachable for `validate()` calls (or `identity_mirror` available as fallback); mapping config exists for `(tenant_id, source_id)` (else routes whole chunk to quarantine).
 
 **Process.**
@@ -40,7 +40,7 @@ This service is detailed first because it is the most internally complex of the 
 - Ack message on canonical-tx commit (or on DLQ publish during circuit-open).
 
 **Exit.**
-- Success: valid rows landed atomically in canonical hot + event tables (single transaction per tenant batch); invalid rows published to `quarantine` topic (consumed by §4.8 quarantine-drainer); per-stage per-row audit events emitted (read by §4.10 dis-api audit handler); message acked.
+- Success: valid rows landed atomically in canonical hot + event tables (single transaction per tenant batch); invalid rows published to `quarantine` topic (consumed by §4.8 quarantine-drainer); per-stage per-row audit events emitted (read by §4.10 dis-ui-server audit handler); message acked.
 - Failure modes handled: FK violation → retry-with-backoff → quarantine; Cloud SQL transient error → batch retry; Cloud SQL unhealthy → route to `pipeline.dlq` and trigger receiver-side 503s; mapping config missing → entire chunk to quarantine with `mapping_not_found` reason.
 - Failure modes propagated: persistent Pub/Sub or Cloud SQL outage → nack and Pub/Sub retries; ops alerted; DLQ accumulates until health restores.
 - Edge cases: out-of-order events (older `event_ts` than canonical hot) → no-op upsert (history still appends); replay of an already-processed chunk → idempotent via `trace_id` + row hash in hot upsert and history-append constraints.

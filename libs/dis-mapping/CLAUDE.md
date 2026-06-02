@@ -10,7 +10,7 @@ For interfaces, types, file structure, see `README.md` in this directory.
 
 ## Rules specific to this lib
 
-- Mapping config is read-only here. Authoring lives in dis-api onboarding sub-module.
+- Mapping config is read-only here. Authoring lives in dis-ui-server onboarding sub-module.
 - Pure functions over `(mapping, raw_row) -> canonical_row`. No I/O.
 - Custom transforms register at startup via the `escape_hatch/` registry pattern.
 - Per-(tenant, source) cache; refreshed via `mapping.changed` Pub/Sub side input.

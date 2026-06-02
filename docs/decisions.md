@@ -105,7 +105,7 @@
 
 ### D16 DuckDB optional; Pandera committed
 **Decision.** DuckDB is recommended but not required. Pandera is the committed validation engine (§4.4a, §4.21).
-**Why DuckDB remains optional.** DuckDB pre-flight in receivers and ops query panel in dis-api are both achievable with custom CSV parsing and ad-hoc BQ queries respectively. DuckDB makes them cheaper and faster; not adopting it adds engineering effort, not correctness risk.
+**Why DuckDB remains optional.** DuckDB pre-flight in receivers and ops query panel in dis-ui-server are both achievable with custom CSV parsing and ad-hoc BQ queries respectively. DuckDB makes them cheaper and faster; not adopting it adds engineering effort, not correctness risk.
 **Why Pandera is no longer optional.** See §4.4a. The reasoning that made it the marginal favorite in v0 became load-bearing once latency targets (§2.4) and Cloud Run runtime (§4.4) were pinned. v1.0 ships with Pandera.
 
 ### D17 Assisted source onboarding, with staged rollout
@@ -153,17 +153,17 @@
 **Key rotation.** Token vault carries a key version. Rotation produces a new token namespace; old tokens remain joinable within their version. Migration to new tokens is a per-tenant batch operation.
 
 ### D25 Customer Master as external dependency (D5)
-**Decision.** Customer Master (Sevyn8's Auth0-integrated identity, auth, and RBAC system) is the single source of truth for user identity and authorization. DIS does not maintain user records. DIS UI accepts Customer Master tokens; dis-api validates them.
+**Decision.** Customer Master (Sevyn8's Auth0-integrated identity, auth, and RBAC system) is the single source of truth for user identity and authorization. DIS does not maintain user records. DIS UI accepts Customer Master tokens; dis-ui-server validates them.
 **Alternatives.** DIS maintains its own user table; DIS uses Auth0 directly.
 **Why.** Customer Master is reused across Sevyn8 products. Duplicating user records in DIS creates synchronization burden and policy drift. Auth0-direct would skip the RBAC layer Customer Master provides and force DIS to reimplement role policies.
 **What is still open.** Token format and verification semantics (likely JWT with JWKS) and the RBAC claim vocabulary DIS expects from Customer Master are the remaining contracts to pin in Phase 0. Frontend DIS UI integration with Customer Master is delivered.
 
-### D26 dis-api as backend-for-frontend (BFF) for DIS UI
-**Decision.** A single containerized service, `dis-api`, is the only backend the DIS UI calls. Per-sub-module handlers inside (auth, sample upload, onboarding review, mapping CRUD, quarantine console, audit lookup, DuckDB query panel). Onboarding work (schema inference, mapping suggestion, validation draft, shadow rollout) lives in-process as a sub-module of dis-api, not as a separate service.
+### D26 dis-ui-server as backend-for-frontend (BFF) for DIS UI
+**Decision.** A single containerized service, `dis-ui-server`, is the only backend the DIS UI calls. Per-sub-module handlers inside (auth, sample upload, onboarding review, mapping CRUD, quarantine console, audit lookup, DuckDB query panel). Onboarding work (schema inference, mapping suggestion, validation draft, shadow rollout) lives in-process as a sub-module of dis-ui-server, not as a separate service.
 **Alternatives.** Per-domain APIs (one service per UI surface); growing HTTP APIs on existing data-plane services (identity-service, quarantine-drainer, etc.); separate onboarding-service.
 **Why one BFF.** One Customer Master integration point. One URL the UI calls. Per-domain APIs multiply auth integrations and deploy units for no v0 benefit. Growing HTTP on data-plane services couples them to UI lifecycle and CM auth.
-**Why onboarding in-process.** dis-api is the only caller of onboarding work. CPU profile of sample inference does not warrant process isolation. If onboarding work later blocks BFF latency, the sub-module structure (inference/, suggestion/, validation_draft/, shadow/) is designed for clean extraction.
-**What dis-api never does.** Never writes to canonical tables. Never handles Pub/Sub messages on the ingress/quarantine path. Reads from Cloud SQL read replica + config + quarantine + BQ audit. Writes only to `config.source_mappings`.
+**Why onboarding in-process.** dis-ui-server is the only caller of onboarding work. CPU profile of sample inference does not warrant process isolation. If onboarding work later blocks BFF latency, the sub-module structure (inference/, suggestion/, validation_draft/, shadow/) is designed for clean extraction.
+**What dis-ui-server never does.** Never writes to canonical tables. Never handles Pub/Sub messages on the ingress/quarantine path. Reads from Cloud SQL read replica + config + quarantine + BQ audit. Writes only to `config.source_mappings`.
 
 ### D27 Streaming consumer backpressure: circuit breaker + DLQ (G3)
 **Decision.** The streaming consumer probes Cloud SQL health (`SELECT 1`, 100ms timeout) before each batch commit. On unhealthy state, batches divert to `pipeline.dlq` topic. Receivers monitor DLQ depth; when threshold crosses, receivers return 503 + `Retry-After` to back off upstream producers.
@@ -177,7 +177,7 @@
 ### D29 BigQuery as long-term archive; Cloud SQL holds 35-day buffer
 **Decision.** BigQuery is the permanent archive for canonical history. Cloud SQL holds a 35-day rolling buffer of events and signal history (configurable). Daily Cloud SQL → BigQuery export runs from day 1; partitions are dropped from Cloud SQL only after the retention window elapses.
 **Alternatives considered.** Cloud SQL holds 3 months (original position); Cloud SQL holds 24h buffer with same-day BQ export and partition drop (interim posture); direct-to-BQ via Pub/Sub with no Cloud SQL events.
-**Why.** At v1.0 beta scale (~150K events/day across 5 tenants × ~25 stores), Cloud SQL handles ~5M event rows comfortably with appropriate partitioning. A 24-hour buffer would be conservative; designed for 100M events/day worst case. 35 days gives ops a useful replay window in SQL without crossing to BQ; ROOS and dis-api can read recent history from Cloud SQL.
+**Why.** At v1.0 beta scale (~150K events/day across 5 tenants × ~25 stores), Cloud SQL handles ~5M event rows comfortably with appropriate partitioning. A 24-hour buffer would be conservative; designed for 100M events/day worst case. 35 days gives ops a useful replay window in SQL without crossing to BQ; ROOS and dis-ui-server can read recent history from Cloud SQL.
 **Why the retention is configurable.** Different deployments and scale points warrant different windows. Beta runs at 35 days; production at scale may reduce to 7-14 days; stress test at 24 hours. The eviction job reads the retention parameter; no schema change required.
 **Cadence.** Daily eviction job runs every day. From day 1: copies yesterday's partition to BigQuery (idempotent WRITE_TRUNCATE). From day N+retention: drops partitions older than retention.
 **Replay window.** 35 days in Cloud SQL. Beyond that, replay reads from BigQuery; the streaming consumer reprocesses BQ-sourced events through the pipeline.
@@ -249,7 +249,7 @@ to filter to the current truth. dbt models in BigQuery `canonical_history.*` exp
 **Decision.** Audit events are written to a Cloud SQL `audit.events` table during Phase 1. BigQuery `audit_events` remains the long-term archive (per D29's spirit) but its ingestion is deferred to Phase 3 alongside the rest of the nightly batch + BigQuery work.
 
 **Why.**
-- BigQuery streaming ingest requires a live cloud project. v1.0 launch infrastructure (Terraform, `ithina-dis-dev`, `ithina-dis-staging`, `ithina-dis-prod`) is deferred to a later trigger. Routing audit through Cloud SQL for Phase 1 lets the audit-lookup feature (dis-api) ship without waiting on cloud setup.
+- BigQuery streaming ingest requires a live cloud project. v1.0 launch infrastructure (Terraform, `ithina-dis-dev`, `ithina-dis-staging`, `ithina-dis-prod`) is deferred to a later trigger. Routing audit through Cloud SQL for Phase 1 lets the audit-lookup feature (dis-ui-server) ship without waiting on cloud setup.
 - Cloud SQL is the same datastore everything else writes to in Phase 1, so the audit emitter doesn't need a separate transport during initial development.
 - Beta-scale audit volume (10 + F events per ingress event, ~150K events/day) sits comfortably in Cloud SQL with daily partitioning.
 
@@ -258,12 +258,12 @@ to filter to the current truth. dbt models in BigQuery `canonical_history.*` exp
 **Implications.**
 - New Postgres `audit` schema; new `audit.events` table; DDL at `schemas/postgres/audit/events.sql`. Mirrors the column shape of `schemas/bigquery/audit_events.sql`.
 - `libs/dis-audit` Phase 1 writer targets Cloud SQL. Phase 3 adds the BigQuery archive path; the writer interface stays stable.
-- dis-api's audit lookup (build-guide Slice 13) reads from Cloud SQL.
+- dis-ui-server's audit lookup (build-guide Slice 13) reads from Cloud SQL.
 - `libs/dis-core` BqClient is a stub during Phase 1; real implementation lands with Phase 3.
 
 **Alternatives considered.**
 - **BigQuery from day one with a real cloud project provisioned in Phase 0.** Rejected: cloud setup is deferred precisely because no slice yet needs it; advancing it just to support audit is the tail wagging the dog.
-- **Cloud Logging only.** Rejected: dis-api needs SQL-queryable audit for the tenant-facing audit lookup feature. Cloud Logging without a SQL home blocks Slice 13.
+- **Cloud Logging only.** Rejected: dis-ui-server needs SQL-queryable audit for the tenant-facing audit lookup feature. Cloud Logging without a SQL home blocks Slice 13.
 
 ---
 
@@ -276,7 +276,7 @@ to filter to the current truth. dbt models in BigQuery `canonical_history.*` exp
 Both modes call the same upsert logic in `sync/`. Different entry points; same write path.
 
 **Why.**
-- Customer Master does not currently emit `identity.changed`. The Pub/Sub design (D2, D11) is the architectural target, but waiting for CM's emit work would block every DIS slice that needs populated `identity_mirror` (receivers, streaming consumer, dis-api).
+- Customer Master does not currently emit `identity.changed`. The Pub/Sub design (D2, D11) is the architectural target, but waiting for CM's emit work would block every DIS slice that needs populated `identity_mirror` (receivers, streaming consumer, dis-ui-server).
 - DB-pull works against the same Customer Master DB schema the eventual Pub/Sub events would carry. It's not a workaround for local dev only: same code runs against CM's Cloud SQL in production.
 - Reconciliation use case persists. Even after Pub/Sub goes live, a periodic DB-pull serves as cheap reconciliation (catch missed events, recover from outages). DB-pull stays in v1.0; doesn't retire when Pub/Sub activates.
 

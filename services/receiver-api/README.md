@@ -20,7 +20,7 @@ The HTTP receiver for API/webhook ingress: tenant POS systems and partner webhoo
 - Emit audit event for each stage (auth, identity, gcs write, bronze write, pubsub publish).
 
 **Exit.**
-- Success: HTTP 2xx with `{trace_id}` returned. Durable outputs: one GCS object, one bronze metadata row, one `ingress.ready` Pub/Sub message (consumed by §3.7 streaming-consumer), five audit events (read by §3.10 dis-api audit handler).
+- Success: HTTP 2xx with `{trace_id}` returned. Durable outputs: one GCS object, one bronze metadata row, one `ingress.ready` Pub/Sub message (consumed by §3.7 streaming-consumer), five audit events (read by §3.10 dis-ui-server audit handler).
 - Failure modes handled here: 401 (bad auth), 400 (malformed payload), 404 (unknown source), 429 (rate limit), 503 (Identity Service circuit open or Pub/Sub publish failed). `trace_id` returned on every response including failures.
 - Failure modes propagated: pipeline-side validation, mapping, and canonical write failures are not the receiver's concern; the receiver's job ends when `ingress.ready` is published. Failures downstream surface to operators via §3.8 quarantine-drainer and to tenants via the §3.10 quarantine handler.
 

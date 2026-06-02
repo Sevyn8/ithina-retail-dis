@@ -17,6 +17,6 @@ libs/dis-validation/
     └── unit/
 ```
 
-**Why this lib exists.** The streaming consumer, `dis-api`'s onboarding sub-module (Layer 3 validation draft), and the nightly batch (optional quality gate) all use Pandera suites. Shared loading and formatting code lives here.
+**Why this lib exists.** The streaming consumer, `dis-ui-server`'s onboarding sub-module (Layer 3 validation draft), and the nightly batch (optional quality gate) all use Pandera suites. Shared loading and formatting code lives here.
 
 ---

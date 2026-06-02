@@ -18,7 +18,7 @@ Subscribes to the `quarantine` Pub/Sub topic, writes failed rows/chunks to the C
 - Ack message.
 
 **Exit.**
-- Success: quarantine row persisted; ack on Pub/Sub. Rows are read by §3.10 dis-api quarantine handler for tenant and ops display.
+- Success: quarantine row persisted; ack on Pub/Sub. Rows are read by §3.10 dis-ui-server quarantine handler for tenant and ops display.
 - Failure modes handled: Cloud SQL transient error → nack (Pub/Sub retries with backoff); duplicate event (same `trace_id` + `row_hash`) → idempotent insert (no-op); message malformed → DLQ to `quarantine.dlq` for ops.
 - Failure modes propagated: persistent Cloud SQL failure → DLQ; ops alerted.
 - Edge case: large failure batch from a single chunk (e.g., 10,000-row CSV with all rows failing canonical-shape) — batched insert in chunks of N to avoid long transactions.

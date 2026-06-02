@@ -1,6 +1,6 @@
-# services/dis-api — Claude Code Context
+# services/dis-ui-server — Claude Code Context
 
-Loaded when Claude Code works in `services/dis-api/`. Service-specific rules; root `CLAUDE.md` applies first.
+Loaded when Claude Code works in `services/dis-ui-server/`. Service-specific rules; root `CLAUDE.md` applies first.
 
 ## What this service is
 

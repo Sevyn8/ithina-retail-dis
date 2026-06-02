@@ -13,7 +13,7 @@
 
 ## 1. Purpose
 
-This document describes the architecture for Ithina's data platform: the end-to-end path from ingress at the system boundary (POS/ERP/webhook/CSV) to the canonical, multi-tenant data model in Cloud SQL Postgres, with analytics-grade history in BigQuery. The goal is a managed-first, low-maintenance pipeline on GCP that meets a measured latency SLO (p50 < 3s, p95 < 8s, p99 < 15s end-to-end), enforces hard tenant data isolation, and provides full audit traceability by `trace_id` per ingested row. The DIS UI surface is served by a single backend-for-frontend service (`dis-api`); authentication is delegated to Customer Master.
+This document describes the architecture for Ithina's data platform: the end-to-end path from ingress at the system boundary (POS/ERP/webhook/CSV) to the canonical, multi-tenant data model in Cloud SQL Postgres, with analytics-grade history in BigQuery. The goal is a managed-first, low-maintenance pipeline on GCP that meets a measured latency SLO (p50 < 3s, p95 < 8s, p99 < 15s end-to-end), enforces hard tenant data isolation, and provides full audit traceability by `trace_id` per ingested row. The DIS UI surface is served by a single backend-for-frontend service (`dis-ui-server`); authentication is delegated to Customer Master.
 
 ## 2. System Context and Constraints
 
@@ -88,12 +88,12 @@ Error budget: 5% over 30 days. Breach triggers a review (not an auto-page, since
 ### 2.7 Audit
 Every event carries a `trace_id` from receiver onward. Every pipeline stage emits a per-row audit event keyed by `trace_id`. Debugging a row is a `SELECT ... WHERE trace_id = '...'`.
 
-Phase 1 lands audit events in Cloud SQL `audit.events` so the dis-api audit-lookup feature can ship without waiting on the cloud-project setup BigQuery requires (see `decisions.md` D34). Phase 3 adds the Cloud SQL → BigQuery archive job for `audit_events`; BigQuery remains the long-term audit home as in `decisions.md` D7 and D29.
+Phase 1 lands audit events in Cloud SQL `audit.events` so the dis-ui-server audit-lookup feature can ship without waiting on the cloud-project setup BigQuery requires (see `decisions.md` D34). Phase 3 adds the Cloud SQL → BigQuery archive job for `audit_events`; BigQuery remains the long-term audit home as in `decisions.md` D7 and D29.
 
 ### 2.8 Identity store isolation
 Tenant and store metadata lives in **Customer Master**, the Auth0-integrated identity, auth, and RBAC system that is the single source of truth for user identity and authorization across Sevyn8 products (not just DIS). Customer Master is physically separate from the data-platform DB; the data platform never queries it directly. Access is mediated by a **Tenant/Store Identity Service** (DIS-internal, see `decisions.md` D2) that wraps Customer Master with a cache and circuit breaker. Cross-DB FK is impossible at the engine level; equivalent guarantees are reconstructed via a replicated mirror table inside the data-platform DB with real Postgres FKs pointing to it.
 
-User authentication and RBAC for the DIS UI is delegated entirely to Customer Master. DIS does not maintain user records; the DIS UI accepts Customer Master tokens, and dis-api (see `decisions.md` D17) validates them. Customer Master is treated as an external dependency, not a DIS sub-component.
+User authentication and RBAC for the DIS UI is delegated entirely to Customer Master. DIS does not maintain user records; the DIS UI accepts Customer Master tokens, and dis-ui-server (see `decisions.md` D17) validates them. Customer Master is treated as an external dependency, not a DIS sub-component.
 
 ### 2.9 PII handling
 Personal identifiers (phone, email, loyalty_id, PAN, Aadhaar, and other fields per tenant policy) are tokenized at the receiver via deterministic HMAC with per-tenant keys before any persistence. Bronze and canonical never carry raw PII. Right-to-erasure (DPDPA, GDPR) becomes a token-vault delete: deleting the key invalidates all tokens for that tenant. Tokenization is deterministic so joins on tokenized fields still work; per-tenant key prevents cross-tenant join-inference attacks. See `decisions.md` D18 for the PII module.
@@ -243,10 +243,10 @@ Personal identifiers (phone, email, loyalty_id, PAN, Aadhaar, and other fields p
    │ └──────────────────────────────────────┘ │         │                      │
    └──────────────┬───────────────────────────┘         │                      │
                   │                                     │                      │
-                  │ all UI reads/writes via dis-api     │                      │
+                  │ all UI reads/writes via dis-ui-server     │                      │
                   ▼                                     │                      │
    ┌──────────────────────────────────────────┐         │                      │
-   │ dis-api (BFF)                            │         │                      │
+   │ dis-ui-server (BFF)                            │         │                      │
    │ Handlers: sample_upload | onboarding_    │         │                      │
    │ review | mapping_crud | quarantine |     │         │                      │
    │ audit | duckdb_query                     │         │                      │
@@ -299,7 +299,7 @@ This section describes each major module at a high level: what it is, what it do
 **What it is.** A set of containerized services, one per ingress channel (API/webhook, manual CSV upload via DIS UI, per-tenant ERP CSV POST endpoint, external-API puller). In v1.0 only csv-upload ships; the other three are designed for but deferred.
 **Role.** The system's boundary. Authenticates the caller, attaches identity (`tenant_id`, `store_id`) and tracing (`trace_id`), **tokenizes PII fields (`decisions.md` D24)**, persists the raw payload to GCS and a metadata-only enriched chunk record to bronze Postgres, and notifies the pipeline by publishing to Pub/Sub `ingress.ready`. Receivers are permissive: they accept anything structurally valid and let the pipeline handle semantic validation.
 **Why it exists separately.** Channels differ in auth and parsing, but they all converge on the same downstream contract. Splitting per-channel keeps each receiver simple and lets channels be deployed and scaled independently.
-**Auth posture.** API/webhook and reverse-API: machine credentials (bearer token, API key, mTLS). CSV manual upload: Customer Master session token forwarded from dis-api. ERP CSV POST: per-tenant API key or mTLS. All identity is resolved via the Identity Service after auth (`decisions.md` D2).
+**Auth posture.** API/webhook and reverse-API: machine credentials (bearer token, API key, mTLS). CSV manual upload: Customer Master session token forwarded from dis-ui-server. ERP CSV POST: per-tenant API key or mTLS. All identity is resolved via the Identity Service after auth (`decisions.md` D2).
 
 ### 4.2 Tenant/Store Identity Service
 **What it is.** A small containerized service backed by an in-memory or Redis cache, sitting in front of **Customer Master** (the Auth0-integrated identity system; see §2.8).
@@ -340,7 +340,7 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 
 ### 4.7 Mapping & Validation Configuration
 **What it is.** A configuration store in the data-platform Postgres (`config.source_mappings`), holding versioned mapping rules and Pandera validation suite references, per (tenant, source).
-**Role.** The contract between an external data source and the canonical schema. Edited via dis-api mapping CRUD. The pipeline reads it as a refreshing side input; `mapping.changed` events trigger immediate cache refresh (`decisions.md` D6).
+**Role.** The contract between an external data source and the canonical schema. Edited via dis-ui-server mapping CRUD. The pipeline reads it as a refreshing side input; `mapping.changed` events trigger immediate cache refresh (`decisions.md` D6).
 **Why versioned.** B1 (`decisions.md` D22) requires that every canonical row carry the `mapping_version_id` that produced it. Mapping versions are immutable; edits create new versions. Active mapping is the latest with `status=active`. Old versions remain queryable indefinitely.
 **Why it exists.** Source diversity is the central operational challenge of the platform. Without a config-driven mapping layer, every new source would require a code change and a deploy.
 
@@ -362,7 +362,7 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 **What it is.** A structured per-event audit record store. Phase 1: Cloud SQL `audit.events`. Phase 3 onward: BigQuery `audit_events` as the long-term archive, with Cloud SQL serving as a rolling buffer (35-day retention matching event tables).
 **Role.** Captures one row per (trace_id, stage, status) emitted by the pipeline. Provides the end-to-end traceability the system promises: any row's lifecycle is one SQL query away.
 **Why it exists.** Logs are not queryable enough for production debugging at scale. A dedicated structured store, separate from operational logs, makes audit a first-class concern.
-**Why Phase 1 in Cloud SQL (see `decisions.md` D34).** The dis-api audit-lookup feature needs SQL-queryable audit. Routing audit through Cloud SQL during Phase 1 avoids waiting on the cloud-project setup BigQuery requires. The BigQuery target remains the architectural endpoint, added in Phase 3 alongside the rest of the BigQuery offload (build-guide.md Slice 16).
+**Why Phase 1 in Cloud SQL (see `decisions.md` D34).** The dis-ui-server audit-lookup feature needs SQL-queryable audit. Routing audit through Cloud SQL during Phase 1 avoids waiting on the cloud-project setup BigQuery requires. The BigQuery target remains the architectural endpoint, added in Phase 3 alongside the rest of the BigQuery offload (build-guide.md Slice 16).
 
 ### 4.11 Analytics Store (BigQuery `canonical_history`)
 **What it is.** The long-term home of history data, populated by a nightly batch job from Cloud SQL.
@@ -383,8 +383,8 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 **What it is.** A single containerized service that hosts the data platform's entire UI surface. One deployment, one container, **delegates auth to Customer Master**. All user-facing screens for both tenants and Ithina ops live here as sub-modules.
 
 **Sub-modules:**
-- **Auth.** Accepts Customer Master-issued tokens; passes them to dis-api on every backend call. The UI does not maintain its own user store; Customer Master is the source of truth.
-- **Sample upload.** Front-end for source onboarding. Lets the operator (or tenant) upload a sample file or paste a sample payload. Calls dis-api `sample_upload` handler (which invokes the in-process onboarding sub-module).
+- **Auth.** Accepts Customer Master-issued tokens; passes them to dis-ui-server on every backend call. The UI does not maintain its own user store; Customer Master is the source of truth.
+- **Sample upload.** Front-end for source onboarding. Lets the operator (or tenant) upload a sample file or paste a sample payload. Calls dis-ui-server `sample_upload` handler (which invokes the in-process onboarding sub-module).
 - **Onboarding review.** Side-by-side display of proposed mapping + sample data with low-confidence rows highlighted. Operator overrides, dry-runs against the sample, and approves to `staged`. Hosts the shadow-rollout review screen for promoting `staged` → `active`.
 - **Mapping config CRUD.** Manage `config.source_mappings`: view active and staged mappings per tenant/source, edit (creates a new version, leaves prior version intact), deprecate, view version history. Mapping version is surfaced on canonical rows (`decisions.md` D22 / B1).
 - **Quarantine console.** Two views:
@@ -393,12 +393,12 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 - **Audit & trace lookup.** Search Cloud SQL `audit.events` (Phase 1; BigQuery `audit_events` from Phase 3 onward) by `trace_id`, `tenant_id`, `store_id`, or time range. Renders the per-stage lifecycle of a chunk or row, including `mapping_version_id` at every post-mapping stage.
 - **DuckDB ad-hoc query panel (ops only).** Operator pastes a GCS bronze blob URI and SQL; backend runs the query via DuckDB and returns results. Used for debugging without spinning up the streaming consumer or loading to BigQuery.
 
-**Role.** The single human-facing front door to the data platform. Calls one backend: dis-api (`decisions.md` D17). Data-plane services (Identity, Mirror Sync, Streaming Consumer, Quarantine Drainer) are headless; the UI never calls them directly.
+**Role.** The single human-facing front door to the data platform. Calls one backend: dis-ui-server (`decisions.md` D17). Data-plane services (Identity, Mirror Sync, Streaming Consumer, Quarantine Drainer) are headless; the UI never calls them directly.
 
 **Why it exists as a single container.** Earlier drafts described UI surfaces scattered across modules ("ops console," "onboarding UI," "quarantine UI"). These share auth, session, layout, and navigation. One container avoids duplicating that infrastructure and gives users one URL.
 
 ### 4.14 DuckDB (recommended addition)
-**What it is.** An embedded analytical SQL engine, used in the receivers (CSV pre-flight) and the dis-api DuckDB query panel handler (GCS bronze inspection).
+**What it is.** An embedded analytical SQL engine, used in the receivers (CSV pre-flight) and the dis-ui-server DuckDB query panel handler (GCS bronze inspection).
 **Role.** Cheap, fast SQL over CSV and Parquet in GCS, in-process, without spinning up the streaming consumer or loading into BigQuery. Used to reject obviously malformed CSVs at the boundary and to give ops a one-shot debugging tool.
 **Why it exists as optional.** Both jobs can be done without DuckDB (custom parsing in receivers, manual BigQuery loads in ops), but DuckDB makes them dramatically cheaper to write and operate.
 
@@ -406,12 +406,12 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 **What it is.** Pandera, the declarative data-validation library.
 **Role.** Source-shape (pre-mapping) and canonical-shape (post-mapping) suites. Suites are versioned per (tenant, source, version), stored in `config.expectation_suite_refs`, and run as Python objects in the streaming consumer.
 
-### 4.16 Onboarding (in-process sub-module of dis-api)
-**What it is.** An in-process sub-module of dis-api (previously a separate `onboarding-service`).
+### 4.16 Onboarding (in-process sub-module of dis-ui-server)
+**What it is.** An in-process sub-module of dis-ui-server (previously a separate `onboarding-service`).
 **Role.** Same as before: turn a sample into a draft mapping config and validation suite. Accepts a sample, infers source schema (DuckDB), suggests field-by-field mapping and normalization rules, proposes both validation suites. Persists drafts to `config.source_mappings` with `status='staged'` on operator approval. Coordinates the staged → active promotion after shadow rollout review.
-**Why merged.** dis-api was the only caller; CPU profile of sample inference does not warrant process isolation. If onboarding work later blocks BFF latency, the sub-module structure (inference/, suggestion/, validation_draft/, shadow/) is designed for clean extraction.
+**Why merged.** dis-ui-server was the only caller; CPU profile of sample inference does not warrant process isolation. If onboarding work later blocks BFF latency, the sub-module structure (inference/, suggestion/, validation_draft/, shadow/) is designed for clean extraction.
 
-### 4.17 dis-api (BFF for DIS UI)
+### 4.17 dis-ui-server (BFF for DIS UI)
 **What it is.** The single backend-for-frontend service the DIS UI calls. Per-sub-module handlers; one Customer Master integration; never writes to canonical.
 **Role.** Serves every read and write the DIS UI needs. Reads from Cloud SQL read replica, config schema, quarantine schema, BigQuery audit. Writes only to `config.source_mappings` (mapping CRUD, onboarding promotion) and publishes `ingress.resubmit` (resubmit action from quarantine console) and `mapping.changed` (mapping CRUD and promotions). Hosts the onboarding sub-module in-process (`decisions.md` D16).
 **Handlers.** sample_upload, onboarding_review, mapping_crud, quarantine, audit, duckdb_query, auth (cross-cutting FastAPI dependency).
@@ -424,7 +424,7 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 
 ### 4.19 Quarantine Drainer
 **What it is.** A containerized Pub/Sub consumer subscribed to the `quarantine` topic.
-**Role.** Persist quarantine messages from streaming-consumer (and receiver preflight) into the `quarantine.*` Cloud SQL tables with RLS-aware writes. Surface to dis-api (and through it to the DIS UI quarantine console) as queryable rows.
+**Role.** Persist quarantine messages from streaming-consumer (and receiver preflight) into the `quarantine.*` Cloud SQL tables with RLS-aware writes. Surface to dis-ui-server (and through it to the DIS UI quarantine console) as queryable rows.
 **Why a separate service.** Different runtime profile from the streaming consumer (low volume, latency-tolerant). Different DB write pattern (per-row inserts into quarantine schema, not batched canonical commits). Isolating it keeps the streaming consumer focused on the hot path.
 
 ### 4.20 Daily Compute Job
@@ -674,7 +674,7 @@ Triggered by Cloud Scheduler during the no-ingress window (retail off-hours).
 
 ### 6.5 Replay paths
 
-- **Tenant resubmit (replay flavor).** Operator clicks "retry" on a quarantined chunk in the DIS UI quarantine console. dis-api publishes `ingress.resubmit` with `resubmit_type=replay`, `parent_trace_id` linking the original, and a new `trace_id`. Streaming consumer re-processes the same bronze payload through the mapping version recorded on the original (B1, `decisions.md` D22) — *not* current active, unless ops explicitly overrides.
+- **Tenant resubmit (replay flavor).** Operator clicks "retry" on a quarantined chunk in the DIS UI quarantine console. dis-ui-server publishes `ingress.resubmit` with `resubmit_type=replay`, `parent_trace_id` linking the original, and a new `trace_id`. Streaming consumer re-processes the same bronze payload through the mapping version recorded on the original (B1, `decisions.md` D22) — *not* current active, unless ops explicitly overrides.
 - **Tenant resubmit (fixed_file flavor).** Tenant uploads a corrected file via the DIS UI Sample Upload, indicating it replaces a quarantined chunk. The receiver creates a fresh bronze row + GCS object and publishes `ingress.resubmit` with `resubmit_type=fixed_file`, `parent_trace_id`, and `chain_depth` incremented. Streaming consumer processes against current active mapping (the fix was in the data, not the mapping).
 - **Ithina-side replay.** Ops triggers a re-publish of selected bronze chunks via `tools/replay/`. Publishes `ingress.resubmit` with `initiated_by=ops`, `resubmit_type=replay`. Pinned to the original mapping version by default; ops can override to current active when investigating a mapping bug that was just fixed. Used after a mapping bug fix to reprocess historical chunks; audit trail surfaces both versions in dispute scenarios.
 - **Chain-depth cap.** `chain_depth` capped at 3. Resubmit messages exceeding the cap are rejected by the publisher; chunks needing further retries become an ops-managed escalation.
@@ -738,9 +738,9 @@ These are deferred design decisions that do not block v1.0 but should be settled
 | Containerized service | Long-running application packaged as a container; deployment platform is implementation choice. |
 | Containerized job | One-shot or scheduled application packaged as a container. |
 | **Streaming Consumer** | The ELT core. Containerised service running a Pub/Sub-pull subscriber loop. Specific runtime is a deployment choice; migration trigger for higher-throughput runtimes per `decisions.md` D4. |
-| **DIS** | Data Integration System. Synonym for "Ithina Data Platform." Also the prefix for `dis-api`, `dis-ui`, `libs/dis-*`. |
-| **DIS UI** | The single containerized front-end hosting all user-facing screens. Auth via Customer Master. Calls one backend: dis-api. |
-| **dis-api** | The BFF (backend-for-frontend) for the DIS UI. Single service, per-sub-module handlers, hosts the onboarding sub-module in-process. |
+| **DIS** | Data Integration System. Synonym for "Ithina Data Platform." Also the prefix for `dis-ui-server`, `dis-ui`, `libs/dis-*`. |
+| **DIS UI** | The single containerized front-end hosting all user-facing screens. Auth via Customer Master. Calls one backend: dis-ui-server. |
+| **dis-ui-server** | The BFF (backend-for-frontend) for the DIS UI. Single service, per-sub-module handlers, hosts the onboarding sub-module in-process. |
 | **BFF** | Backend-for-frontend. A single backend service tailored to one UI consumer, as opposed to per-domain APIs. See `decisions.md` D26. |
 | **Customer Master** | Sevyn8's Auth0-integrated identity, auth, and RBAC system. External to DIS; the single source of truth for user identity across Sevyn8 products. |
 | **PII tokenization** | HMAC-based deterministic tokenization with per-tenant keys, applied at receivers before any persistence. Phone, email, loyalty_id, PAN, Aadhaar, and tenant-policy fields. See `decisions.md` D24. |
@@ -764,7 +764,7 @@ These are deferred design decisions that do not block v1.0 but should be settled
 - **v0.8.** History-tier sizing pinned; atomic dual-write pattern; new `canonical.store_sku_signal_history` table for daily-computed derived attributes; incremental Postgres-local daily compute pattern.
 - **v0.7.** Alembic adopted for DIS Postgres schema migrations; dbt scoped to BigQuery analytics only.
 - **v0.6.** B1 resolved (mapping version pinned on canonical rows).
-- **v0.5.** dis-api added as BFF for DIS UI.
+- **v0.5.** dis-ui-server added as BFF for DIS UI.
 - **v0.4.** B1, B2, B3 raised.
 - **v0.3.** Customer Master named, PII redaction at receiver, latency SLO formalized, resubmit mechanics, backpressure + DLQ, Identity Service stale-while-error.
 - **v0.2.** Auth and RBAC scoped to Customer Master.

@@ -4,7 +4,7 @@ info:
   description: |
     Internal HTTP/REST API for the DIS Tenant/Store Identity Service.
 
-    Called by DIS receivers, the streaming consumer, and dis-api to resolve tenant
+    Called by DIS receivers, the streaming consumer, and dis-ui-server to resolve tenant
     and store identity from various auth contexts, and to validate tenant/store
     existence at processing time. The service wraps Customer Master with a cache
     and circuit breaker; callers never reach Customer Master directly.
@@ -52,7 +52,7 @@ paths:
       operationId: resolveFromUpload
       summary: Resolve identity from an upload session ID.
       description: |
-        Used by the CSV upload paths (DIS UI session via dis-api, and per-tenant
+        Used by the CSV upload paths (DIS UI session via dis-ui-server, and per-tenant
         ERP POST endpoint). Identity is bound to an upload session, not a request
         token. The caller passes the upload_session_id; the service maps it to
         tenant + store via Customer Master.

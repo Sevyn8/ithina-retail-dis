@@ -32,6 +32,6 @@ The ELT pipeline. Reads `ingress.ready`, fetches the chunk from bronze + GCS, lo
 
 **Why this service is large.** Five concerns combined: bronze fetch, mapping execution, validation (pre + post), canonical sink (atomic dual-write), and audit emission. Splitting would scatter the transaction boundary; canonical writes need to be one transaction.
 
-**What's deliberately not here.** No mapping authoring (that's dis-api). No signal computation (daily-compute). No tenant identity management (identity-service). No quarantine row writing (quarantine-drainer).
+**What's deliberately not here.** No mapping authoring (that's dis-ui-server). No signal computation (daily-compute). No tenant identity management (identity-service). No quarantine row writing (quarantine-drainer).
 
 ---

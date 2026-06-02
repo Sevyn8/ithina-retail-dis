@@ -1,11 +1,11 @@
 # `services/receiver-csv-upload/` — *v1.0*
 
-The HTTP receiver for manual CSV upload from the DIS UI. Same shape as `receiver-api/` but bound to a different ingress path: requests come from a user session (Customer Master-authenticated) via dis-api, not from a machine token.
+The HTTP receiver for manual CSV upload from the DIS UI. Same shape as `receiver-api/` but bound to a different ingress path: requests come from a user session (Customer Master-authenticated) via dis-ui-server, not from a machine token.
 
 **Purpose.** Accept manual CSV uploads from authenticated users via the DIS UI without transiting bytes through the receiver, and hand them off to the pipeline once GCS confirms the upload.
 
 **Entry.** Two distinct triggers (two-phase flow).
-- *Phase 1 trigger:* HTTP POST to `/upload` from §3.10 dis-api on behalf of an authenticated user. Inputs: source_id, expected filename, expected size. Preconditions: user authenticated; tenant + source registered.
+- *Phase 1 trigger:* HTTP POST to `/upload` from §3.10 dis-ui-server on behalf of an authenticated user. Inputs: source_id, expected filename, expected size. Preconditions: user authenticated; tenant + source registered.
 - *Phase 2 trigger:* Pub/Sub message on `bucket.objects.changed` topic when the tenant's PUT to the signed URL completes. Inputs: GCS object path, metadata, byte count. Preconditions: object path matches the path issued in phase 1.
 
 **Process.**
@@ -14,7 +14,7 @@ The HTTP receiver for manual CSV upload from the DIS UI. Same shape as `receiver
 
 **Exit.**
 - *Phase 1 success:* HTTP 2xx with `{upload_url, trace_id, expires_at}`. No durable outputs yet; the GCS object does not exist until the tenant uploads.
-- *Phase 2 success:* bronze metadata row persisted; `ingress.ready` published (consumed by §3.7 streaming-consumer); audit events emitted (read by §3.10 dis-api audit handler). No HTTP response (event-driven).
+- *Phase 2 success:* bronze metadata row persisted; `ingress.ready` published (consumed by §3.7 streaming-consumer); audit events emitted (read by §3.10 dis-ui-server audit handler). No HTTP response (event-driven).
 - Phase 1 failure modes: 401 (bad session), 400 (invalid source_id or size), 429 (rate limit), 503 (Identity Service circuit open).
 - Phase 2 failure modes: preflight failure routes to `quarantine` topic (consumed by §3.8 quarantine-drainer) with `pre-mapping/structural` reason; bronze write failure retries with backoff then DLQs the GCS path for ops replay.
 - Edge case: signed URL expires before tenant uploads, no phase 2 trigger fires; UI must re-request a URL. No durable artifact left behind.

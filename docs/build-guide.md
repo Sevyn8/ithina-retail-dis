@@ -126,27 +126,27 @@ Phase 1 services depend on a set of shared libraries. Each lib slice builds the 
 
 - `TODO` Slice 10: Streaming consumer happy path. Reads `ingress.ready`, fetches bronze chunk from GCS, applies a stub mapping, validates with Pandera, writes the canonical hot table plus the event table in a single transaction, emits audit events. FK to `identity_mirror` enforced; RLS enforcement verified.
 - `TODO` Slice 11: Quarantine path. Failing rows from the streaming consumer flow to the `quarantine` topic; the drainer service writes them to Cloud SQL `quarantine.*` tables; rows are visible for replay/inspection.
-- `TODO` Slice 12: Replay tooling. `tools/replay/` CLI lets an ops operator replay a bronze chunk; the replay gets a new `trace_id` linked to the original as `parent_trace_id`; audit records the chain. The dis-api replay endpoint (UI-driven resubmit) is built in Slice 13 as a thin wrapper over this tooling.
+- `TODO` Slice 12: Replay tooling. `tools/replay/` CLI lets an ops operator replay a bronze chunk; the replay gets a new `trace_id` linked to the original as `parent_trace_id`; audit records the chain. The dis-ui-server replay endpoint (UI-driven resubmit) is built in Slice 13 as a thin wrapper over this tooling.
 
-### dis-api + Identity Service real
+### dis-ui-server + Identity Service real
 
-- `TODO` Slice 13: dis-api foundation + Identity Service real implementation. dis-api FastAPI BFF authenticates users via Customer Master and exposes endpoints the UI calls for upload, mapping CRUD, and audit lookup (reads from `audit.events`). Identity Service real implementation lands alongside: the four methods work against an in-process cache backed by Customer Master with stale-while-error fallback to `identity_mirror`; dis-api consumes it via the same client interface tests use against the Slice 2 fake.
-- `TODO` Slice 14: Onboarding. dis-api's onboarding sub-module takes a sample upload and produces a draft mapping (rule-based schema inference + suggestions); operator can review and promote to active; new tenant CSV onboards end-to-end without manual SQL.
-- `TODO` Slice 15: dis-api endpoints — group 1. *Placeholder; scope drafted from UI engineer's demand list. Endpoints land here as a coherent feature group (e.g., dashboards, history views, ops surfaces).*
-- `TODO` Slice 16: dis-api endpoints — group 2. *Placeholder; scope drafted from UI engineer's demand list.*
-- `TODO` Slice 17: dis-api endpoints — group 3. *Placeholder; scope drafted from UI engineer's demand list.*
+- `TODO` Slice 13: dis-ui-server foundation + Identity Service real implementation. dis-ui-server FastAPI BFF authenticates users via Customer Master and exposes endpoints the UI calls for upload, mapping CRUD, and audit lookup (reads from `audit.events`). Identity Service real implementation lands alongside: the four methods work against an in-process cache backed by Customer Master with stale-while-error fallback to `identity_mirror`; dis-ui-server consumes it via the same client interface tests use against the Slice 2 fake.
+- `TODO` Slice 14: Onboarding. dis-ui-server's onboarding sub-module takes a sample upload and produces a draft mapping (rule-based schema inference + suggestions); operator can review and promote to active; new tenant CSV onboards end-to-end without manual SQL.
+- `TODO` Slice 15: dis-ui-server endpoints — group 1. *Placeholder; scope drafted from UI engineer's demand list. Endpoints land here as a coherent feature group (e.g., dashboards, history views, ops surfaces).*
+- `TODO` Slice 16: dis-ui-server endpoints — group 2. *Placeholder; scope drafted from UI engineer's demand list.*
+- `TODO` Slice 17: dis-ui-server endpoints — group 3. *Placeholder; scope drafted from UI engineer's demand list.*
 
 ### Daily compute
 
 - `TODO` Slice 18: Daily compute. Produces `store_sku_signal_history` rows per (store, SKU, as_of_date); updates derived columns on `store_sku_current_position`; ROOS has fresh signals every day.
 
-**Phase 1 exit criterion.** All non-DEFERRED slices DONE. A tenant can upload a CSV via the UI, have it land in canonical, see failures in the quarantine console, and audit events for every pipeline step are queryable from Cloud SQL via dis-api. BigQuery archive is deferred to Phase 3.
+**Phase 1 exit criterion.** All non-DEFERRED slices DONE. A tenant can upload a CSV via the UI, have it land in canonical, see failures in the quarantine console, and audit events for every pipeline step are queryable from Cloud SQL via dis-ui-server. BigQuery archive is deferred to Phase 3.
 
 ---
 
 ### DIS UI
 
-- `TODO` Slice 19: DIS UI foundation. `ui/` initialized; auth scaffolding against Customer Master tokens; a hello-world page calls a dis-api endpoint and renders the response. Stack and tool choices made during this slice.
+- `TODO` Slice 19: DIS UI foundation. `ui/` initialized; auth scaffolding against Customer Master tokens; a hello-world page calls a dis-ui-server endpoint and renders the response. Stack and tool choices made during this slice.
 - `TODO` Slice 20: DIS UI core. Operator/tenant can upload a CSV, review the onboarding result, edit the mapping config, inspect the quarantine console, look up audit events, and resubmit failed chunks.
 
 ## Phase 2: Integration
@@ -157,9 +157,9 @@ Phase 1 slices test against fakes individually. Phase 2 verifies the full system
 - `TODO` Receiver → streaming consumer end-to-end: CSV uploaded by tenant A cannot be read by tenant B; RLS holds across the pipeline.
 - `TODO` Quarantine flow end-to-end: a malformed CSV row reaches the tenant quarantine console; the resubmit button rebuilds the chunk and processes successfully.
 - `TODO` Onboarding flow end-to-end: a new tenant uploads a sample, reviews the suggested mapping, promotes to active, and uploads a real CSV that lands in canonical without operator intervention beyond mapping approval.
-- `TODO` Audit and quarantine end-to-end: every Phase 1 pipeline step emits audit events to Cloud SQL `audit.events`; quarantined chunks are queryable by tenant via dis-api; trace_id chains a single ingress event from receiver through canonical.
+- `TODO` Audit and quarantine end-to-end: every Phase 1 pipeline step emits audit events to Cloud SQL `audit.events`; quarantined chunks are queryable by tenant via dis-ui-server; trace_id chains a single ingress event from receiver through canonical.
 - `TODO` Daily compute end-to-end: synthetic day-window events produce the expected `signal_history` row and `current_position` updates.
-- `TODO` Replay end-to-end: an ops engineer replays a bronze chunk and sees the chain (parent_trace_id, new trace_id, audit events) in the dis-api.
+- `TODO` Replay end-to-end: an ops engineer replays a bronze chunk and sees the chain (parent_trace_id, new trace_id, audit events) in the dis-ui-server.
 - `TODO` Full e2e: every flow above runs simultaneously against a multi-tenant test environment without cross-contamination.
 
 **Phase 2 exit criterion.** Every e2e test in `tests/e2e/` passes. The system handles ingress, processes, surfaces failures, and replays end-to-end.
