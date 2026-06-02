@@ -40,7 +40,7 @@ The contract surfaces exactly four operations, matching architecture §5.2:
 | Method | Purpose | Caller(s) |
 |---|---|---|
 | `resolve_from_token` | Identity from Customer Master JWT | receiver-api, receiver-webhook (deferred in v1.0) |
-| `resolve_from_upload` | Identity from upload session ID | receiver-csv-upload (v1.0), receiver-csv-erp (deferred) |
+| `resolve_from_upload` | Identity from upload session ID | csv-ingest-worker (v1.0), receiver-csv-erp (deferred) |
 | `resolve_from_endpoint` | Identity from endpoint config ID | receiver-reverse-api (deferred), receiver-csv-erp (deferred) |
 | `validate` | Existence + active check for (tenant, store) | streaming-consumer (v1.0) |
 

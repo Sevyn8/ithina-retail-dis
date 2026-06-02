@@ -1,4 +1,4 @@
-# `services/receiver-csv-upload/` — *v1.0*
+# `services/csv-ingest-worker/` — *v1.0*
 
 The HTTP receiver for manual CSV upload from the DIS UI. Same shape as `receiver-api/` but bound to a different ingress path: requests come from a user session (Customer Master-authenticated) via dis-ui-server, not from a machine token.
 
@@ -21,7 +21,7 @@ The HTTP receiver for manual CSV upload from the DIS UI. Same shape as `receiver
 
 
 ```
-services/receiver-csv-upload/
+services/csv-ingest-worker/
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml
@@ -29,7 +29,7 @@ services/receiver-csv-upload/
 ├── .dockerignore
 │
 ├── src/
-│   └── receiver_csv_upload/
+│   └── csv_ingest_worker/
 │       ├── __init__.py
 │       ├── main.py
 │       ├── config.py

@@ -1,6 +1,6 @@
-# services/receiver-csv-upload — Claude Code Context
+# services/csv-ingest-worker — Claude Code Context
 
-Loaded when Claude Code works in `services/receiver-csv-upload/`. Service-specific rules; root `CLAUDE.md` applies first.
+Loaded when Claude Code works in `services/csv-ingest-worker/`. Service-specific rules; root `CLAUDE.md` applies first.
 
 ## What this service is
 

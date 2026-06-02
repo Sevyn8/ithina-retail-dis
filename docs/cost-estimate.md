@@ -34,7 +34,7 @@ v1.0 beta target:
 | BigQuery streaming inserts + queries | Audit events + dis-ui-server analytics queries via BqClient | $20-50 |
 | GCS | ~100GB standard + lifecycle to Nearline/Coldline (bronze + dlq + replay-staging) | $5-15 |
 | Identity cache (Memorystore Redis Basic) | 1GB | $35-50 |
-| Other containerised services (receiver-csv-upload + identity-service + mirror-sync-consumer + quarantine-drainer + nightly-batch + daily-compute + dis-ui-server) | ~7 small services in v1.0 | $80-180 |
+| Other containerised services (csv-ingest-worker + identity-service + mirror-sync-consumer + quarantine-drainer + nightly-batch + daily-compute + dis-ui-server) | ~7 small services in v1.0 | $80-180 |
 | Cloud Scheduler | A few cron jobs (nightly batch, daily compute, identity tasks) | <$5 |
 | Cloud Logging + Monitoring | Standard ingestion, default retention | $30-80 |
 | Networking (egress, NAT, load balancers) | Modest internal traffic, some egress | $50-100 |

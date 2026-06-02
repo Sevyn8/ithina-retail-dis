@@ -1,6 +1,6 @@
 # `services/receiver-csv-erp/` — *deferred (not in v1.0)*
 
-The HTTP receiver for the per-tenant ERP POST endpoint. Same shape as `receiver-csv-upload/` but bound to a different auth model: ERP systems push via long-lived machine credentials (per-tenant API key or mTLS), not user sessions.
+The HTTP receiver for the per-tenant ERP POST endpoint. Same shape as `csv-ingest-worker/` but bound to a different auth model: ERP systems push via long-lived machine credentials (per-tenant API key or mTLS), not user sessions.
 
 **Purpose.** Accept scheduled CSV batches from tenant ERP systems via machine credentials, using the same signed-URL pattern as csv-upload to avoid transiting large files.
 

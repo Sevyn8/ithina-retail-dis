@@ -24,7 +24,7 @@ ithina-dis/
 ├── .env.example                 # Required env vars
 │
 ├── services/                    # Containerised services
-│   ├── receiver-csv-upload/     # Manual CSV upload receiver (v1.0)
+│   ├── csv-ingest-worker/     # Manual CSV upload receiver (v1.0)
 │   ├── receiver-api/            # API/webhook receiver (deferred)
 │   ├── receiver-csv-erp/        # Per-tenant ERP CSV POST (deferred)
 │   ├── receiver-reverse-api/    # Reverse-API puller (deferred)
@@ -68,7 +68,7 @@ Each service has its own `README.md` (full EPE — Entry / Process / Exit — bl
 
 | Service | Status | Purpose |
 |---|---|---|
-| [`receiver-csv-upload`](services/receiver-csv-upload/README.md) | v1.0 | Manual CSV upload receiver. Two-phase upload pattern. |
+| [`csv-ingest-worker`](services/csv-ingest-worker/README.md) | v1.0 | Manual CSV upload receiver. Two-phase upload pattern. |
 | [`receiver-api`](services/receiver-api/README.md) | deferred | API/webhook ingress receiver. |
 | [`receiver-csv-erp`](services/receiver-csv-erp/README.md) | deferred | Per-tenant ERP CSV POST endpoint. |
 | [`receiver-reverse-api`](services/receiver-reverse-api/README.md) | deferred | Reverse-API puller (cursor-based). |

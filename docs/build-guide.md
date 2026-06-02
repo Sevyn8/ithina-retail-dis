@@ -107,7 +107,7 @@ Phase 1 services depend on a set of shared libraries. Each lib slice builds the 
 
 ### Receivers — CSV upload (v1.0)
 
-- `TODO` Slice 8: CSV upload — Phase 1 handler. An authenticated user can request an upload URL via DIS UI; receiver-csv-upload validates the session via Identity Service, generates a `trace_id`, builds the canonical GCS path via `libs/dis-storage`, and returns a 15-minute signed PUT URL. No bronze write, no Pub/Sub publish — Phase 1 ends when the URL is handed back to the caller.
+- `TODO` Slice 8: CSV upload — Phase 1 handler. An authenticated user can request an upload URL via DIS UI; csv-ingest-worker validates the session via Identity Service, generates a `trace_id`, builds the canonical GCS path via `libs/dis-storage`, and returns a 15-minute signed PUT URL. No bronze write, no Pub/Sub publish — Phase 1 ends when the URL is handed back to the caller.
 - `TODO` Slice 9: CSV upload — Phase 2 notification handler. GCS object-finalized notification triggers the receiver's Phase 2 handler: DuckDB preflight (structure, row count, type sniff), PII tokenization for any flagged columns, bronze metadata write via `libs/dis-rls`, `ingress.ready` publish, audit emission. Idempotency: same SHA-256 + source_payload_id + tenant within 24h returns prior `trace_id`.
 
 ### Receivers — API / webhook

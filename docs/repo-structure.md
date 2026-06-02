@@ -103,10 +103,10 @@ services/receiver-api/            # API/webhook ingress receiver (deferred, not 
     └── README.md
 ```
 
-### services/receiver-csv-upload/
+### services/csv-ingest-worker/
 
 ```
-services/receiver-csv-upload/     # manual CSV upload receiver (v1.0)
+services/csv-ingest-worker/     # manual CSV upload receiver (v1.0)
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml
@@ -114,7 +114,7 @@ services/receiver-csv-upload/     # manual CSV upload receiver (v1.0)
 ├── .dockerignore
 │
 ├── src/
-│   └── receiver_csv_upload/
+│   └── csv_ingest_worker/
 │       ├── __init__.py
 │       ├── main.py
 │       ├── config.py
