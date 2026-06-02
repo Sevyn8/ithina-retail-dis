@@ -1,261 +1,262 @@
 # DIS Build Guide
 
-**Audience:** human operator (Sanjeev, Amit) planning the build, sequencing work, and deciding when to promote deferred components. Not consumed by Claude Code.
+**Purpose.** Top-level operator dashboard. Ordered work items grouped by phase. Sequence reflects real dependencies, not a schedule. Each item carries a status and a one-line description of what is implemented when DONE.
 
-**Scope:** build sequencing (phases and suggested cadence), build target portability, migration triggers, operator workflow (the 10-step build loop, plan-mode usage, slice exit). Mutates as the build progresses.
+**Status values.** `TODO` (not started), `WIP` (in progress), `DONE` (merged), `DEFERRED` (intentionally not in v1.0; trigger named).
 
-**Out of scope:**
-- System rationale, modules, data flow → `architecture.md`.
-- Indexed decisions → `decisions.md`.
-- Repo layout, per-service file reference → `engineering-reference.md`, `repo-structure.md`.
-- What Claude Code should build right now → the current slice doc in `docs/slices/`. Slice docs are the source of truth for what Claude Code builds; this guide tells the operator how to choose, scope, and sequence those slices.
-- Cost projection → `cost-estimate.md`.
+**How to update.** Edit by hand. Change the status word in-place when an item moves.
 
 **Companion docs.**
 - `architecture.md` — system rationale.
 - `decisions.md` — indexed decision register.
-- `engineering-reference.md` — repo and component reference.
-- `cost-estimate.md` — beta-scale cost projection.
-- `worked-example-streaming-consumer.md` — reference layout of the largest service.
+- `engineering-reference.md` — top-level repo index.
+- `repo-structure.md` — detailed directory trees.
+- `cost-estimate.md` — beta-scale projection.
+- `local-setup.md` — devbox setup.
 
 ---
 
-## 1. Build model: slices through phases
+## Phase 0: Foundation
 
-The build is decomposed into **slices**. A slice is one vertical cut through the ingest pipeline that delivers an end-to-end working capability: ingress on one channel for one source format reaching canonical for one event type. Each slice lives in `docs/slices/slice-NN-<short-name>.md` and is the document Claude Code reads to know what to build.
+Interface-freezing. Until done, no service implementation can be truly parallel.
 
-Slices sit inside **phases**. Phases describe ordering, not duration. Move from one phase to the next when the prerequisites for the next phase are met, not on a schedule.
+### Workspace and tooling
 
-The phases are deliberately interface-first: Phase 0 freezes contracts and shared libs so that Phase 1 can be done in parallel without coordination overhead. Phase 2 integrates; Phase 3 hardens for production. Slices accumulate inside each phase.
+- `DONE` Workspace dependencies declared and installed; any developer running `uv sync` gets the same 151 packages.
+- `DONE` Python 3.12 pinned project-wide via uv.
+- `DONE` `make` targets cover the daily commands: stack up/down/reset, db migrate, tests, lint, format, topic creation, dbt run.
+- `DONE` Local env vars centralized in `.env` (gitignored) and `.env.example` (committed).
+- `DONE` `pre-commit` hooks block bad commits at commit-time: lint, format, whitespace, EOF, YAML/JSON syntax, large files.
+- `DONE` `scripts/check_setup.sh` runs six tiers of preflight checks and reports PASS / FAIL / SKIP with hints.
 
----
+### Local stack
 
-## 2. Build phases
+- `DONE` Four containers run from one `docker-compose.yml`: Postgres on 5433, Pub/Sub emulator, fake-gcs-server, Redis.
+- `DONE` Postgres bootstraps with two roles: `ithina_dis_admin` (for migrations) and `ithina_dis_user` (NOSUPERUSER NOBYPASSRLS for service code). RLS posture matches production from day one.
+- `DONE` All six DIS Pub/Sub topics are created automatically on `make run-local`.
+- `DONE` Smoke tests against the running stack pass: Postgres accepts queries, topics list, GCS responds, Redis pings.
 
-### 2.1 Phase 0: foundation (one owner, before any service work)
+### Schemas
 
-Phase 0 is **interface-freezing**. Until it's done, parallel work in Phase 1 cannot be truly independent. The whole point of Phase 0 is that nobody waits in Phase 1.
+- `DONE` Postgres DDL for every DIS schema (canonical, bronze, config, identity_mirror, quarantine, staging, plus UUIDv7 extension) lives at `schemas/postgres/<schema>/`.
+- `DONE` BigQuery DDL for `canonical_history.*` and `audit_events` lives at `schemas/bigquery/`.
 
-**Deliverables:**
+### Migrations and analytics tooling
 
-- `contracts/pubsub/*.schema.json` frozen: every Pub/Sub message schema written, reviewed, merged. Includes `ingress.ready`, `ingress.resubmit`, `identity.changed`, `quarantine`, `pipeline.dlq`, `mapping.changed`.
-- `contracts/identity-service/` gRPC service definition frozen.
-- `contracts/customer-master/` contract document written (what DIS depends on; pending Customer Master sign-off if needed).
-- `schemas/canonical/` initialized as a dbt project with `current_store_positions` and the event tables defined.
-- `schemas/config/`, `schemas/bronze/`, `schemas/identity_mirror/`, `schemas/quarantine/`, `schemas/staging/` initial DDL written.
-- `libs/dis-core/`, `libs/dis-canonical/`, `libs/dis-mapping/`, `libs/dis-validation/`, `libs/dis-rls/`, `libs/dis-audit/`, `libs/dis-pii/`, `libs/dis-storage/`, `libs/dis-testing/` exist as stub packages with intended interfaces and minimal implementations.
-- Root `CLAUDE.md` written with project-wide invariants (canonical schema location, PII tokenization at receiver, GCS path conventions via `libs/dis-storage`, Pandera not GE, RLS-aware writes always, build target portability via env vars, etc.).
-- Per-service `CLAUDE.md` stubs in place for the eleven services.
-- Docker-compose dev stack runnable: Postgres with all schemas applied, Pub/Sub emulator with all topics created, fake Identity Service responding to all four methods, fake Customer Master issuing test tokens.
-- `infra/terraform/` exists and can apply to a dev GCP project, provisioning the real resources every service expects.
+- `DONE` Alembic is wired to the admin Postgres role and ready to run migrations.
+- `DONE` dbt is wired to BigQuery via OAuth and ready to run models.
 
-**Exit criterion:** any Phase 1 owner can clone the repo, run `make run-local` from their service directory, and have a working service that talks to real fakes against frozen contracts.
+### Contracts
 
-### 2.2 Phase 1: parallel service implementation (one owner per service)
+- `DONE` Six Pub/Sub message schemas (`ingress.ready`, `ingress.resubmit`, `identity.changed`, `quarantine`, `mapping.changed`, `pipeline.dlq`) frozen with examples.
+- `DONE` Identity Service contract frozen: OpenAPI (authoritative), proto (reference), attribute-needs and decisions docs.
+- `TODO` Customer Master contract written down and signed off by the Customer Master team, capturing what DIS depends on (JWT shape, upload session lifecycle, identity change events).
 
-With Phase 0 complete, services can be built in parallel without coordination on contracts or shared libs.
+### Service and lib scaffolding
 
-**Suggested assignment** (one person per service, larger services may pair):
+- `DONE` All 11 service directories exist with their own `CLAUDE.md` (rules) and `README.md` (EPE block).
+- `DONE` All 9 lib directories exist with their own `CLAUDE.md` and `README.md`.
+- `DONE` Placeholder stub modules for the test fakes exist so `.env` references aren't dangling.
 
-| Owner | Service(s) |
-|---|---|
-| Owner A | one or more receivers (`receiver-api`, `receiver-csv-upload`, `receiver-csv-erp`, `receiver-reverse-api`) |
-| Owner B | `identity-service` + `mirror-sync-consumer` |
-| Owner C | `streaming-consumer` |
-| Owner D | `quarantine-drainer` + `nightly-batch` + `daily-compute` |
-| Owner E | `dis-api` (includes the onboarding sub-module: inference, suggestion, validation_draft, shadow) |
-| UI track | `ui/` (separate cadence) |
+### Documentation
 
-**Phase 1 rules:**
+- `DONE` Root `CLAUDE.md` and `README.md` published; Claude Code auto-loads `CLAUDE.md` at session start.
+- `DONE` All design docs in `docs/`: architecture (md + html), decisions, engineering-reference, repo-structure, build-guide, cost-estimate, local-setup, worked-example.
 
-- Each service must pass its own service-local integration tests (against fakes) before merging to main.
-- Each service must run via `make run-local` against the docker-compose stack. If it doesn't, the integration milestone will reveal it; better to catch in Phase 1.
+### Git and CI
 
-**Exit criterion:** every service has its happy-path scenario working in isolation against fakes.
+- `DONE` Local git initialized on `main`; root commit captures verified Phase 0 state.
+- `TODO` GitHub repo created, code pushed; team can clone and `make run-local`.
+- `TODO` Every push and PR triggers ruff lint, ruff format check, and pytest collection on GitHub Actions.
 
-### 2.3 Phase 2: integration
+### Infrastructure (deferred until needed)
 
-Phase 2 verifies that services correctly produce and consume the agreed-on messages and that the full pipeline runs end-to-end.
+- `DEFERRED` Terraform applies cleanly to `ithina-dis-dev` GCP project. *Trigger: first slice that needs a real cloud resource.*
+- `DEFERRED` `ithina-dis-dev` GCP project created and billed. *Trigger: same as Terraform.*
+- `DEFERRED` `ithina-dis-staging` GCP project created. *Trigger: v1.0 launch readiness review begins.*
+- `DEFERRED` `ithina-dis-prod` GCP project created. *Trigger: tenant onboarding date confirmed.*
 
-**Integration milestones, in order:**
-
-1. **Identity flow:** Identity Service + Mirror Sync Consumer working together. `identity.changed` events flow; mirror tables populate. Foundation for FK enforcement in canonical writes.
-2. **Receiver → Streaming Consumer:** any one receiver publishes to `ingress.ready`; the streaming consumer reads it, applies a stub mapping, and writes to canonical. RLS verified by writing from two tenants and confirming cross-tenant reads are blocked.
-3. **Quarantine flow:** streaming consumer routes a failing row to the `quarantine` topic; drainer writes to the quarantine table; dis-api reads it; the UI can display it.
-4. **Onboarding flow:** sample uploaded via dis-api; dis-api's onboarding sub-module generates a draft mapping (inference + suggestion + validation_draft layers); operator approves to staged; streaming consumer runs the staged mapping into the staging schema; operator promotes to active.
-5. **Nightly batch:** synthetic event slice from Cloud SQL lands in BigQuery; eviction works; no data loss.
-6. **Daily compute:** synthetic day-window events produce a new `signal_history` row; `store_sku_current_position` derived columns updated.
-7. **Replay:** chunk replayed via `tools/replay/`; new `trace_id`; `parent_trace_id` correctly linked; canonical reflects the replay; audit shows the chain.
-8. **Full e2e:** all of the above running simultaneously against a multi-tenant dev environment.
-
-**Phase 2 rules:**
-
-- An integration milestone failing is the signal to stop and fix the contract or the service producing/consuming the failing message. It is not the signal to keep building further away.
-- Integration milestones are reviewable artifacts: each one passes a documented test in `tests/e2e/` or `tests/integration/`.
-- Phase 2 owners are the same as Phase 1, but they now work in pairs on the integration boundaries.
-
-**Exit criterion:** the full e2e test suite passes. The system can accept ingress, process it, land it in canonical, surface failures in the UI, and replay from bronze.
-
-### 2.4 Phase 3 and beyond: production hardening
-
-Not detailed here. Once Phase 2 passes, the system is functional. What follows (observability deepening, performance tuning, cost optimization, multi-region readiness) is shaped by what production usage reveals.
-
-### 2.5 What must be true throughout all phases
-
-- Contracts are immutable once merged unless a coordinated change is made. The temptation to "just tweak the schema" in Phase 1 destroys parallelism.
-- Shared libraries are owned. PRs to them follow normal review. Phase 1 owners do not merge their own lib changes.
-- Each `CLAUDE.md` is kept current. When a Phase 1 owner discovers a new invariant or convention, it goes in the service `CLAUDE.md` and, if cross-cutting, in the root `CLAUDE.md`. This is the difference between Claude Code being effective across sessions and not.
-- The docker-compose dev stack works for everyone, on every machine, every day. If it breaks for one owner, it's a Phase-0 regression and gets fixed immediately, before Phase 1 work continues.
+**Phase 0 exit criterion.** Every non-DEFERRED item above is DONE. `check_setup.sh` is green. `ithina_dis_user` can query empty DIS tables; the system is ready for Slice 1.
 
 ---
 
-## 3. Suggested cadence (week-by-week)
+## Phase 1: Slice-driven service implementation
 
-The phases above are the structural order. Within Phase 1, the following cadence groups parallel work into roughly two-week batches. Real durations vary by team and discoveries; use this as a default plan and adjust as Phase 0 actually completes and signals appear.
+Each slice is one end-to-end vertical cut. Slice docs live in `docs/slices/slice-NN-<short-name>.md`. The slice doc is the source of truth Claude Code reads.
 
-### Wk 1-2 (foundations of Phase 1)
-**Build:** Receiver service (containerised). DuckDB pre-flight + GCS bronze write. PII redaction (KMS, deterministic tokenisation, vault bucket). Pub/Sub topics provisioned (`ingress.ready`, `quarantine`, `pipeline.dlq`, etc.).
-**Defer:** auth method beyond API keys (revisit when 2nd tenant onboards); per-tenant rate limiting (revisit at first abuse).
+### Bootstrap
 
-### Wk 3-4
-**Build:** Identity Service + admin DB (physically separate). Mirror Sync Consumer. Cloud SQL Postgres single-zone with PITR. `identity_mirror` + canonical hot schemas + RLS. Stale-while-error + receiver-local fallback wired in.
-**Defer:** Cloud SQL HA (revisit at first paying-tenant SLA); read replica (revisit at 60% read CPU sustained); Redis identity cache (revisit at 10k+ resolves/sec).
+- `TODO` Slice 1: Bootstrap Alembic migration. Applying migrations creates every DIS schema (canonical, bronze, config, identity_mirror, quarantine, staging, audit, plus UUIDv7 extension) in local Postgres; `\dn` lists them. After table creation, `ithina_dis_user` has the minimum privileges needed (USAGE on schemas, table-level grants) so service code can read/write but cannot bypass RLS.
 
-### Wk 5-6
-**Build:** Streaming consumer (Pub/Sub pull, containerised). Pandera source-shape + canonical-shape suites (per-tenant, versioned). Mapping engine (rename, normalize, cast, derive). Quarantine drainer. DLQ topic + circuit-breaker on Cloud SQL health.
-**Defer:** higher-throughput runtime migration (revisit on `decisions.md` D4 trigger).
+### Test infrastructure
 
-### Wk 7-8
-**Build:** Onboarding sub-module inside dis-api (rule-based schema inference + mapping suggestion only). DIS UI core: sample upload, onboarding review, mapping config CRUD. DIS backend services integrate with Customer Master for auth context. Shadow rollout: staging schema, promote-to-active flow.
-**Defer:** historical-learning suggestions (revisit at 20 approved mappings); LLM-assisted suggestions (revisit when onboarding throughput becomes a bottleneck); machine auth migration to Customer Master (revisit when Customer Master scope firms up).
+- `TODO` Slice 2: Identity Service and Customer Master fakes, plus a test fixture seeder. Customer Master fake issues signed test JWTs and publishes a JWKS endpoint for verification; serves upload sessions; emits `identity.changed` Pub/Sub events when tenants/stores are seeded or changed. Identity Service fake answers all four methods (`resolve_from_token`, `resolve_from_upload`, `resolve_from_endpoint`, `validate`) with canned data. Fixture seeder is **for tests only**: writes test tenants/stores into `identity_mirror`, plus a default test `config.source_mappings` row, bypassing the CM-DB sync of Slice 7 so tests don't need a running Customer Master. Devbox runtime uses Slice 7 (DB-pull from real CM) for `identity_mirror`; runtime source mappings get created via Slice 14 onboarding flow or hand-crafted before Slice 19. Both fakes run as FastAPI apps in docker-compose; every later slice tests against them.
 
-### Wk 9-10
-**Build:** BigQuery `audit_events` streaming. DIS UI: quarantine console (tenant + ops views), audit lookup, resubmit loop. DuckDB query panel for ops. Cloud Logging + Monitoring dashboards (latency SLOs, DLQ depth, quarantine rate).
-**Defer:** tenant-facing DQ scorecards (revisit when first tenant requests).
+### Shared libraries
 
-### Wk 11-12
-**Build:** Nightly batch job (Cloud Scheduler + containerised job). dbt project: `canonical_history` models + dbt-expectations tests. BigQuery `canonical_history` populated nightly. GCS lifecycle policies live. v1.0 cutover and first paying-tenant onboarding.
-**Defer:** Dataform migration (revisit if dbt operational overhead grows past 0.5 FTE).
+Phase 1 services depend on a set of shared libraries. Each lib slice builds the lib to the surface area current and upcoming services need; later slices may extend.
+
+- `TODO` Slice 3: Core primitives. `libs/dis-core` (UUIDv7 helper, trace_id helper, structured logging, error type hierarchy, BqClient stub for Phase 1 — real BqClient in Phase 3) and `libs/dis-canonical` (Pydantic models for canonical schemas, generated/aligned with the SQL DDL).
+- `TODO` Slice 4: Data plane safety. `libs/dis-rls` (async RLS-aware Postgres session context manager that sets `app.tenant_id`; tests prove queries from one tenant cannot see another), `libs/dis-pii` (deterministic per-tenant HMAC tokenization function and per-tenant key handling; storage backend for the token → ciphertext mapping is deferred until a non-CSV receiver flags PII columns — see `decisions.md` D24; until then, `dis-pii` raises at startup if a source mapping flags a column as PII without a configured backend, so accidental PII landing in canonical fails loudly), `libs/dis-storage` (GCS path scheme, signed URL issuance, GCS object access).
+- `TODO` Slice 5: Pipeline mechanics. `libs/dis-mapping` (four-stage mapping engine: rename, normalize, cast, derive; pure functions over `(mapping, raw_row) → canonical_row`) and `libs/dis-validation` (Pandera suite runner, pre-mapping and post-mapping shapes).
+- `TODO` Slice 6: Audit. `libs/dis-audit` writes audit events to the Cloud SQL `audit.events` table (fire-and-forget; failures logged, not raised). Audit emission is service-layer, not lib-layer — libs do not emit audit events, services do (Slice 7 onward). BigQuery archival of audit events deferred to Phase 3.
+
+### Identity mirror (so receivers and streaming consumer can FK against it)
+
+- `TODO` Slice 7: Mirror Sync Consumer — DB-pull mode. `services/mirror-sync-consumer/` reads tenant and store records directly from Customer Master's Postgres database (port 5432 locally; Cloud SQL in cloud); upserts into `identity_mirror.tenants` and `identity_mirror.stores`. Runs on-demand for first load and is schedulable for periodic reconciliation. Same code serves local and cloud — no separate local seeder vs cloud sync. The Pub/Sub-driven incremental consumer mode is deferred to a later slice (triggered when Customer Master emits real `identity.changed` events); this slice is the v1.0 production path for both initial bulk load and ongoing reconciliation. Tests bypass this service entirely via Slice 2's fixture seeder. **Open in plan mode:** Mirror Sync writes all tenants/stores to `identity_mirror`, but `identity_mirror` is RLS-protected. Resolve in plan-mode: either set `app.tenant_id` per-row during upsert (works under standard RLS posture) or run Mirror Sync under a distinct role with different RLS posture.
+
+### Receivers — CSV upload (v1.0)
+
+- `TODO` Slice 8: CSV upload — Phase 1 handler. An authenticated user can request an upload URL via DIS UI; receiver-csv-upload validates the session via Identity Service, generates a `trace_id`, builds the canonical GCS path via `libs/dis-storage`, and returns a 15-minute signed PUT URL. No bronze write, no Pub/Sub publish — Phase 1 ends when the URL is handed back to the caller.
+- `TODO` Slice 9: CSV upload — Phase 2 notification handler. GCS object-finalized notification triggers the receiver's Phase 2 handler: DuckDB preflight (structure, row count, type sniff), PII tokenization for any flagged columns, bronze metadata write via `libs/dis-rls`, `ingress.ready` publish, audit emission. Idempotency: same SHA-256 + source_payload_id + tenant within 24h returns prior `trace_id`.
+
+### Receivers — API / webhook
+
+- `DEFERRED` `services/receiver-api/`. Bearer-token or API-key authenticated; accepts pushed JSON payloads from tenant systems; same downstream contract as CSV upload (bronze + `ingress.ready`). *Trigger: first tenant requests API/webhook ingestion.*
+
+### Receivers — ERP CSV POST
+
+- `DEFERRED` `services/receiver-csv-erp/`. Per-tenant POST endpoint for ERP-driven CSV batches; per-tenant API key or mTLS auth; identity bound to endpoint config. *Trigger: first tenant requests ERP POST endpoint.*
+
+### Receivers — Reverse-API pull
+
+- `DEFERRED` `services/receiver-reverse-api/`. Cursor-based puller from external APIs; identity bound to endpoint config registered for that pull target. *Trigger: first tenant requests reverse-API pull.*
+
+### Streaming pipeline
+
+- `TODO` Slice 10: Streaming consumer happy path. Reads `ingress.ready`, fetches bronze chunk from GCS, applies a stub mapping, validates with Pandera, writes the canonical hot table plus the event table in a single transaction, emits audit events. FK to `identity_mirror` enforced; RLS enforcement verified.
+- `TODO` Slice 11: Quarantine path. Failing rows from the streaming consumer flow to the `quarantine` topic; the drainer service writes them to Cloud SQL `quarantine.*` tables; rows are visible for replay/inspection.
+- `TODO` Slice 12: Replay tooling. `tools/replay/` CLI lets an ops operator replay a bronze chunk; the replay gets a new `trace_id` linked to the original as `parent_trace_id`; audit records the chain. The dis-api replay endpoint (UI-driven resubmit) is built in Slice 13 as a thin wrapper over this tooling.
+
+### dis-api + Identity Service real
+
+- `TODO` Slice 13: dis-api foundation + Identity Service real implementation. dis-api FastAPI BFF authenticates users via Customer Master and exposes endpoints the UI calls for upload, mapping CRUD, and audit lookup (reads from `audit.events`). Identity Service real implementation lands alongside: the four methods work against an in-process cache backed by Customer Master with stale-while-error fallback to `identity_mirror`; dis-api consumes it via the same client interface tests use against the Slice 2 fake.
+- `TODO` Slice 14: Onboarding. dis-api's onboarding sub-module takes a sample upload and produces a draft mapping (rule-based schema inference + suggestions); operator can review and promote to active; new tenant CSV onboards end-to-end without manual SQL.
+- `TODO` Slice 15: dis-api endpoints — group 1. *Placeholder; scope drafted from UI engineer's demand list. Endpoints land here as a coherent feature group (e.g., dashboards, history views, ops surfaces).*
+- `TODO` Slice 16: dis-api endpoints — group 2. *Placeholder; scope drafted from UI engineer's demand list.*
+- `TODO` Slice 17: dis-api endpoints — group 3. *Placeholder; scope drafted from UI engineer's demand list.*
+
+### Daily compute
+
+- `TODO` Slice 18: Daily compute. Produces `store_sku_signal_history` rows per (store, SKU, as_of_date); updates derived columns on `store_sku_current_position`; ROOS has fresh signals every day.
+
+**Phase 1 exit criterion.** All non-DEFERRED slices DONE. A tenant can upload a CSV via the UI, have it land in canonical, see failures in the quarantine console, and audit events for every pipeline step are queryable from Cloud SQL via dis-api. BigQuery archive is deferred to Phase 3.
 
 ---
 
-## 4. Migration triggers (consolidated)
+### DIS UI
 
-Every deferred component has an explicit promote-when trigger. Capturing them in one table avoids "we'll get to it eventually" drift. First trigger met wins.
+- `TODO` Slice 19: DIS UI foundation. `ui/` initialized; auth scaffolding against Customer Master tokens; a hello-world page calls a dis-api endpoint and renders the response. Stack and tool choices made during this slice.
+- `TODO` Slice 20: DIS UI core. Operator/tenant can upload a CSV, review the onboarding result, edit the mapping config, inspect the quarantine console, look up audit events, and resubmit failed chunks.
 
-| Deferred component | Promote when |
-|---|---|
-| Higher-throughput runtime (e.g. Dataflow) replaces streaming consumer | Sustained 500+ rows/sec for 7 days, OR consumer scaling above 20 concurrent instances, OR p95 latency above 10s. See `decisions.md` D4. |
-| Cloud SQL HA | First paying-tenant SLA mandating 99.99%, OR after first single-zone outage incident |
-| Cloud SQL read replica | Read CPU sustained above 60%, OR p95 read latency above 200ms |
-| Redis identity cache | Identity resolves above 10k/sec, OR in-process LRU hit rate drops below 80% |
-| Historical-learning onboarding | 20+ approved mappings in `config.source_mappings` |
-| LLM-assisted onboarding | Onboarding throughput becomes a bottleneck (signal: tenant onboarding time-to-active exceeds 1 week consistently) |
-| GE Data Docs (alongside or replacing Pandera reports) | First tenant contractually requires HTML audit reports |
-| Machine auth to Customer Master | Customer Master scope expands to cover machine credentials, OR operational cost of running two auth domains becomes high enough to consolidate |
-| Trace-level dedup at streaming-consumer entry (skip retry if prior `CANONICAL_WRITTEN` audit exists) | Retry rate accounts for material compute cost; signal: `DUPLICATE_NOOP` audit volume sustained above 10% of total. See `architecture.md` §9.2. |
-| Read replica for `audit_events` BigQuery dataset | Audit query load impacts BQ slot budget for canonical_history dbt runs |
+## Phase 2: Integration
+
+Phase 1 slices test against fakes individually. Phase 2 verifies the full system wires together.
+
+- `TODO` Identity flow end-to-end: a tenant added to Customer Master DB appears in `identity_mirror` after the next Mirror Sync DB-pull run; downstream services pick up the new tenant on their next request. Pub/Sub-driven incremental sync is a later test, triggered when Customer Master emits `identity.changed`.
+- `TODO` Receiver → streaming consumer end-to-end: CSV uploaded by tenant A cannot be read by tenant B; RLS holds across the pipeline.
+- `TODO` Quarantine flow end-to-end: a malformed CSV row reaches the tenant quarantine console; the resubmit button rebuilds the chunk and processes successfully.
+- `TODO` Onboarding flow end-to-end: a new tenant uploads a sample, reviews the suggested mapping, promotes to active, and uploads a real CSV that lands in canonical without operator intervention beyond mapping approval.
+- `TODO` Audit and quarantine end-to-end: every Phase 1 pipeline step emits audit events to Cloud SQL `audit.events`; quarantined chunks are queryable by tenant via dis-api; trace_id chains a single ingress event from receiver through canonical.
+- `TODO` Daily compute end-to-end: synthetic day-window events produce the expected `signal_history` row and `current_position` updates.
+- `TODO` Replay end-to-end: an ops engineer replays a bronze chunk and sees the chain (parent_trace_id, new trace_id, audit events) in the dis-api.
+- `TODO` Full e2e: every flow above runs simultaneously against a multi-tenant test environment without cross-contamination.
+
+**Phase 2 exit criterion.** Every e2e test in `tests/e2e/` passes. The system handles ingress, processes, surfaces failures, and replays end-to-end.
 
 ---
 
-## 5. Build target portability
+## Phase 3: Production hardening and analytics offload
 
-The repo is built to run identically on a developer's machine and in cloud (dev/staging/prod GCP). The operator picks a build target; the code does not change. There are no `if env == "local"` branches in service code, no per-target forks, no manual config edits to switch between targets. The build target is the only switch.
+### Resilience
 
-### 5.1 How it works
+- `TODO` `pipeline.dlq` auto-drainer. A service or sidecar consumes the `pipeline.dlq` topic and replays messages every 60s when the Cloud SQL health probe reports recovery. Architecture circuit-breaker pattern (decisions.md D27). v1.0 launch operates with manual recovery; auto-drainer activates here.
 
-Every external dependency the platform uses has either an emulator or a fake substitute that speaks the same protocol as the real cloud service. Service code uses the standard client libraries, which honour environment variables to route to the right backend. The environment variables are set differently per build target by the surrounding tooling (`docker-compose` for local, Terraform/k8s for cloud); operators do not set them by hand.
+### Analytics offload to BigQuery
 
-### 5.2 The build targets
+- `TODO` Slice 21: Nightly batch and BigQuery archive. Daily Cloud SQL → BigQuery export populates `canonical_history.*`; `audit_events` from Cloud SQL is archived to BigQuery; Cloud SQL partitions older than the retention window are dropped; dbt freshness/completeness tests pass. *Trigger: ROOS or another consumer needs long-term canonical history, OR Cloud SQL retention pressure justifies offload.*
 
-| Target | Used for | Dependencies routed to |
+### Production hardening
+
+- `TODO` Observability dashboards show latency p50/p95/p99, DLQ depth, quarantine rate per tenant, audit emission rate.
+- `TODO` Performance tuning: Cloud SQL indexes verified against real query patterns; BigQuery query patterns optimised; no silent N+1 or table scans.
+- `TODO` Cost optimisation: committed-use discounts applied where stable; logging retention tuned; actual monthly bill matches projection within 20%.
+- `TODO` Cloud SQL HA enabled. *Trigger: first paying tenant SLA mandating 99.99%.*
+- `TODO` Cloud SQL read replica live. *Trigger: read CPU sustained above 60%, OR p95 read latency above 200ms.*
+- `TODO` Memorystore Redis identity cache. *Trigger: identity resolves above 10k/sec, OR in-process cache hit rate drops below 80%.*
+
+**Phase 3 exit criterion.** Production is observable, performant within SLO, cost is understood. Each migration trigger has either fired and been actioned, or remains explicitly accepted.
+
+---
+
+## Migration triggers (consolidated reference)
+
+Deferred items live in the phases above; this section gathers the triggers for quick scanning. First trigger met wins.
+
+- Higher-throughput streaming runtime (Beam on Dataflow) — *sustained 500+ rows/sec for 7 days, OR consumer scaling above 20 concurrent instances, OR p95 above 10s. See decisions.md D4.*
+- Cloud SQL HA — *first paying tenant SLA, OR single-zone outage incident.*
+- Cloud SQL read replica — *read CPU sustained above 60%, OR p95 read latency above 200ms.*
+- Redis identity cache — *identity resolves above 10k/sec, OR in-process cache hit rate drops below 80%.*
+- Historical-learning onboarding — *20+ approved mappings in `config.source_mappings`.*
+- LLM-assisted onboarding — *tenant onboarding time-to-active exceeds 1 week consistently.*
+- Machine auth migration to Customer Master — *Customer Master scope expands to cover machine credentials.*
+- Trace-level dedup at streaming-consumer entry — *`DUPLICATE_NOOP` audit volume sustained above 10% of total. See architecture.md §9.2.*
+- BigQuery audit dataset isolation — *audit query load impacts BQ slot budget for canonical_history dbt runs.*
+
+---
+
+## Build target portability
+
+The same code runs against three environments via env-var-driven routing. Operator picks the target; code does not change.
+
+| Target | Used for | Dependencies route to |
 |---|---|---|
-| `local` | Developer machines, `make run-local`, local tests | docker-compose stack: emulators and fakes |
-| `dev` | Shared dev environment in GCP | Real GCP services in a `dev` project |
-| `staging` | Pre-production verification | Real GCP services in a `staging` project |
-| `prod` | Production | Real GCP services in a `prod` project |
+| `local` | Developer machines, `make run-local`, local tests | docker-compose emulators and fakes |
+| `dev` | Shared dev GCP project | Real GCP services in `ithina-dis-dev` |
+| `staging` | Pre-production verification | Real GCP services in `ithina-dis-staging` |
+| `prod` | Production | Real GCP services in `ithina-dis-prod` |
 
-### 5.3 What changes between targets: only environment variables
-
-| Dependency | Local target | Cloud targets |
-|---|---|---|
-| Pub/Sub | `PUBSUB_EMULATOR_HOST=pubsub:8085` set; client routes to emulator | `PUBSUB_EMULATOR_HOST` unset; client routes to real Pub/Sub |
-| GCS | `STORAGE_EMULATOR_HOST=http://fake-gcs:4443` set | `STORAGE_EMULATOR_HOST` unset |
-| Cloud SQL | `POSTGRES_URL=postgresql://...@postgres:5432/dis` (local Postgres container) | `POSTGRES_URL=postgresql://...@<cloud-sql-host>:5432/dis` |
-| Redis (identity cache) | `REDIS_URL=redis://redis:6379` | `REDIS_URL=redis://<memorystore-host>:6379` |
-| BigQuery | Mocked in unit tests; shared dev BQ project for integration | Real BigQuery per environment |
-| Identity Service | `IDENTITY_SERVICE_URL=http://fake-identity:8080` (fake from `libs/dis-testing`) | `IDENTITY_SERVICE_URL=http://identity-service:8080` (real service in cluster) |
-| Customer Master | `CUSTOMER_MASTER_URL=http://fake-cm:8080` (fake from `libs/dis-testing`) | `CUSTOMER_MASTER_URL=https://<customer-master-prod>` |
-| Secrets | `.env` file (gitignored) read by config loader | Secret Manager via Workload Identity |
-| Logging | stdout + local files | Cloud Logging |
-
-### 5.4 What the operator does
-
-- **Run locally:** `make run-local` from the service directory. Docker-compose handles the env vars.
-- **Deploy to dev/staging/prod:** Terraform pipeline runs; service is deployed with the right env vars injected by the deployment manifest. No code change needed.
-- **Switch targets:** stop the local stack; deploy to cloud, or vice versa. Same code.
-
-### 5.5 What this enables for Claude Code
-
-Slice docs say "build feature X." Claude Code writes code that uses standard client libraries; the code runs both locally and in cloud without modification. Claude Code does not need to know which target is active. The operator picks the target by choosing the tool to run.
+Switch via `DIS_TARGET=local|dev|staging|prod`. Service code uses standard client libraries; env vars (e.g., `PUBSUB_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST`, `POSTGRES_URL`) route to the right backend. Detail in `local-setup.md` §B.
 
 ---
 
-## 6. Operator workflow: building one slice with Claude Code
+## Slice workflow
 
-This is the **10-step build loop** for taking one slice from draft to merged.
+Slices are how Claude Code builds DIS. The shape:
 
-### 6.1 The loop
+1. **Draft the slice in this Claude AI chat** with the operator. Capture: goal, task description, scope boundary, acceptance criteria. Save to `docs/slices/slice-NN-<short-name>.md`. Slice doc stays at goal/task level; implementation specifics emerge in plan mode.
+2. **Hand slice doc + execution prompt to Claude Code.** Claude Code reads, enters plan mode (Shift+Tab twice), returns a plan.
+3. **Review the plan in this chat.** Operator decides: execute, or revise.
+4. **Revise loop.** If plan needs changes: feed corrections back to Claude Code; re-plan; re-review. Repeat until the plan looks right.
+5. **Execute.** Operator tells Claude Code to proceed; Claude Code writes code; operator reviews diffs.
+6. **Slice exit.** Acceptance criteria met → merge → mark the slice DONE in this doc. Anything learned that affects future slices goes into root or per-service `CLAUDE.md`.
 
-1. **Draft the slice in Claude AI (this conversation surface).** Capture: goal, hard constraints, acceptance criteria, failure-mode categories, plan-mode prompts per checkpoint. Save to `docs/slices/slice-NN-<short-name>.md`. The slice doc is goal-oriented and bounded; HTTP codes, response shapes, idempotency window come from Claude Code in plan mode, not from the slice doc.
-2. **Update root `CLAUDE.md` if the slice introduces a new project-wide invariant.** Same for service `CLAUDE.md` if it introduces a service-specific rule.
-3. **Git checkpoint.** Commit the slice doc and any CLAUDE.md updates before opening Claude Code. Tag if helpful.
-4. **Open Claude Code in plan mode** (Shift+Tab twice). Plan mode is research/analysis-only; no file writes.
-5. **Feed the plan-mode prompt from the slice doc.** Tell Claude Code which checkpoint to plan for. Claude Code returns its plan: file list, libraries used, HTTP shapes, idempotency mechanism, test layout.
-6. **Review the plan.** If wrong: correct via conversation, or revise the slice doc and re-prompt. If right: approve.
-7. **Execute the checkpoint.** Claude Code writes the files; you watch.
-8. **Checkpoint review.** Run tests; review diffs; identify gaps. If gaps: feed them back; Claude Code revises.
-9. **Next checkpoint or session boundary.** If the slice has more checkpoints, repeat from step 4 for the next one. If the slice is done: merge and move to next slice. If the session is long: `/resume` later.
-10. **Slice exit.** Acceptance criteria all met → merge. Update build-guide.md (this doc) with anything learned that affects future slices.
+### When to intervene
+- Plan looks wrong → correct in the chat, revise the slice doc if needed, re-plan.
+- Tests fail in a way that suggests a slice constraint is violated → push back.
+- Claude Code proposes scope outside the slice → hold the line. New scope = new slice.
+- A CLAUDE.md invariant gets broken → fix the invariant statement first, then re-execute.
 
-### 6.2 When to intervene
+### CLAUDE.md hygiene
+- Root `CLAUDE.md` under 200 lines.
+- Per-service `CLAUDE.md` under 100 lines.
+- Per-lib `CLAUDE.md` under 50 lines.
+- New invariants discovered during a slice go into the relevant CLAUDE.md before the next slice starts.
 
-- **Plan looks wrong.** Stop, correct, replan. Cheaper than reviewing wrong code.
-- **Tests fail unexpectedly.** Read Claude Code's analysis; if it's heading toward a fix that violates a slice constraint, push back.
-- **Claude Code proposes a change outside the slice scope.** Hold the line. New scope = new slice.
-- **A CLAUDE.md invariant gets broken.** That's a failure of the loop. Fix the invariant statement first, then re-execute.
-
-### 6.3 Design vs build
-
-This guide is for the build phase: an architect has decided what the system should do, and Claude Code implements one slice at a time. Architecture decisions belong in `architecture.md` and `decisions.md`; the operator does not negotiate them mid-build. If a slice surfaces a real architectural gap, stop the slice, raise the question, resolve in `decisions.md`, update the slice doc, then resume.
-
-### 6.4 CLAUDE.md hygiene
-
-- Root `CLAUDE.md` < 200 lines. Past that, instruction-following degrades.
-- Per-service `CLAUDE.md` < 100 lines. Auto-loaded when Claude Code works in that directory.
-- Per-lib `CLAUDE.md` < 50 lines.
-- New invariants discovered during a slice go into the relevant CLAUDE.md before the next slice starts. This is the single biggest lever on cross-session quality.
-
-### 6.5 Common pitfalls
-
-- **Over-specifying the slice.** Slice docs name the goal, the hard constraints, and the failure-mode categories. They do not name HTTP status codes, response field shapes, or library versions. That's plan-mode territory.
-- **Letting Claude Code propose architecture.** Plan-mode plans are about implementation, not design. If Claude Code's plan changes the architecture, stop.
-- **Skipping plan mode.** Going straight to execution is fast in the short term and expensive over weeks. Plan mode is the leverage point.
-- **Forgetting to checkpoint git.** When Claude Code goes wrong, you want a clean rollback.
-- **Not updating CLAUDE.md.** Every slice teaches the system something. If you don't capture it, the next slice re-learns it.
+### Common pitfalls
+- **Over-specifying the slice.** Slice docs name goal and scope. They don't name HTTP status codes, library versions, response field shapes. Those come from plan mode.
+- **Letting Claude Code propose architecture.** Plan mode is implementation. If the plan changes architecture, stop and raise in this chat.
+- **Skipping plan mode.** Fast short term, expensive over weeks. Plan mode is the leverage point.
+- **Not updating CLAUDE.md.** Every slice teaches the system something. Capture it.
 
 ---
 
-## 7. Document lifecycle
+## Document lifecycle
 
-This doc mutates as the build progresses. Treat it as a living plan, not a frozen spec.
+This doc mutates. When:
+- A slice or item completes: change status to DONE.
+- A new slice is identified: add it under the right phase.
+- A migration trigger fires: change the relevant DEFERRED item to TODO and start it.
+- A whole section becomes obsolete: delete it.
 
-- **Phases and slices completed:** mark in §2 and §3.
-- **Migration triggers fired:** mark in §4; record the promotion decision in `decisions.md`.
-- **New triggers discovered:** add to §4.
-- **Operator workflow refinements:** update §6.
-- **Whole sections obsoleted:** delete; don't leave stale guidance in place.
-
-When a section grows past ~150 lines, consider splitting it into its own doc.
-
----
+When this doc grows past ~300 lines, consider splitting.

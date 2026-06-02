@@ -69,7 +69,7 @@ Ops can answer "what's the duplicate rate per tenant?" by querying audit; no DB 
 A retry of the same chunk (same `trace_id`) runs through the full pipeline. The source-event-id dedup at the event-table audit layer catches retries as `DUPLICATE_NOOP` events. Retries do not cause data corruption; they do cause repeated mapping/validation compute. Acceptable at v1.0 beta scale; see §9.2 for the forward note on trace-level dedup at higher scale.
 
 ### 2.4 Latency SLO
-End-to-end latency from event-at-store to reflected-in-`current_store_positions`, measured as `commit_ts - received_ts` via the BigQuery audit table:
+End-to-end latency from event-at-store to reflected-in-`store_sku_current_position`, measured as `commit_ts - received_ts` via the Cloud SQL `audit.events` table (Phase 1; BigQuery `audit_events` from Phase 3 onward):
 - **p50 < 3 seconds**
 - **p95 < 8 seconds**
 - **p99 < 15 seconds**
@@ -162,8 +162,8 @@ Personal identifiers (phone, email, loyalty_id, PAN, Aadhaar, and other fields p
                                     │   ┌──────────────────────────────┐    │
                                     │   │ Cloud SQL Postgres           │    │
                                     │   │ identity_mirror schema:      │    │
-                                    │   │  - tenants_known             │    │
-                                    │   │  - stores_known (is_active)  │    │
+                                    │   │  - tenants             │    │
+                                    │   │  - stores (is_active)  │    │
                                     │   │ (canonical FK ─────────────► │    │
                                     │   │  reference these mirrors)    │    │
                                     │   └──────────────┬───────────────┘    │
@@ -222,12 +222,12 @@ Personal identifiers (phone, email, loyalty_id, PAN, Aadhaar, and other fields p
    │ │ canonical schema                     │ │  │     ▼       │ └──────────┘  │
    │ │   HOT tables (RLS, mapping_version_id│ │  │ ┌─────────┐ │               │
    │ │   on every row)                      │ │  │ │ Quarant.│ │               │
-   │ │     - current_store_positions        │ │  │ │ drainer │ │               │
+   │ │     - store_sku_current_position        │ │  │ │ drainer │ │               │
    │ │     - sibling hots                   │ │  │ │ (svc)   │ │               │
    │ │   HISTORY tables (35 days,           │ │  │ └────┬────┘ │               │
    │ │   mapping_version_id NOT NULL)       │ │  │      │      │               │
-   │ │  FK ──► identity_mirror.stores_known │ │  │      ▼      │               │
-   │ │  FK ──► identity_mirror.tenants_known│ │  │ ┌─────────┐ │               │
+   │ │  FK ──► identity_mirror.stores │ │  │      ▼      │               │
+   │ │  FK ──► identity_mirror.tenants│ │  │ ┌─────────┐ │               │
    │ │  Schema evolution via Alembic        │ │  │ │ CloudSQL│ │               │
    │ └──────────────────────────────────────┘ │  │ │ quarant.│ │               │
    │                                          │  │ │ table   │ │               │
@@ -272,7 +272,7 @@ Personal identifiers (phone, email, loyalty_id, PAN, Aadhaar, and other fields p
    │   -> containerized job:                  │                                │
    │     - run Pandera quality gate           │                                │
    │     - load yesterday's history -> BQ     │                                │
-   │     - delete > 3mo from Cloud SQL        │                                │
+   │     - delete > 35d from Cloud SQL       │                                │
    └──────────┬───────────────────────────────┘                                │
               │                                                                │
               ▼                                                                │
@@ -318,7 +318,7 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 
 ### 4.3 Mirror Sync Consumer
 **What it is.** A containerized service that maintains the `identity_mirror` schema. Ships with two modes: a Pub/Sub subscriber on `identity.changed` (the architectural target), and a DB-pull mode that reads tenant/store records directly from Customer Master's Postgres database.
-**Role.** Maintains a small mirror of identity data (`tenants_known`, `stores_known`) inside the data-platform Postgres. Acts as the local source of truth for FK references from canonical tables. Treats deletes as soft (sets `is_active = false`), so canonical rows do not get cascade-killed by a Customer Master cleanup.
+**Role.** Maintains a small mirror of identity data (`tenants`, `stores`) inside the data-platform Postgres. Acts as the local source of truth for FK references from canonical tables. Treats deletes as soft (sets `is_active = false`), so canonical rows do not get cascade-killed by a Customer Master cleanup.
 **Why it exists.** Postgres FK cannot reach across instances. The mirror reconstitutes equivalent integrity inside the data-platform DB.
 **Two modes (see `decisions.md` D35).** DB-pull is the v1.0 launch mode and ships first, because Customer Master does not yet emit `identity.changed`. Pub/Sub consumer mode activates once Customer Master emits the events. Both modes share the same upsert path, so canonical FK behaviour is identical. DB-pull persists past launch as a reconciliation mechanism even after Pub/Sub is live.
 
@@ -390,7 +390,7 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 - **Quarantine console.** Two views:
   - *Tenant-facing slice:* current tenant's quarantined rows with human-readable failure reasons, links to Pandera suite failure documentation, and resubmit action. Resubmit publishes `ingress.resubmit`.
   - *Ops slice:* cross-tenant view, filter by source, failure type, time range; ops actions (trigger Ithina-side replay from bronze, mark resolved).
-- **Audit & trace lookup.** Search BigQuery `audit_events` by `trace_id`, `tenant_id`, `store_id`, or time range. Renders the per-stage lifecycle of a chunk or row, including `mapping_version_id` at every post-mapping stage.
+- **Audit & trace lookup.** Search Cloud SQL `audit.events` (Phase 1; BigQuery `audit_events` from Phase 3 onward) by `trace_id`, `tenant_id`, `store_id`, or time range. Renders the per-stage lifecycle of a chunk or row, including `mapping_version_id` at every post-mapping stage.
 - **DuckDB ad-hoc query panel (ops only).** Operator pastes a GCS bronze blob URI and SQL; backend runs the query via DuckDB and returns results. Used for debugging without spinning up the streaming consumer or loading to BigQuery.
 
 **Role.** The single human-facing front door to the data platform. Calls one backend: dis-api (`decisions.md` D17). Data-plane services (Identity, Mirror Sync, Streaming Consumer, Quarantine Drainer) are headless; the UI never calls them directly.
@@ -559,7 +559,7 @@ Recommendation for v0: rule-based suggester only. Add historical learning once 2
 6. **Beam applies the mapping** in four sub-stages: **rename** (source field name → canonical field name), **normalize** (parse and canonicalize representation: date formats, decimal separators, timezones, units, enums, booleans, nulls, casing, whitespace, per the `transforms` field in the mapping config), **cast** (string → target type, now safe because normalize produced canonical representations), **derive** (computed fields from others). The mapping's declarative `transforms` vocabulary handles common normalizations; a named custom transform function (escape hatch) handles source-specific quirks the vocabulary can't express. Normalization failures (ambiguous or unparseable values) route to quarantine with a distinct "normalization failed" reason: column, value, expected format. The chunk is exploded into N canonical row candidates only for rows that pass normalization and cast.
 7. **Post-mapping validation (canonical-shape).** Runs the canonical-shape suite against each mapped row. Checks: canonical required columns populated, numeric range bounds (`inventory_units >= 0`, `price >= 0`), `event_ts` plausibility, regex on identifiers (`sku_id`), cross-field invariants (`is_returned = true` implies `quantity < 0`), and a pre-check that `tenant_id` and `store_id` exist in `identity_mirror` (avoids a wasted DB round-trip to fail FK). Failure here is per-row; failing rows go to quarantine, passing rows continue.
 8. **Branch.** Valid rows fan out to two sinks: the canonical hot table (column-scoped merge upsert, event-time conditional) and the canonical history table (unconditional append), both inside a single RLS-aware transaction grouped by `tenant_id`. Invalid rows route to the `quarantine` Pub/Sub topic.
-9. **Audit emit.** Every stage (read, fetch, source-shape validate, map, canonical-shape validate, sink) emits a structured row to BigQuery `audit_events`, keyed by `trace_id`, with stage, status, timestamp, row count, and any error context.
+9. **Audit emit.** Every stage (read, fetch, source-shape validate, map, canonical-shape validate, sink) emits a structured row to Cloud SQL `audit.events` in Phase 1 (BigQuery `audit_events` from Phase 3 onward; see `decisions.md` D34), keyed by `trace_id`, with stage, status, timestamp, row count, and any error context.
 10. **Quarantine sink** drains its Pub/Sub topic into the Cloud SQL `quarantine` table, with the raw payload pointer, suite failure reasons (if GE/Pandera is adopted, including which suite failed: source-shape vs canonical-shape), and links back to the source bronze chunk. The tenant-facing UI reads from this table.
 
 ### 6.2 ELT outputs: how Beam writes to its sinks
@@ -586,15 +586,16 @@ The pipeline emits to four sinks. Their delivery semantics differ; this section 
         │ (~500 rows / batch)    │ Pub/Sub topic           │ insert
         ▼                        │ 'quarantine'            ▼
    ┌─────────────────────┐       │                  ┌──────────────┐
-   │ One RLS-aware       │       ▼                  │ BigQuery     │
-   │ transaction per     │  ┌──────────────┐        │ audit_events │
-   │ tenant batch:       │  │ Quarantine   │        │              │
-   │                     │  │ drainer      │        │ partition by │
-   │  BEGIN              │  │ (subscriber) │        │   date       │
-   │  SET LOCAL          │  └──────┬───────┘        │ cluster by   │
-   │   app.tenant_id     │         │                │   trace_id,  │
-   │   = '<id>'          │         │ batch          │   tenant_id  │
-   │                     │         │ insert         └──────────────┘
+   │ One RLS-aware       │       ▼                  │ Cloud SQL    │
+   │ transaction per     │  ┌──────────────┐        │ audit.events │
+   │ tenant batch:       │  │ Quarantine   │        │ (Phase 1)    │
+   │                     │  │ drainer      │        │              │
+   │  BEGIN              │  │ (subscriber) │        │ partition by │
+   │  SET LOCAL          │  └──────┬───────┘        │   date       │
+   │   app.tenant_id     │         │                │ archived to  │
+   │   = '<id>'          │         │ batch          │ BigQuery in  │
+   │                     │         │ insert         │ Phase 3      │
+   │                     │         │                └──────────────┘
    │  -- hot upsert:     │         ▼
    │  INSERT INTO        │  ┌──────────────┐
    │   canonical.<hot>   │  │ Cloud SQL    │
@@ -649,7 +650,7 @@ The pipeline emits to four sinks. Their delivery semantics differ; this section 
 **Notes:**
 - Hot and history writes are **always in the same Postgres transaction** for a given tenant batch. A row cannot land in hot without also landing in history. Tenant ordering inside a batch is by `event_ts`.
 - BigQuery `canonical_history` is **not written from the streaming pipeline.** It is loaded nightly by the batch job (§6.4), reading the Cloud SQL history slice. This keeps the hot-path latency budget free of BQ write variance.
-- `audit_events` writes are streaming and parallel to the main flow. A delay or partial failure on audit emission never blocks canonical writes; audit gaps are logged and re-emitted from bronze on demand.
+- `audit.events` writes (Phase 1, Cloud SQL) are fire-and-forget and parallel to the main flow. A delay or partial failure on audit emission never blocks canonical writes; audit gaps are logged and re-emitted from bronze on demand.
 - The quarantine drainer is a separate small process (see `decisions.md` D13 backend) that reads from the `quarantine` Pub/Sub topic and writes to the Cloud SQL `quarantine` table; the DIS UI reads from that table.
 
 ### 6.3 Identity path (out-of-band)
@@ -657,7 +658,7 @@ The pipeline emits to four sinks. Their delivery semantics differ; this section 
 - Admin app writes go through the Identity Service. On any tenant/store change (create, update, soft-delete), the Identity Service publishes `identity.changed`.
 - Two subscribers consume:
   - The Identity Service's own cache invalidator (evicts cache keys).
-  - The Mirror Sync Consumer (upserts or marks inactive in `identity_mirror.tenants_known` / `identity_mirror.stores_known`).
+  - The Mirror Sync Consumer (upserts or marks inactive in `identity_mirror.tenants` / `identity_mirror.stores`).
 - Canonical tables have real Postgres FKs to the mirror tables. Inserts referencing a tenant/store not yet replicated fail with FK violation; Beam sink retries with exponential backoff before quarantining as a last resort.
 - TTL on the identity cache (5-15 min) is the safety net if Pub/Sub lags.
 
@@ -668,7 +669,7 @@ Triggered by Cloud Scheduler during the no-ingress window (retail off-hours).
 1. Identify yesterday's slice in `canonical_history` (watermark column).
 2. **Optional validation gate (Option B):** run a GE or Pandera suite on the slice. On failure, hold the load and alert ops.
 3. **Load to BigQuery.** A containerized job (or Dataflow batch) writes the slice to `bigquery.canonical_history.*` using the Storage Write API. Idempotent: re-running the same slice is a no-op due to deterministic row keys.
-4. **Evict from Cloud SQL.** Delete rows in `canonical_history` with `event_ts < now() - 3 months`, in batched chunks to avoid long locks. BigQuery already has them from prior nights.
+4. **Evict from Cloud SQL.** Delete rows in `canonical_history` with `event_ts < now() - retention_window` (default 35 days, configurable per `decisions.md` D29), in batched chunks to avoid long locks. BigQuery already has them from prior nights.
 5. The hot tables are not affected; they continue serving current-state reads from Cloud SQL.
 
 ### 6.5 Replay paths
@@ -690,7 +691,7 @@ Triggered by Cloud Scheduler during the no-ingress window (retail off-hours).
 
 - `trace_id` is generated at the receiver and propagated through every downstream message and storage row.
 - Every Beam stage emits one audit event per row: `{trace_id, tenant_id, store_id, source_id, stage, status, ts, row_hash, error_code, error_detail}`.
-- Debugging a problem row: `SELECT * FROM audit.audit_events WHERE trace_id = '...' ORDER BY ts;` returns the full lifecycle.
+- Debugging a problem row: `SELECT * FROM audit.events WHERE trace_id = '...' ORDER BY event_timestamp;` returns the full lifecycle.
 - Quarantine rows link back to the bronze chunk and the validation failure context (when GE/Pandera is adopted).
 
 ## 9. Open Questions

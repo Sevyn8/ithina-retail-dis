@@ -626,7 +626,7 @@ The git-hook install (`pre-commit install`) requires the repo to be a git repo. 
 
 ### A.15 Install the pre-flight check script
 
-**Why.** `check_setup.sh` runs five tiers of checks (environment, services, connectivity, DB state, code state) in seconds. Used at the start of every Claude Code session and whenever something feels off; catches setup drift (stack down, env vars missing, role posture broken) before code work begins. Failures include hints with exact fix commands.
+**Why.** `check_setup.sh` runs six tiers of checks (environment, services, connectivity, Customer Master read access, DB state, code state) in seconds. Used at the start of every Claude Code session and whenever something feels off; catches setup drift (stack down, env vars missing, role posture broken) before code work begins. Failures include hints with exact fix commands.
 
 ```bash
 cd ~/ithina-dis
@@ -634,7 +634,7 @@ cp <path-to-published>/check_setup.sh scripts/check_setup.sh
 chmod +x scripts/check_setup.sh
 ```
 
-The script runs five tiers of checks: environment (tools, structure), services (containers), connectivity (Postgres, Pub/Sub, GCS, Redis), DB state (Alembic, role posture), code state (deps, dbt config). Output is PASS / FAIL / SKIP with hints.
+The script runs six tiers of checks: environment (tools, structure), services (containers), connectivity (Postgres, Pub/Sub, GCS, Redis), Customer Master read access, DB state (Alembic, role posture), code state (deps, dbt config). Output is PASS / FAIL / SKIP with hints.
 
 ### A.16 Bring up the stack
 
@@ -657,14 +657,14 @@ Expected sequence:
 
 ### A.17 Verify with check_setup.sh
 
-**Why.** Sanity check that everything brought up by §A.16 is healthy and reachable. Expected 52/52 PASS means the local devbox is in production-correct posture (RLS-safe roles, 6 topics, 4 containers healthy, deps in sync). Any FAIL has a directly actionable hint.
+**Why.** Sanity check that everything brought up by §A.16 is healthy and reachable. Expected 57/57 PASS means the local devbox is in production-correct posture (RLS-safe roles, 6 topics, 4 containers, CM read access verified healthy, deps in sync). Any FAIL has a directly actionable hint.
 
 ```bash
 cd ~/ithina-dis
 ./scripts/check_setup.sh
 ```
 
-Expected: 52/52 PASS, one SKIP (pytest, no tests yet).
+Expected: 57/57 PASS, one SKIP (pytest, no tests yet).
 
 If any FAIL appears, the script's hint shows how to fix.
 
@@ -766,7 +766,7 @@ At this point:
 - pre-commit guards commits.
 - GitHub Actions CI runs on push.
 - Docs and root CLAUDE.md are in place.
-- `check_setup.sh` runs in seconds and shows 52/52 PASS.
+- `check_setup.sh` runs in seconds and shows 57/57 PASS.
 
 ### A.22 Daily commands
 

@@ -69,7 +69,7 @@
 **Why.** A POS event carries sale-related fields; an ERP event carries inventory-related fields; a planogram update carries placement fields. Row-replace would force every source to know every column, or destroy data from other sources on every write. Per-source rows would push the merge logic to read time, hurting query performance.
 
 ### D9 Nightly BQ offload, not live fan-out
-**Decision.** History rows are written only to Cloud SQL on the hot path. A nightly batch job (during retail off-hours) copies yesterday's slice to BigQuery and evicts rows older than 3 months from Cloud SQL.
+**Decision.** History rows are written only to Cloud SQL on the hot path. A nightly batch job (during retail off-hours) copies yesterday's slice to BigQuery and evicts rows older than the configured retention window from Cloud SQL. **The original "3 months" retention has been superseded by D29 (35-day configurable buffer); this decision is retained for the architectural pattern (nightly copy + delayed evict), but the window value is D29's.**
 **Alternatives.** Live dual-write from Beam to both Cloud SQL and BigQuery; CDC from Cloud SQL to BigQuery (Datastream); BigQuery as the sole history store.
 **Why.** Live dual-write adds latency to the canonical write path (BigQuery streaming inserts have variable latency and cost). The team's analytics tolerance is 24 hours, so nightly is sufficient. The no-ingress window during retail off-hours is a natural batch window. CDC is one more managed service to operate when the simple batch job suffices.
 
@@ -84,7 +84,7 @@
 **Why.** Caching belongs in one place; identity is read on every request and would crush Customer Master otherwise. Centralizing also gives one place to enforce auth, audit identity reads, and publish change events. JWT claims handle the API/webhook channels but not internal/reverse-API channels, so a service is still needed.
 
 ### D12 Mirror table + real FK as the cross-DB integrity substitute
-**Decision.** A small `identity_mirror` schema in the data-platform Postgres holds `tenants_known` and `stores_known`, populated by a consumer subscribed to `identity.changed`. Canonical tables have real Postgres FKs pointing to these mirror tables.
+**Decision.** A small `identity_mirror` schema in the data-platform Postgres holds `tenants` and `stores`, populated by a consumer subscribed to `identity.changed`. Canonical tables have real Postgres FKs pointing to these mirror tables.
 **Alternatives.** Application-layer validation only; trigger-based validation function; deferred constraints; no validation at the DB layer.
 **Why.** True cross-DB FK is impossible. Application-layer validation is bypassable by bugs and direct DB writes. The mirror gives real FK semantics with real error messages, real cascade rules, and zero per-write network calls. The cost is a small replication lag (seconds), handled by retry-with-backoff at the sink and a fallback to quarantine if the mirror never catches up.
 
@@ -253,17 +253,17 @@ to filter to the current truth. dbt models in BigQuery `canonical_history.*` exp
 - Cloud SQL is the same datastore everything else writes to in Phase 1, so the audit emitter doesn't need a separate transport during initial development.
 - Beta-scale audit volume (10 + F events per ingress event, ~150K events/day) sits comfortably in Cloud SQL with daily partitioning.
 
-**Architectural intent unchanged.** BigQuery `audit_events` is still the long-term home (decisions D7 and D29 hold). Phase 3 adds the Cloud SQL → BigQuery archive job for audit, alongside the canonical_history archive (build-guide.md Slice 16). After that, Cloud SQL `audit.events` becomes a short-term rolling buffer (35-day retention matching event tables).
+**Architectural intent unchanged.** BigQuery `audit_events` is still the long-term home (decisions D7 and D29 hold). Phase 3 adds the Cloud SQL → BigQuery archive job for audit, alongside the canonical_history archive (build-guide.md Slice 21). After that, Cloud SQL `audit.events` becomes a short-term rolling buffer (35-day retention matching event tables).
 
 **Implications.**
 - New Postgres `audit` schema; new `audit.events` table; DDL at `schemas/postgres/audit/events.sql`. Mirrors the column shape of `schemas/bigquery/audit_events.sql`.
 - `libs/dis-audit` Phase 1 writer targets Cloud SQL. Phase 3 adds the BigQuery archive path; the writer interface stays stable.
-- dis-api's audit lookup (build-guide Slice 12) reads from Cloud SQL.
+- dis-api's audit lookup (build-guide Slice 13) reads from Cloud SQL.
 - `libs/dis-core` BqClient is a stub during Phase 1; real implementation lands with Phase 3.
 
 **Alternatives considered.**
 - **BigQuery from day one with a real cloud project provisioned in Phase 0.** Rejected: cloud setup is deferred precisely because no slice yet needs it; advancing it just to support audit is the tail wagging the dog.
-- **Cloud Logging only.** Rejected: dis-api needs SQL-queryable audit for the tenant-facing audit lookup feature. Cloud Logging without a SQL home blocks Slice 12.
+- **Cloud Logging only.** Rejected: dis-api needs SQL-queryable audit for the tenant-facing audit lookup feature. Cloud Logging without a SQL home blocks Slice 13.
 
 ---
 

@@ -411,8 +411,8 @@ services/mirror-sync-consumer/    # maintains identity_mirror schema (v1.0)
 │       │
 │       ├── sync/               # shared upsert logic (used by both modes)
 │       │   ├── __init__.py
-│       │   ├── tenants.py      # upsert tenants_known
-│       │   └── stores.py       # upsert stores_known (soft-delete via is_active)
+│       │   ├── tenants.py      # upsert tenants
+│       │   └── stores.py       # upsert stores (soft-delete via is_active)
 │       │
 │       └── sinks/
 │           ├── __init__.py
@@ -585,7 +585,7 @@ services/nightly-batch/           # daily BQ export + retention eviction (v1.0)
 │       │   ├── 02_quality_gate.py  # optional Pandera suite on the slice
 │       │   ├── 03_load_to_bq.py    # Storage Write API into canonical_history
 │       │   ├── 04_verify_bq.py     # row count + checksum verify
-│       │   └── 05_evict_sql.py     # delete > 3mo from Cloud SQL (batched)
+│       │   └── 05_evict_sql.py     # delete > 35d from Cloud SQL (batched; window configurable per D29)
 │       │
 │       ├── idempotency/        # safe re-runs
 │       │   ├── __init__.py
@@ -810,7 +810,7 @@ libs/dis-canonical/       # canonical schema models (Pydantic)
 │       ├── __init__.py
 │       ├── hot/
 │       │   ├── __init__.py
-│       │   └── current_store_positions.py
+│       │   └── store_sku_current_position.py
 │       ├── history/
 │       │   ├── __init__.py
 │       │   └── events.py

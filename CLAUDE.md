@@ -12,8 +12,6 @@ DIS (Data Integration System) is a multi-tenant retail data ETL platform on GCP.
 
 Beta target: 5 tenants × ~25 stores × ~5000 SKUs (~150K events/day).
 
-Built by Sanjeev (architect/owner) + Amit (engineer) with Claude Code as the primary code-writing tool.
-
 ---
 
 ## Where to read more
@@ -154,7 +152,7 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 
 **Commands:**
 - `make run-local` — bring up the stack, create topics, apply migrations.
-- `make check` — runs `scripts/check_setup.sh` (5-tier preflight). Run at session start and any time something feels off. Expect 52/52 PASS.
+- `make check` — runs `scripts/check_setup.sh` (6-tier preflight). Run at session start and any time something feels off. Expect 57/57 PASS.
 - `make reset-local` — wipe data volumes for a clean slate.
 - `make test` / `make lint` / `make format` / `make db-migrate` — daily commands.
 
@@ -164,7 +162,7 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 
 ## What NOT to do
 
-- Don't write to canonical tables outside the streaming-consumer (or daily-compute for signal_history).
+- Don't write to canonical tables outside the streaming-consumer or daily-compute. (Daily-compute writes `store_sku_signal_history` and updates derived columns on `store_sku_current_position`, per `decisions.md` D31.)
 - Don't generate new `trace_id` outside receivers.
 - Don't bypass `libs/dis-rls` for Postgres access.
 - Don't bypass `libs/dis-pii` for PII handling.

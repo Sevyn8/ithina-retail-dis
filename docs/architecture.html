@@ -923,8 +923,8 @@
   <div class="box storage">
     <p class="box-title">Cloud SQL Postgres &middot; identity_mirror schema</p>
     <ul>
-      <li><code>tenants_known(tenant_id, is_active)</code></li>
-      <li><code>stores_known(tenant_id, store_id, is_active)</code></li>
+      <li><code>tenants(tenant_id, is_active)</code></li>
+      <li><code>stores(tenant_id, store_id, is_active)</code></li>
     </ul>
     <p class="caption">Canonical tables hold real Postgres FK references to these mirror tables. FK violation on insert &rarr; sink retries with backoff &rarr; quarantine on final failure.</p>
   </div>
