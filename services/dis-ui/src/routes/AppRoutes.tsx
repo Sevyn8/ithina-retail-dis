@@ -11,6 +11,7 @@ import { NotFound } from './NotFound'
 import { Notifications } from './Notifications'
 import { QuarantineConsole } from './QuarantineConsole'
 import { SampleUpload } from './SampleUpload'
+import { Shadow } from './Shadow'
 import { SourcesIndex } from './SourcesIndex'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
@@ -26,6 +27,7 @@ export function AppRoutes() {
           <Route index element={<Dashboard />} />
           <Route path="/sources" element={<SourcesIndex />} />
           <Route path="/sources/:sourceId/mappings" element={<MappingVersions />} />
+          <Route path="/sources/:sourceId/shadow" element={<Shadow />} />
           <Route path="/upload" element={<SampleUpload />} />
           <Route path="/upload/:sampleId/review" element={<MappingReview />} />
           <Route path="/quarantine" element={<QuarantineConsole />} />

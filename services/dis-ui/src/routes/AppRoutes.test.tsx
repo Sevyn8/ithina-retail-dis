@@ -31,6 +31,11 @@ describe('AppRoutes', () => {
     expect(await screen.findByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
   })
 
+  it('resolves /sources/:sourceId/shadow', async () => {
+    renderAt('/sources/manual_csv_upload/shadow')
+    expect(await screen.findByRole('heading', { name: /Shadow review: manual_csv_upload/ })).toBeInTheDocument()
+  })
+
   // The screens themselves are covered by their own screen tests; no placeholder
   // routes remain.
 

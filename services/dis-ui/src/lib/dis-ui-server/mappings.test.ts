@@ -1,5 +1,12 @@
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
-import { getMappingVersion, getMappingVersions } from './mappings'
+import {
+  __resetMappingsFixture,
+  getMappingVersion,
+  getMappingVersions,
+  getStagedVersion,
+  promoteStagedVersion,
+  rejectStagedVersion,
+} from './mappings'
 
 const tenant: AuthSnapshot = {
   userId: 'u_acmeuser0001',
@@ -35,3 +42,40 @@ describe('mapping fixtures (fixture mode)', () => {
     expect(await getMappingVersion(tenant, 'manual_csv_upload', 99)).toBeNull()
   })
 })
+
+describe('mapping version transitions (demand list 2.8/2.9, D22)', () => {
+  beforeEach(() => {
+    __resetMappingsFixture()
+  })
+
+  it('finds the staged version', () => {
+    expect(getStagedVersion(tenant, 'manual_csv_upload')?.version).toBe(3)
+    expect(getStagedVersion(tenant, 'src_unknown')).toBeNull()
+  })
+
+  it('promote moves staged to active and old active to deprecated', async () => {
+    expect(promoteStagedVersion(tenant, 'manual_csv_upload')).toEqual({ promoted: 3, deprecated: 2 })
+    const versions = await getMappingVersionsSorted()
+    expect(versions[3]).toBe('active')
+    expect(versions[2]).toBe('deprecated')
+    // staged is gone after promote
+    expect(getStagedVersion(tenant, 'manual_csv_upload')).toBeNull()
+  })
+
+  it('reject moves staged to deprecated and leaves active', async () => {
+    expect(rejectStagedVersion(tenant, 'manual_csv_upload')).toEqual({ rejected: 3 })
+    const versions = await getMappingVersionsSorted()
+    expect(versions[3]).toBe('deprecated')
+    expect(versions[2]).toBe('active')
+  })
+
+  it('throws when there is no staged version to promote or reject', () => {
+    expect(() => promoteStagedVersion(tenant, 'src_unknown')).toThrow(/no staged/)
+    expect(() => rejectStagedVersion(tenant, 'src_unknown')).toThrow(/no staged/)
+  })
+})
+
+async function getMappingVersionsSorted(): Promise<Record<number, string>> {
+  const versions = await getMappingVersions(tenant, 'manual_csv_upload')
+  return Object.fromEntries(versions.map((v) => [v.version, v.status]))
+}

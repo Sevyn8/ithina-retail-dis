@@ -39,7 +39,10 @@ export type MappingVersionDetail = MappingVersion & { mapping_rules: MappingRule
 // seeded data has one ACTIVE row; v1-deprecated / v2-active / v3-staged here
 // exercises all three badges and the active-per-source uniqueness. v1-deprecated is
 // consistent with the Audit/Quarantine fixtures referencing mapping_version 1.
-const MAPPINGS: Record<string, Record<string, MappingVersionDetail[]>> = {
+//
+// This is the SEED: promote/reject (Shadow Rollout Review, slice 22 Ckpt2) mutate
+// version state, so reads go through a cloned mutable `store`, like notifications.ts.
+const MAPPINGS_SEED: Record<string, Record<string, MappingVersionDetail[]>> = {
   t_acme9k2l1mn4: {
     manual_csv_upload: [
       {
@@ -97,8 +100,30 @@ const MAPPINGS: Record<string, Record<string, MappingVersionDetail[]>> = {
   },
 }
 
+function cloneSeed(): Record<string, Record<string, MappingVersionDetail[]>> {
+  return Object.fromEntries(
+    Object.entries(MAPPINGS_SEED).map(([tenant, sources]) => [
+      tenant,
+      Object.fromEntries(
+        Object.entries(sources).map(([sourceId, versions]) => [
+          sourceId,
+          versions.map((v) => ({ ...v, mapping_rules: structuredClone(v.mapping_rules) })),
+        ]),
+      ),
+    ]),
+  )
+}
+
+// Mutable store (notifications.ts pattern): promote/reject transition version state.
+let store = cloneSeed()
+
+// Test-only: restore the SEED so transitions do not bleed between tests.
+export function __resetMappingsFixture(): void {
+  store = cloneSeed()
+}
+
 function tenantSource(snapshot: AuthSnapshot, sourceId: string): MappingVersionDetail[] {
-  return MAPPINGS[snapshot.tenantId ?? '']?.[sourceId] ?? []
+  return store[snapshot.tenantId ?? '']?.[sourceId] ?? []
 }
 
 export async function getMappingVersions(
@@ -155,4 +180,57 @@ export function useMappingVersion(
     staleTime: Infinity,
     retry: false,
   })
+}
+
+// --- Version-state transitions (Shadow Rollout Review, demand list 2.8/2.9) ---
+// These mutate the version store; the shadow.ts hooks invalidate the mappings query
+// so the Mapping Versions screen reflects the change (FM6). Throw (not silently
+// no-op) when there is no staged version - a domain error the caller surfaces.
+
+// The staged version for a source, or null. Drives the shadow screen's empty state.
+export function getStagedVersion(snapshot: AuthSnapshot, sourceId: string): MappingVersion | null {
+  return tenantSource(snapshot, sourceId).find((v) => v.status === 'staged') ?? null
+}
+
+// The active version for a source, or null (null on first onboarding, no prior
+// active). Read live so shadow stats stay coherent across a promote.
+export function getActiveVersion(snapshot: AuthSnapshot, sourceId: string): MappingVersion | null {
+  return tenantSource(snapshot, sourceId).find((v) => v.status === 'active') ?? null
+}
+
+function activeVersion(versions: MappingVersionDetail[]): MappingVersionDetail | undefined {
+  return versions.find((v) => v.status === 'active')
+}
+
+// Promote (2.8 / D22): staged becomes active; old active (if any) becomes deprecated.
+// active_from/active_to are set deterministically (no clock): the promoted version's
+// active_from is its own created_at, the old active's active_to is that same date.
+export function promoteStagedVersion(
+  snapshot: AuthSnapshot,
+  sourceId: string,
+): { promoted: number; deprecated: number | null } {
+  const versions = tenantSource(snapshot, sourceId)
+  const staged = versions.find((v) => v.status === 'staged')
+  if (staged === undefined) {
+    throw new Error(`no staged mapping version to promote for source ${sourceId}`)
+  }
+  const previousActive = activeVersion(versions)
+  if (previousActive !== undefined) {
+    previousActive.status = 'deprecated'
+    previousActive.active_to = staged.created_at
+  }
+  staged.status = 'active'
+  staged.active_from = staged.created_at
+  staged.active_to = null
+  return { promoted: staged.version, deprecated: previousActive?.version ?? null }
+}
+
+// Reject (2.9): staged becomes deprecated; the active version is untouched.
+export function rejectStagedVersion(snapshot: AuthSnapshot, sourceId: string): { rejected: number } {
+  const staged = tenantSource(snapshot, sourceId).find((v) => v.status === 'staged')
+  if (staged === undefined) {
+    throw new Error(`no staged mapping version to reject for source ${sourceId}`)
+  }
+  staged.status = 'deprecated'
+  return { rejected: staged.version }
 }

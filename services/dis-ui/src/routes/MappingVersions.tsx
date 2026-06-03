@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
 import { EmptyState } from '../components/states/EmptyState'
@@ -7,10 +7,11 @@ import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { useMappingVersion, useMappingVersions } from '../lib/dis-ui-server/mappings'
 
-// Mapping Versions (surface map screen 6), TENANT slice, READ-ONLY. Version list
-// (demand list 3.1) with status badges + a per-version full immutable definition
-// (3.2). FM2: no edit / create / deprecate / promote (New version is disabled;
-// the rest are omitted); no Audit-by-mapping_version_id link (needs 5.2 search).
+// Mapping Versions (surface map screen 6), TENANT slice, READ-ONLY listing. Version
+// list (demand list 3.1) with status badges + a per-version full immutable definition
+// (3.2). No edit / create / deprecate here (New version is disabled). A STAGED version
+// links to Shadow Rollout Review (slice 22), where promote/reject happen. No
+// Audit-by-mapping_version_id link (needs 5.2 search).
 export function MappingVersions() {
   const { sourceId } = useParams()
   const { snapshot } = useAuth()
@@ -86,6 +87,12 @@ export function MappingVersions() {
                 <button type="button" onClick={() => setSelected(row.version)} className="underline">
                   View
                 </button>
+                {/* A staged version is reviewable in shadow rollout (slice 22). */}
+                {row.status === 'staged' ? (
+                  <Link to={`/sources/${sourceId}/shadow`} className="ml-3 underline">
+                    Review shadow rollout
+                  </Link>
+                ) : null}
               </td>
             </tr>
           ))}
