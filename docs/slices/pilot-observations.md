@@ -1,66 +1,69 @@
 # Pilot observations
 
-Running log of what the slice-driven Claude Code workflow gets right and where
-human review still earns its keep. One entry per slice. Purpose: calibrate how
-much oversight each slice type needs, and feed fixes back into the slice-doc and
-execution-prompt templates.
+One entry per slice. Lessons worth keeping, not incident logs. Keep each entry
+crisp; this doc is context for CHAT and must not bloat.
 
 ---
 
 ## Slice 1: Bootstrap Alembic migration
 
-Outcome: all 8 acceptance criteria passed; merged in two commits (migration +
-db-reset fix). Three plan-mode cycles before execution.
+Outcome: 8/8 criteria; two commits; three plan cycles.
 
-### What worked
+Lessons:
+- Safety is not surfaced unprompted. Any slice that writes/drops/touches Postgres gets a forced target-safety pass (which DB/port, what the destructive path does). Now item 1 of the plan contract.
+- Summaries get read as facts. Load-bearing claims carry inline evidence (file+line or introspected row), not a summary.
 
-The plan-output contract produced what it was designed to: the first plan
-surfaced four blockers instead of working around them, resolved all seven open
-questions against the actual files, and mapped every acceptance criterion to a
-check. The slice-doc vs execution-prompt split held; the slice stayed a durable
-contract while plan-shape requirements lived in the prompt.
+Carried forward:
+- Heavier review is not the leverage; the safety pass and evidence-gate are. Read-only slices need less.
 
-Scope discipline held under pressure. The model flagged the db-reset bug and the
-F1/F2/F3 issues but did not fix them, correctly treating them as out of scope
-rather than silently expanding the slice.
+---
 
-### Calibration lessons
+## Slice 3: shared-library primitives + canonical models
 
-1. Safety is not surfaced unprompted. The first plan was strong, but the two
-   findings that could have caused real damage only appeared after the operator
-   forced an extra cycle: (a) the migration never stated which database or port
-   it targets, and downgrade() runs DROP SCHEMA CASCADE, so a mispointed
-   POSTGRES_ADMIN_URL could have destroyed Customer Master (5432/
-   ithina_platform_db); (b) make db-reset was broken, running CREATE DATABASE as
-   the NOCREATEDB service role. Neither was raised on the model's own initiative.
-   Fix applied: a mandatory destructive-action and target-safety pass is now the
-   first item in the execution-prompt plan contract.
+Outcome: criteria passed; scoped commits; register clean. First pure-library slice (no writes).
 
-2. Summaries get read as facts. The model twice asserted a specific DDL detail
-   from an exploration summary rather than the file. The clearest case: it
-   claimed audit.events had no event_date column and built a blocker and a
-   recommendation on it; the column existed. It self-corrected before acting,
-   by re-reading the file when prompted to re-plan, and flagged that the bad read
-   had likely driven an operator decision. The self-correction is the contract
-   working; the original slip is the failure mode to guard against.
-   Mitigation that worked: the schema-name gate required evidence inline (the
-   directory plus a schema-qualified object per schema) before implementation.
-   The same show-the-line discipline should apply to any load-bearing claim, not
-   just schema names.
+Lessons:
+- Green is not completeness. A passing test proves the artifact agrees with its test; if both came from one source pass, an omission passes silently. Verify "mirrors X" claims against X independently (fresh pull, exact match both directions), not the artifact's own test.
+- Force an inventory at completion (files, deps, tests + what each asserts). Assess coverage, not pass/fail. Now a gate.
+- Log register gaps before commit, own identifiers, same pass. Decisions in force without an entry are debt the next slice inherits. Now a gate.
+- CC pushing back on review feedback (re-verifying rather than complying) is correct, not friction. Feedback is input to check, not a verdict.
+- Decision-vs-schema drift recurs; expect it, don't treat as one-off.
 
-### Residuals carried forward
+Carried forward:
+- Pure-library/read-only slices: light safety pass, leverage shifts to completeness verification and register hygiene.
 
-- make db-reset would be more robust with DROP DATABASE ... WITH (FORCE) so idle
-  clients (DBeaver) do not block it. Deferred; fix on next occurrence.
-- pgcrypto is not installed. uuidv7() does not need it on Postgres 15
-  (gen_random_uuid() is core), but libs/dis-pii (Slice 4) likely will. One-line
-  CREATE EXTENSION when that slice lands; pgcrypto is on the Cloud SQL allowlist.
-- Slice-text typos F1 (canonical file count) and F2 (version_id column name)
-  corrected in the slice doc post-merge.
+---
 
-### Takeaway for remaining slices
+## Slice 4: Data plane safety (dis-rls, dis-pii, dis-storage)
 
-The leverage is the forced safety pass and the evidence-gate, not heavier
-review everywhere. Read-only or non-destructive slices need less; any slice that
-writes, drops, or touches Postgres gets the target-safety pass and inline
-evidence for load-bearing claims.
+Outcome: 8/8 criteria; register clean (D40, D41 opened OPEN). First autonomous
+run: CC under auto edit approval, no operator diff-watching, gated by a
+completion-report account plus an adversarial self-validation pass.
+
+Lessons:
+- Autonomous + adversarial self-check can replace diff-watching, if the check
+  pulls from a source independent of the implementation. CC's honest "what a test
+  enforces vs what is review-only" split, plus forced re-derivation (re-introspect
+  the live DB, re-run the gates), caught a brittle PII test and surfaced
+  skip-masking. The report and the self-validation found the issues; diff review
+  did not.
+- A self-check at the same vantage as the work shares its blind spot. Make it
+  re-derive from the live DB and re-run gates it did not author, and force the
+  "what could a passing test still miss" question.
+- Unenforced invariants are the residue of dropping diff-watching. Several
+  watch-list properties hold structurally now but nothing fails loud on future
+  regression. The fix is not more watching: turn the CLAUDE.md hard rules into
+  executable lint plus per-rule invariant tests. Owed as a guardrails slice.
+- Skip-masking: a load-bearing test that skips when its dependency is absent
+  reports green without having run, so green did not mean proven. Fix applied:
+  load-bearing proofs ERROR at setup, never skip, and never fall back to a guessed
+  default (a silent fallback is the same disease).
+
+Carried forward:
+- Execute gate is now auto edit, executable gates as the stop, a completion-report
+  account, an adversarial self-validation pass, and CHAT reads the report. Diffs
+  read only where the report leaves a property uncovered or semantic.
+- New invariant: load-bearing proofs error, never skip, on an absent dependency.
+- Guardrails slice owed: executable invariants (import-linter contracts + per-rule
+  tests + a negative-space scope check) and CI that runs stack-up and errors on an
+  absent mandatory proof rather than skipping it.
