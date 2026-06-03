@@ -5,10 +5,12 @@ import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import {
+  CHAIN_DEPTH_CAP,
   useQuarantine,
   useQuarantineRow,
+  useResubmit,
 } from '../lib/dis-ui-server/quarantine'
-import type { FailureStage, QuarantineStatus } from '../lib/dis-ui-server/quarantine'
+import type { FailureStage, QuarantineStatus, ResubmitType } from '../lib/dis-ui-server/quarantine'
 
 type TimeWindow = 'all' | '24h' | '7d' | '30d'
 
@@ -26,9 +28,11 @@ function withinWindow(failedAt: string, window: TimeWindow): boolean {
 }
 
 // Quarantine Console (surface map screen 7), TENANT slice only. Failed-row list
-// (demand list 4.1) with filters + a read-only per-row detail (4.2). No ops
-// cross-tenant view and no tenant_id filter (FM2). Resubmit / re-upload are
-// rendered disabled (Phase 2); resolve / Ithina-side replay are omitted (ops only).
+// (demand list 4.1) with filters + a per-row detail (4.2). The detail offers the
+// Resubmit action (4.3): a confirm with a resubmit_type choice (replay / fixed_file)
+// that posts via the fixture client; a row already at the chain-depth cap (arch 6.5)
+// shows the action disabled with the reason. No ops cross-tenant view, no tenant_id
+// filter (FM2); resolve / Ithina-side replay are omitted (ops only, scope P).
 export function QuarantineConsole() {
   const { snapshot } = useAuth()
   const list = useQuarantine(snapshot)
@@ -38,6 +42,15 @@ export function QuarantineConsole() {
   const [status, setStatus] = useState<QuarantineStatus | 'all'>('all')
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('all')
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [resubmitType, setResubmitType] = useState<ResubmitType>('replay')
+  const resubmit = useResubmit()
+
+  // Select a row's detail and reset any in-progress resubmit confirm.
+  function selectTrace(traceId: string) {
+    setSelectedTraceId(traceId)
+    setConfirming(false)
+  }
 
   const rows = useMemo(() => list.data ?? [], [list.data])
   const sources = useMemo(() => [...new Set(rows.map((r) => r.source))], [rows])
@@ -150,7 +163,7 @@ export function QuarantineConsole() {
                 <td>
                   <button
                     type="button"
-                    onClick={() => setSelectedTraceId(row.trace_id)}
+                    onClick={() => selectTrace(row.trace_id)}
                     className="underline"
                   >
                     {row.trace_id}
@@ -182,14 +195,85 @@ export function QuarantineConsole() {
               <pre className="mt-1 overflow-x-auto rounded bg-gray-100 p-2 text-xs">
                 {JSON.stringify(detail.data.original_payload, null, 2)}
               </pre>
-              <div className="mt-3 flex gap-3">
-                <button type="button" disabled className="rounded border px-3 py-1 text-gray-400">
-                  Resubmit as-is (Phase 2)
-                </button>
-                <button type="button" disabled className="rounded border px-3 py-1 text-gray-400">
-                  Re-upload corrected file (Phase 2)
-                </button>
-              </div>
+
+              <p className="mt-2">Chain depth: {detail.data.chain_depth}</p>
+              {detail.data.resubmits.length > 0 ? (
+                <p className="text-xs text-gray-600">
+                  Resubmitted (latest child trace:{' '}
+                  {detail.data.resubmits[detail.data.resubmits.length - 1].child_trace_id})
+                </p>
+              ) : null}
+
+              {detail.data.chain_depth >= CHAIN_DEPTH_CAP ? (
+                <div className="mt-3">
+                  <button type="button" disabled className="rounded border px-3 py-1 text-gray-400">
+                    Resubmit
+                  </button>
+                  <p className="mt-1 text-xs text-gray-600">
+                    Chain depth {CHAIN_DEPTH_CAP} reached; further retries are an ops escalation
+                    (architecture 6.5).
+                  </p>
+                </div>
+              ) : confirming ? (
+                <div className="mt-3 rounded border p-3">
+                  <p className="text-sm font-medium">Resubmit this row?</p>
+                  <fieldset className="mt-2 text-sm">
+                    <legend className="sr-only">Resubmit type</legend>
+                    <label className="block">
+                      <input
+                        type="radio"
+                        name="resubmit_type"
+                        value="replay"
+                        checked={resubmitType === 'replay'}
+                        onChange={() => setResubmitType('replay')}
+                      />{' '}
+                      Retry as-is (replay)
+                    </label>
+                    <label className="block">
+                      <input
+                        type="radio"
+                        name="resubmit_type"
+                        value="fixed_file"
+                        checked={resubmitType === 'fixed_file'}
+                        onChange={() => setResubmitType('fixed_file')}
+                      />{' '}
+                      Corrected file (fixed_file)
+                    </label>
+                  </fieldset>
+                  <div className="mt-2 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        resubmit.mutate(
+                          { resubmit_type: resubmitType, parent_trace_id: detail.data.trace_id },
+                          { onSuccess: () => setConfirming(false) },
+                        )
+                      }
+                      disabled={resubmit.isPending}
+                      className="rounded border px-3 py-1"
+                    >
+                      Confirm resubmit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirming(false)}
+                      className="rounded border px-3 py-1"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => setConfirming(true)}
+                    className="rounded border px-3 py-1"
+                  >
+                    Resubmit
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

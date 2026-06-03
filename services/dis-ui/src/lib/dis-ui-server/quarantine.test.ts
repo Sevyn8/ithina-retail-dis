@@ -1,5 +1,12 @@
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
-import { QUARANTINE_TRACE_IDS, getQuarantine, getQuarantineRow } from './quarantine'
+import {
+  CHAIN_DEPTH_CAP,
+  QUARANTINE_TRACE_IDS,
+  __resetQuarantineFixture,
+  getQuarantine,
+  getQuarantineRow,
+  postResubmit,
+} from './quarantine'
 
 const UNKNOWN_TRACE_ID = '0190ac0e-1a01-7001-8a01-0000000000ff'
 
@@ -30,5 +37,55 @@ describe('quarantine fixtures (fixture mode)', () => {
 
   it('rejects for an unknown trace_id', async () => {
     await expect(getQuarantineRow(UNKNOWN_TRACE_ID)).rejects.toThrow(/no fixture/)
+  })
+})
+
+describe('quarantine resubmit fixture (demand list 4.3)', () => {
+  beforeEach(() => {
+    __resetQuarantineFixture()
+  })
+
+  it('records a replay resubmit: child trace, depth 1, accepted', async () => {
+    const res = await postResubmit({
+      resubmit_type: 'replay',
+      parent_trace_id: QUARANTINE_TRACE_IDS.acmeCanonical,
+    })
+    expect(res.parent_trace_id).toBe(QUARANTINE_TRACE_IDS.acmeCanonical)
+    expect(res.resubmit_type).toBe('replay')
+    expect(res.chain_depth).toBe(1)
+    expect(res.status).toBe('accepted')
+    expect(res.trace_id).not.toBe(QUARANTINE_TRACE_IDS.acmeCanonical)
+  })
+
+  it('overlays the new state on the row detail after a resubmit', async () => {
+    await postResubmit({ resubmit_type: 'replay', parent_trace_id: QUARANTINE_TRACE_IDS.acmeCanonical })
+    const detail = await getQuarantineRow(QUARANTINE_TRACE_IDS.acmeCanonical)
+    expect(detail.chain_depth).toBe(1)
+    expect(detail.resubmits).toHaveLength(1)
+    expect(detail.resubmits[0].chain_depth).toBe(1)
+  })
+
+  it('carries fixed_file through to the response', async () => {
+    const res = await postResubmit({
+      resubmit_type: 'fixed_file',
+      parent_trace_id: QUARANTINE_TRACE_IDS.acmeCanonical,
+    })
+    expect(res.resubmit_type).toBe('fixed_file')
+  })
+
+  it('enforces the chain-depth cap: a fourth resubmit is rejected', async () => {
+    for (let i = 0; i < CHAIN_DEPTH_CAP; i += 1) {
+      await postResubmit({ resubmit_type: 'replay', parent_trace_id: QUARANTINE_TRACE_IDS.acmeCanonical })
+    }
+    const atCap = await getQuarantineRow(QUARANTINE_TRACE_IDS.acmeCanonical)
+    expect(atCap.chain_depth).toBe(CHAIN_DEPTH_CAP)
+    await expect(
+      postResubmit({ resubmit_type: 'replay', parent_trace_id: QUARANTINE_TRACE_IDS.acmeCanonical }),
+    ).rejects.toThrow(/cap/)
+  })
+
+  it('reports a row seeded at the cap as chain depth 3', async () => {
+    const detail = await getQuarantineRow(QUARANTINE_TRACE_IDS.acmeNormalization)
+    expect(detail.chain_depth).toBe(CHAIN_DEPTH_CAP)
   })
 })

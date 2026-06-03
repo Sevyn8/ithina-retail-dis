@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
 import { SERVER_MODE } from './mode'
@@ -28,6 +28,8 @@ export type QuarantineRow = {
 // 4.2 detail. PROVISIONAL: the demand list names the fields (original payload,
 // error context, mapping version, chain depth) but gives NO shape. This struct
 // and the original_payload contents are an invented placeholder, not canonical.
+// `resubmits` is the recorded resubmit history (overlaid from the mutable store,
+// below) so the screen reflects post-resubmit state without re-deriving it.
 export type QuarantineDetail = {
   trace_id: string
   source: string
@@ -39,7 +41,54 @@ export type QuarantineDetail = {
   error_context: string
   original_payload: Record<string, unknown>
   chain_depth: number
+  resubmits: ResubmitRecord[]
 }
+
+// Resubmit action (demand list 4.3). The request body is PINNED by 4.3:
+// { resubmit_type, parent_trace_id }. Everything else here is PROVISIONAL and lives
+// only in this fixture layer (slice 22 containment), so reconciliation against the
+// real contract is a single edit, not a screen rewrite.
+export type ResubmitType = 'replay' | 'fixed_file'
+
+// 4.3 body - PINNED. parent_trace_id is the trace being resubmitted.
+export type ResubmitRequest = {
+  resubmit_type: ResubmitType
+  parent_trace_id: string
+}
+
+// PROVISIONAL: 4.3 gives NO response shape. This models the publisher minting a new
+// child trace_id and the incremented chain_depth (architecture 6.5). Flagged for
+// reconciliation. NOTE (surfaced): 4.3's body carries no file/upload reference, yet
+// arch 6.5's fixed_file uploads a corrected file (fresh bronze) - the real fixed_file
+// flow likely needs an upload ref 4.3 omits; we do NOT invent one here.
+export type ResubmitResponse = {
+  trace_id: string
+  parent_trace_id: string
+  resubmit_type: ResubmitType
+  chain_depth: number
+  status: 'accepted'
+}
+
+// One recorded resubmit (the minted child and its depth).
+export type ResubmitRecord = {
+  child_trace_id: string
+  resubmit_type: ResubmitType
+  chain_depth: number
+}
+
+// Chain-depth cap (architecture 6.5): resubmits beyond depth 3 are rejected by the
+// publisher; over-cap chunks become an ops escalation.
+export const CHAIN_DEPTH_CAP = 3
+
+// Deterministic UUIDv7-shaped child trace ids (no Date.now / Math.random, which are
+// unavailable here). Continues the QUARANTINE_TRACE_IDS numbering (version nibble 7,
+// variant 8). A depth-0 chain can resubmit at most CHAIN_DEPTH_CAP times, so three
+// ids suffice. PROVISIONAL: the real backend mints these (4.3 / arch 6.5).
+const RESUBMIT_CHILD_TRACE_IDS = [
+  '0190ac0e-1a01-7001-8a01-000000000101',
+  '0190ac0e-1a01-7001-8a01-000000000102',
+  '0190ac0e-1a01-7001-8a01-000000000103',
+] as const
 
 // trace_ids are UUIDv7 (dis-core trace_id.py: `trace_id uuid NOT NULL`, minted via
 // new_uuid7). These are synthetic UUIDv7-shaped fixtures (version nibble 7, variant
@@ -113,7 +162,12 @@ const QUARANTINE_FIXTURES: Record<string, QuarantineRow[]> = {
   ],
 }
 
-const QUARANTINE_DETAIL_FIXTURES: Record<string, QuarantineDetail> = {
+// Stored base detail (the runtime `resubmits` history and the effective chain_depth
+// are overlaid by getQuarantineRow from the mutable store below). `chain_depth` here
+// is the BASE depth: 0 for a never-resubmitted row, 3 for a row already at the cap.
+type QuarantineDetailBase = Omit<QuarantineDetail, 'resubmits'>
+
+const QUARANTINE_DETAIL_FIXTURES: Record<string, QuarantineDetailBase> = {
   [QUARANTINE_TRACE_IDS.acmeCanonical]: {
     trace_id: QUARANTINE_TRACE_IDS.acmeCanonical,
     source: 'Manual CSV Upload',
@@ -138,6 +192,33 @@ const QUARANTINE_DETAIL_FIXTURES: Record<string, QuarantineDetail> = {
     original_payload: { item: 'B456', price: '9.99', qty: '1' },
     chain_depth: 0,
   },
+  // Already at the chain-depth cap (arch 6.5): the Resubmit action is disabled with
+  // its reason. Exercises AC3 against a real row.
+  [QUARANTINE_TRACE_IDS.acmeNormalization]: {
+    trace_id: QUARANTINE_TRACE_IDS.acmeNormalization,
+    source: 'Manual CSV Upload',
+    store: 'Acme Downtown #1',
+    failed_at: '2026-06-03T09:05:00Z',
+    failure_stage: 'normalization',
+    mapping_version: 1,
+    error_reason: 'bad date format in source_sale_timestamp',
+    error_context: 'normalization: column source_sale_timestamp unparseable (expected ISO-8601)',
+    original_payload: { sku: 'A777', price: '5.00', qty: '2', txn_date: '2026/06/03 garbage' },
+    chain_depth: CHAIN_DEPTH_CAP,
+  },
+}
+
+// Mutable resubmit store (notifications.ts pattern), keyed by parent trace_id. Each
+// resubmit appends a record; effective depth = base chain_depth + records.length.
+let resubmitStore: Record<string, ResubmitRecord[]> = {}
+
+// Test-only: clear recorded resubmits so mutations do not bleed between tests.
+export function __resetQuarantineFixture(): void {
+  resubmitStore = {}
+}
+
+function resubmitsFor(traceId: string): ResubmitRecord[] {
+  return resubmitStore[traceId] ?? []
 }
 
 export async function getQuarantine(snapshot: AuthSnapshot): Promise<QuarantineRow[]> {
@@ -151,11 +232,50 @@ export async function getQuarantineRow(traceId: string): Promise<QuarantineDetai
   if (SERVER_MODE === 'real') {
     throw new Error('real-mode getQuarantineRow() is not implemented (slice 13)')
   }
-  const detail = QUARANTINE_DETAIL_FIXTURES[traceId]
-  if (detail === undefined) {
+  const base = QUARANTINE_DETAIL_FIXTURES[traceId]
+  if (base === undefined) {
     throw new Error(`no fixture quarantine detail for trace_id ${traceId}`)
   }
-  return detail
+  // Overlay the recorded resubmits: effective depth grows with each resubmit, and the
+  // history rides along so the screen can show the new state after invalidation.
+  const records = resubmitsFor(traceId)
+  return { ...base, chain_depth: base.chain_depth + records.length, resubmits: records }
+}
+
+// POST /quarantine/{trace_id}/resubmit (demand list 4.3). The argument IS the 4.3
+// body, so the wire shape is explicit at the call site. Records the resubmit in the
+// mutable store and returns the (PROVISIONAL) response. Enforces the chain-depth cap
+// defensively - the UI disables the action at the cap, this guards the data path.
+export async function postResubmit(req: ResubmitRequest): Promise<ResubmitResponse> {
+  if (SERVER_MODE === 'real') {
+    throw new Error('real-mode postResubmit() is not implemented (slice 13)')
+  }
+  const base = QUARANTINE_DETAIL_FIXTURES[req.parent_trace_id]
+  if (base === undefined) {
+    throw new Error(`no fixture quarantine detail for trace_id ${req.parent_trace_id}`)
+  }
+  const records = resubmitsFor(req.parent_trace_id)
+  const currentDepth = base.chain_depth + records.length
+  if (currentDepth >= CHAIN_DEPTH_CAP) {
+    throw new Error(
+      `resubmit rejected for trace_id ${req.parent_trace_id}: chain depth ${currentDepth} at cap ${CHAIN_DEPTH_CAP} (architecture 6.5)`,
+    )
+  }
+  const newDepth = currentDepth + 1
+  const childTraceId = RESUBMIT_CHILD_TRACE_IDS[records.length]
+  const record: ResubmitRecord = {
+    child_trace_id: childTraceId,
+    resubmit_type: req.resubmit_type,
+    chain_depth: newDepth,
+  }
+  resubmitStore[req.parent_trace_id] = [...records, record]
+  return {
+    trace_id: childTraceId,
+    parent_trace_id: req.parent_trace_id,
+    resubmit_type: req.resubmit_type,
+    chain_depth: newDepth,
+    status: 'accepted',
+  }
 }
 
 export function useQuarantine(snapshot: AuthSnapshot | null) {
@@ -175,5 +295,16 @@ export function useQuarantineRow(traceId: string | null) {
     enabled: traceId !== null,
     staleTime: Infinity,
     retry: false,
+  })
+}
+
+// Resubmit mutation (4.3). onSuccess invalidates the shared ['dis-ui-server',
+// 'quarantine'] prefix, which matches BOTH the list key and the detail key, so the
+// list and the open row detail refetch and reflect the new chain depth.
+export function useResubmit() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: ResubmitRequest) => postResubmit(req),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dis-ui-server', 'quarantine'] }),
   })
 }
