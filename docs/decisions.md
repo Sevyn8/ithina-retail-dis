@@ -319,3 +319,20 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 **Alternatives considered.**
 - **Keep `receiver-csv-upload` as a separate service for Phase 1.** Rejected: forces the UI to know two backend URLs and duplicates Customer Master auth integration. The "per-channel receiver" pattern is correct when the channel has its own auth and trigger profile; CSV-upload-from-UI is just dis-ui-server's data-ingest counterpart, not a separate channel.
 - **Merge Phase 2 into dis-ui-server as well.** Rejected: Phase 2 is async, event-triggered, and CPU-heavy (DuckDB preflight on multi-MB CSVs). Coupling its scaling and process model to a UI BFF is wrong.
+
+---
+
+### D37 External identity IDs (`t_*`/`s_*`) vs internal UUID keys — translation location undefined `OPEN`
+
+**Status.** `OPEN`. This entry records an open decision; it does **not** resolve it. Raised during Slice 2 (see the Slice 2 plan §2 / R1). **Hard deadline: before Slice 7 (Mirror Sync) begins.**
+
+**The gap.** The frozen identity-service OpenAPI and the `identity.changed` Pub/Sub schema expose tenants and stores as external string identifiers — `^t_[a-z0-9]{12}$` / `^s_[a-z0-9]{12}$`. The DIS schema (Slice 1) keys `identity_mirror.tenants`, `identity_mirror.stores`, and all `canonical.*` / `config.source_mappings.tenant_id` by 128-bit `UUID` (UUIDv7, "mirrors `platform_db.core.*.id`"). A 12-char base36 string (~62 bits) cannot encode a 128-bit UUID, so these are two distinct identifier spaces. No column, encoding, or layer maps one to the other anywhere in the schema, the contracts, or this register (D1–D36).
+
+**Interim (Slice 2, not the resolution).** Slice 2's test fixture set (`dis_testing.fixtures`) pins a deterministic external↔UUID pairing as a **test-only bridge**, so tests can resolve identity (external ids) and then read the seeded UUID-keyed rows. This bridge is test infrastructure; it is explicitly **not** the production mechanism and must not become it.
+
+**Candidate resolutions (no choice made here).**
+1. Add an `external_id` column (`t_*` / `s_*`) to `identity_mirror.tenants` / `identity_mirror.stores`, indexed, populated by the mirror sync.
+2. Define a deterministic, reversible encoding between the internal UUID and the external `t_*` / `s_*` form.
+3. A translation layer (identity-service and/or mirror-sync owns the external↔internal map).
+
+**Why it must be settled by Slice 7.** Slice 7 (Mirror Sync, DB-pull) writes *real* Customer Master records into the UUID-keyed `identity_mirror`. Real records carry both representations and there is no fixture bridge in production — Slice 7 needs the actual translation to land rows whose external ids match what receivers and the streaming consumer resolve. The fixture bridge cannot carry Slice 7.
