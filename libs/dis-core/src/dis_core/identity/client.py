@@ -5,11 +5,10 @@ fake and the Slice 13 real service both sit behind ``HttpIdentityClient`` —
 "drop-in" means swapping the ``base_url`` (``IDENTITY_SERVICE_URL``), nothing in
 caller code changes.
 
-Errors are defined locally here (``IdentityClientError`` and subclasses) rather
-than in a shared ``dis_core.errors`` module. That module is a Slice 3 deliverable;
-Slice 3 should consolidate these local definitions into the real error hierarchy
-(see the Slice 2 plan, D-B split / §9). Keeping them here avoids pre-building a
-half-finished ``errors.py`` that Slice 3 would have to reconcile.
+The client's error types (``IdentityClientError`` and subclasses) live in the
+shared ``dis_core.errors`` hierarchy (consolidated there in Slice 3). They are
+imported here and re-exported by ``dis_core.identity`` so existing imports
+(``from dis_core.identity import IdentityNotFoundError``) keep working.
 """
 
 from __future__ import annotations
@@ -18,6 +17,11 @@ from typing import Protocol, runtime_checkable
 
 import httpx
 
+from dis_core.errors import (
+    IdentityClientError,
+    IdentityNotFoundError,
+    IdentityServiceUnavailableError,
+)
 from dis_core.identity.models import (
     Error,
     Identity,
@@ -28,59 +32,13 @@ from dis_core.identity.models import (
     ValidateResponse,
 )
 
-
-class IdentityClientError(Exception):
-    """Base error for Identity Service client calls.
-
-    Carries the contract's ``Error`` envelope fields when the server returned one,
-    plus the HTTP status code for callers that branch on transport-level outcome.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        status_code: int | None = None,
-        error_code: str | None = None,
-        trace_id: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.message = message
-        self.status_code = status_code
-        self.error_code = error_code
-        self.trace_id = trace_id
-
-
-class IdentityNotFoundError(IdentityClientError):
-    """The token / upload session / endpoint config did not map to a tenant+store.
-
-    Maps to HTTP 404 / ``error_code == "identity_not_found"``. Hard failure: callers
-    should not retry.
-    """
-
-
-class IdentityServiceUnavailableError(IdentityClientError):
-    """Customer Master unhealthy and stale window exceeded (HTTP 503 / circuit_open).
-
-    Resolve callers retry with backoff; validate callers fall back to identity_mirror.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        status_code: int | None = None,
-        error_code: str | None = None,
-        trace_id: str | None = None,
-        retry_after: int | None = None,
-    ) -> None:
-        super().__init__(
-            message,
-            status_code=status_code,
-            error_code=error_code,
-            trace_id=trace_id,
-        )
-        self.retry_after = retry_after
+__all__ = [
+    "HttpIdentityClient",
+    "IdentityClient",
+    "IdentityClientError",
+    "IdentityNotFoundError",
+    "IdentityServiceUnavailableError",
+]
 
 
 @runtime_checkable

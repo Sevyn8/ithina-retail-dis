@@ -76,6 +76,7 @@ dev = [
   # them in the default dev group means `uv sync` / `uv run` install them editable.
   "dis-core",
   "dis-testing",
+  "dis-canonical",
 ]
 
 [build-system]
@@ -120,10 +121,12 @@ package = false
 
 [tool.uv.workspace]
 # Workspace members are declared here as they are built (root CLAUDE.md: "workspace
-# members declared in root pyproject.toml once they exist"). Slice 2 adds the first two.
-members = ["libs/dis-core", "libs/dis-testing"]
+# members declared in root pyproject.toml once they exist"). Slice 3 adds dis-canonical.
+members = ["libs/dis-core", "libs/dis-testing", "libs/dis-canonical"]
 
 [tool.uv.sources]
-# dis-testing consumes the dis-core identity client interface; resolve from the workspace.
+# Workspace libs resolve from the workspace. dis-testing and dis-canonical both
+# depend on dis-core; dis-canonical uses its identifier aliases.
 dis-core = { workspace = true }
 dis-testing = { workspace = true }
+dis-canonical = { workspace = true }

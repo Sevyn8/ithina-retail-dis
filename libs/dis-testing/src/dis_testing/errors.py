@@ -1,18 +1,20 @@
 """Minimal, test-only exceptions for dis-testing.
 
-Deliberately local and minimal. The real DIS error hierarchy
-(``dis_core.errors``) is a Slice 3 deliverable; Slice 3 should fold these (and
-the three ``IdentityClientError`` variants in ``dis_core.identity.client``) into
-that hierarchy so nothing is orphaned. Until then these keep the fakes/seeder
-from reaching for raw ``RuntimeError`` / ``ValueError`` (root CLAUDE.md error rule).
+These descend from the shared ``dis_core.errors.DisError`` root (Slice 3), so the
+whole DIS error tree is single-rooted, but the test-specific leaves stay here:
+``TestInfraError`` / ``FixtureError`` / ``SeedError`` are test-infra concepts and
+must not leak into production ``dis-core``. The dependency direction is
+``dis-testing -> dis-core`` (allowed); ``dis-core`` never imports ``dis-testing``.
 
 dis-testing is test infrastructure only — never imported by production code.
 """
 
 from __future__ import annotations
 
+from dis_core.errors import DisError
 
-class TestInfraError(Exception):
+
+class TestInfraError(DisError):
     """Base for all dis-testing failures."""
 
 
