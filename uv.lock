@@ -14,6 +14,7 @@ members = [
     "dis-core",
     "dis-pii",
     "dis-rls",
+    "dis-storage",
     "dis-testing",
     "ithina-dis",
 ]
@@ -642,6 +643,21 @@ requires-dist = [
     { name = "dis-core", editable = "libs/dis-core" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
+]
+
+[[package]]
+name = "dis-storage"
+version = "0.0.0"
+source = { editable = "libs/dis-storage" }
+dependencies = [
+    { name = "dis-core" },
+    { name = "google-cloud-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "google-cloud-storage", specifier = ">=2.18" },
 ]
 
 [[package]]
@@ -1429,6 +1445,7 @@ dev = [
     { name = "dis-core" },
     { name = "dis-pii" },
     { name = "dis-rls" },
+    { name = "dis-storage" },
     { name = "dis-testing" },
     { name = "faker" },
     { name = "jsonschema" },
@@ -1478,6 +1495,7 @@ dev = [
     { name = "dis-core", editable = "libs/dis-core" },
     { name = "dis-pii", editable = "libs/dis-pii" },
     { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "dis-storage", editable = "libs/dis-storage" },
     { name = "dis-testing", editable = "libs/dis-testing" },
     { name = "faker", specifier = ">=30" },
     { name = "jsonschema", specifier = ">=4.23" },

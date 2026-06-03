@@ -79,6 +79,7 @@ dev = [
   "dis-canonical",
   "dis-rls",
   "dis-pii",
+  "dis-storage",
 ]
 
 [build-system]
@@ -131,6 +132,7 @@ members = [
   "libs/dis-canonical",
   "libs/dis-rls",
   "libs/dis-pii",
+  "libs/dis-storage",
 ]
 
 [tool.uv.sources]
@@ -142,3 +144,4 @@ dis-testing = { workspace = true }
 dis-canonical = { workspace = true }
 dis-rls = { workspace = true }
 dis-pii = { workspace = true }
+dis-storage = { workspace = true }
