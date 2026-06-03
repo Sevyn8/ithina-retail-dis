@@ -374,3 +374,41 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 **Evidence (introspected, `ithina_dis_db`).** `pk_ims = PRIMARY KEY (tenant_id, store_id)`; `uq_ims_store_id = UNIQUE (store_id)`; canonical `fk_*_store = FOREIGN KEY (tenant_id, store_id) REFERENCES identity_mirror.stores(tenant_id, store_id)`.
 
 **Scope.** Docs only; records a decision already in force. No schema or DDL change. Relates to D12 (mirror table plus real FK as the cross-DB integrity substitute); cross-referenced from D36.
+
+---
+
+### D40 PII handling posture: deferral, fail-loud gate, and one-way-vs-reversible `OPEN`
+
+**Status.** The Slice 4 fail-loud gate is **settled and in force**; the long-term tokenization posture is **`OPEN`**. Surfaced/registered during Slice 4 (`dis-pii`). **Hard deadline for the posture: the first PII-carrying receiver — a non-CSV receiver, or a CSV source mapping that flags a PII column.**
+
+**The gap (three sources disagree).**
+- **D24** specifies one-way deterministic **HMAC** with per-tenant keys; right-to-erasure is a key-vault delete. Reads as irreversible.
+- **`build-guide.md:102`** defers a "storage backend for the **token → ciphertext** mapping" — i.e. a *reversible* (recoverable) mapping.
+- **CLAUDE.md hard rule 2** names "deterministic HMAC with per-tenant **KMS** keys."
+These are not consistent on whether tokenization is one-way (HMAC, no recovery) or reversible (token↔ciphertext), nor on what "configured backend" ultimately means. Not settled here.
+
+**What Slice 4 built (settled, in force).** `dis-pii` provides heuristic PII detection (field-name / pattern) and a fail-loud gate: a mapping flagging any PII column with **no configured backend** raises `PiiBackendNotConfiguredError` *before* any persistence (hard rule 2, code-quality rule 4). No real backend exists in v1.0, so the gate raises on every flagged PII column. The not-raise branch is reachable **only** via an explicitly injected backend (tests); no config default or flag disables the gate. The tokenizer, key vault, and tokenization policy are inert placeholder seams (no crypto, no I/O), mirroring the Slice 3 `BqClient` discipline.
+
+**Known limitations (registered, not fixed).**
+1. **Heuristic detection → false negatives.** Detection matches column *names* against a PII set (phone, email, loyalty_id, PAN, Aadhaar; D24) and patterns. A PII column whose name the matcher does not recognise is **not** detected, so the gate does not fire on it. "Fail loud on PII" is bounded by detection coverage; it is not a guarantee that all PII is caught.
+2. **No explicit per-column PII flag exists.** Live introspection (Slice 4) shows no PII-flag column on `config.source_mappings`, and the `mapping_rules` shape is `{version, rename, normalize, cast, derive}` — nothing for detection to read as an authoritative flag. An explicit-flag mechanism would require a **new `mapping_rules` field** (and likely a `config.source_mappings` change): a future schema + contract change, not built here.
+
+**Doc-correction note (register, do not fix).** `architecture.md:99` reads "See `decisions.md` D18 for the PII module," but D18 is the validation split; the intended reference is **D24**. (`architecture.md` lines 305 and 432 already cite D24 correctly.) Correct the line 99 citation when the PII posture is next touched.
+
+**Candidate resolutions (no choice made here).**
+1. **One-way HMAC only** (no recovery): "configured backend" = the per-tenant key vault; erasure = key delete (D24 as written).
+2. **Reversible token↔ciphertext store**: "configured backend" = that store; supports recovery but widens the erasure surface (build-guide framing).
+
+**Why it must be settled then.** The first PII-carrying receiver needs a real backend — until one exists, the gate raises. **Scope.** Docs + the Slice 4 `dis-pii` lib. No DDL change. Cross-referenced from D24.
+
+---
+
+### D41 `identity_mirror` RLS posture: build-guide vs applied schema `OPEN`
+
+**Status.** `OPEN`. Records a doc-vs-schema contradiction surfaced during Slice 4 (`dis-rls`) by live introspection of `ithina_dis_db`; it does **not** resolve it. **Hard deadline: before Slice 7 (Mirror Sync) begins.**
+
+**The gap.** `build-guide.md:108` (Slice 7) states "`identity_mirror` is RLS-protected" and asks plan-mode to choose between setting `app.tenant_id` per-row on upsert vs running Mirror Sync under a distinct role. But live introspection shows `identity_mirror.tenants` and `identity_mirror.stores` have **`relrowsecurity = false` and no policy** — consistent with the Slice 1/2 findings and the seeder's own comment that it writes to RLS-not-enabled schemas. So either the schema must gain RLS (a migration) or the build-guide text must drop the "RLS-protected" claim.
+
+**Evidence (introspected, `ithina_dis_db`).** `pg_class.relrowsecurity = f` and `relforcerowsecurity = f` for `identity_mirror.tenants` and `identity_mirror.stores`; `pg_policies` has no rows for schema `identity_mirror`. (Contrast: `bronze.data_ingress_events` and `canonical.*` are `relrowsecurity = t, relforcerowsecurity = t` with a `tenant_isolation` policy.)
+
+**Why Slice 7.** Mirror Sync writes real tenants/stores into `identity_mirror`; its upsert path and role posture depend on whether RLS is in force there. Resolve before that code is written. Do not edit the DDL or the build-guide under Slice 4 — this entry only registers the contradiction. **Scope.** Docs only. Relates to hard rule 1 / D12.

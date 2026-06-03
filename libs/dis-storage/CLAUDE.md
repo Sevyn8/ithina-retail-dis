@@ -4,17 +4,36 @@ Loaded when Claude Code works in `libs/dis-storage/`. Lib-specific rules; root `
 
 ## What this lib is
 
-GCS path scheme, signed URLs, metadata stamping. The canonical place for all GCS access in DIS.
+GCS access: the frozen canonical object-path scheme, V4 signed-URL issuance, and an
+emulator-honouring client wrapper. The only sanctioned GCS access path in DIS
+(hard rule 9).
 
-For interfaces, types, file structure, see `README.md` in this directory.
+For interfaces, types, file structure, see `README.md`.
 
-## Rules specific to this lib
+## Rules specific to this lib (Slice 4)
 
-- All GCS access goes through this lib. Direct `google-cloud-storage` import is forbidden by CI lint.
-- Canonical path scheme: `tenant/{id}/source/{id}/yyyy=Y/mm=M/dd=D/{trace_id}.{ext}`. Do NOT improvise other path shapes.
-- Signed PUT URLs are scoped to exactly the path issued; do not issue wildcard URLs.
+- **All GCS access goes through this lib.** Direct `google-cloud-storage` import
+  elsewhere is forbidden by CI lint.
+- **Frozen path scheme** (do NOT improvise):
+  `tenant/{id}/source/{id}/yyyy=Y/mm=M/dd=D/{trace_id}.{ext}`. `build_object_path`
+  builds it; date segments are normalised to UTC.
+- **Never mint `trace_id`** (hard rule 4): the caller supplies it; the path builder
+  echoes it verbatim and imports no trace-id generator.
+- **`client.py` honours `STORAGE_EMULATOR_HOST`** (anonymous creds + endpoint
+  override → fake-gcs-server). One place for object read/write.
+- **Signed URLs are scoped to exactly one object path** — never a wildcard. V4
+  signing is deterministic and offline. **A well-formed URL is NOT proof real GCS
+  accepts the signature**; that is unverified until a real-GCS slice (first use:
+  Slice 8's 15-minute PUT URL). The PUT/GET round-trip *through* a signed URL is
+  deferred (fake-gcs-server does not honour signatures); wrapper object access and
+  issuance shape are tested.
+- **Tests sign with a throwaway test credential only** — never a real service account.
+- Errors are `dis-core` `StorageError` (rooted in `DisError`); never raw
+  `RuntimeError`/`ValueError`.
+- Build to current need: `metadata.py` / `notifications.py` from the README tree are
+  deferred to the receiver slices that consume them.
 
 ## References
 
-- `README.md` (this directory) — interface and structure.
+- `README.md` — interface and structure.
 - Root `CLAUDE.md` — project-wide invariants.

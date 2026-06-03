@@ -4,17 +4,34 @@ Loaded when Claude Code works in `libs/dis-rls/`. Lib-specific rules; root `CLAU
 
 ## What this lib is
 
-RLS-aware database session helpers. Wraps SQLAlchemy with `SET LOCAL app.tenant_id` enforcement.
+The RLS-aware async Postgres session helper. Every canonical read/write goes through
+`rls_session`, which opens a per-tenant scoped transaction so one tenant cannot read
+another's rows (root hard rules 1 & 12).
 
-For interfaces, types, file structure, see `README.md` in this directory.
+For interfaces, types, file structure, see `README.md`.
 
-## Rules specific to this lib
+## Rules specific to this lib (Slice 4)
 
-- All canonical reads/writes go through this lib. Direct SQLAlchemy session usage is forbidden by CI lint.
-- Context manager pattern: `with rls_session(tenant_id) as s: ...` — `SET LOCAL` runs first, every statement scoped.
-- Never set `tenant_id` from request body. Always derive from authenticated upstream context.
+- **Surface is minimal: `session.py` only.** `create_rls_engine(url=None)` factory +
+  `rls_session(engine, tenant_id)` async context manager yielding an `AsyncConnection`.
+  Do NOT build the README's speculative `batch.py` / `enforcement.py` until a real
+  consumer needs them.
+- **Caller owns the engine — no hidden global.** A process-wide async engine reused
+  across event loops is a footgun; the caller creates the engine (app lifespan in
+  services; loop-scoped fixture in tests) and passes it in.
+- **Scope is set via `set_config('app.tenant_id', :tid, true)`** inside the
+  transaction (parameterisable; `SET LOCAL` cannot bind a param). Commit on clean
+  exit, roll back on exception.
+- **Role posture is explicit, not assumed.** On first use of an engine the helper
+  verifies (and refuses otherwise, raising `RlsContextError`) that the connection
+  reached `ithina_dis_db` and the role is NOSUPERUSER / NOBYPASSRLS — RLS is silently
+  void for a bypassing role. `current_database()` is the DIS-vs-Customer-Master
+  discriminator; an `inet_server_port()` check is useless (docker reports 5432).
+- **Never set `tenant_id` from a request body.** Derive it from authenticated context.
+- Errors are `dis-core` `RlsContextError` (rooted in `DisError`); never raw
+  `RuntimeError`/`ValueError`.
 
 ## References
 
-- `README.md` (this directory) — interface and structure.
-- Root `CLAUDE.md` — project-wide invariants.
+- `README.md` — interface and structure.
+- Root `CLAUDE.md` — project-wide invariants. `decisions.md` D41 (identity_mirror RLS, OPEN).
