@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
+import { NotificationBell } from '../components/NotificationBell'
 import { Sidebar } from '../components/Sidebar'
 import { useMe } from '../lib/dis-ui-server/me'
 
@@ -18,6 +19,7 @@ export function AppLayout() {
       <header className="flex items-center justify-between border-b px-4 py-2">
         <span className="font-semibold">DIS UI</span>
         <div className="flex items-center gap-3">
+          <NotificationBell />
           <span className="text-sm">{data?.email ?? snapshot?.userId}</span>
           <button type="button" onClick={logout} className="text-sm underline">
             Log out

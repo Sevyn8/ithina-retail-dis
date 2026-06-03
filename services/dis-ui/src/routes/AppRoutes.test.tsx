@@ -26,6 +26,11 @@ describe('AppRoutes', () => {
     expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
   })
 
+  it('resolves /notifications', async () => {
+    renderAt('/notifications')
+    expect(await screen.findByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
+  })
+
   // The screens themselves are covered by their own screen tests; no placeholder
   // routes remain.
 

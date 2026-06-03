@@ -14,4 +14,5 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Upload', to: '/upload' },
   { label: 'Quarantine', to: '/quarantine' },
   { label: 'Audit', to: '/audit' },
+  { label: 'Notifications', to: '/notifications' },
 ]

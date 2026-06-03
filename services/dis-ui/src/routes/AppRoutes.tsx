@@ -8,6 +8,7 @@ import { DevLogin } from './DevLogin'
 import { MappingReview } from './MappingReview'
 import { MappingVersions } from './MappingVersions'
 import { NotFound } from './NotFound'
+import { Notifications } from './Notifications'
 import { QuarantineConsole } from './QuarantineConsole'
 import { SampleUpload } from './SampleUpload'
 import { SourcesIndex } from './SourcesIndex'
@@ -29,6 +30,7 @@ export function AppRoutes() {
           <Route path="/upload/:sampleId/review" element={<MappingReview />} />
           <Route path="/quarantine" element={<QuarantineConsole />} />
           <Route path="/audit" element={<AuditLookup />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Route>
