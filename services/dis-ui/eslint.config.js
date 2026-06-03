@@ -27,6 +27,16 @@ export default defineConfig([
       globals: globals.vitest,
     },
   },
+  // Design-system primitives (slice 23) intentionally co-export their cva variant
+  // helpers (buttonVariants, badgeVariants) alongside the component, per the shadcn
+  // convention. cva() results are not constants, so react-refresh's allowConstantExport
+  // does not exempt them; the rule is off for this folder only.
+  {
+    files: ['src/components/ui/**'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
   // Disable stylistic rules that conflict with Prettier. Must come last.
   prettier,
 ])

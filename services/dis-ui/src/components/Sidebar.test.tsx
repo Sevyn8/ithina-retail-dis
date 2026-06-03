@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
 import { renderWithProviders } from '../test/renderWithProviders'
@@ -46,6 +47,19 @@ describe('Sidebar nav gating', () => {
       snapshot: tenantSnapshot,
       initialEntries: ['/sources'],
     })
-    expect(screen.getByRole('link', { name: 'Sources' }).className).toContain('font-semibold')
+    // Selector-only update for slice 23 chrome: the active marker moved from
+    // `font-semibold` to the sidebar-accent chrome. The asserted behavior (the active
+    // route is visually marked) is unchanged.
+    expect(screen.getByRole('link', { name: 'Sources' }).className).toContain('bg-sidebar-accent')
+  })
+
+  it('collapses and expands', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<Sidebar items={ITEMS} />, { snapshot: tenantSnapshot })
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeInTheDocument()
   })
 })
