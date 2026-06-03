@@ -161,3 +161,38 @@ class StorageError(DisError):
         self.object_path = object_path
         self.tenant_id = tenant_id
         self.trace_id = trace_id
+
+
+# -- Audit error (Slice 6) -----------------------------------------------------
+# Raised by dis-audit. Audit emission is fire-and-forget (hard rule 11): the writer
+# logs this with context and reports failure rather than propagating it, so the data
+# path is never blocked. Carries the load-bearing identifiers (code-quality rule 5);
+# never a raw PII value or payload.
+
+
+class AuditWriteError(DisError):
+    """An ``audit.events`` write could not be performed.
+
+    Raised by ``dis-audit`` backend selection (``select_writer``) when a required value is
+    missing — e.g. the Postgres backend without an engine (no silent fallback, code-quality
+    rule 4). Note the *fire-and-forget* write path does NOT raise: a write failure or a
+    tenant-less event (the D43 contract violation) is logged and reported as ``False`` so the
+    data path is never blocked (hard rule 11). Carries ``tenant_id`` / ``trace_id`` / ``stage``
+    / ``failure_code`` for diagnosis.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+        stage: str | None = None,
+        failure_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+        self.stage = stage
+        self.failure_code = failure_code
