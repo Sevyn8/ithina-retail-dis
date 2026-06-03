@@ -22,27 +22,26 @@
 - **Errors (RECOVERED).** Standard `Error` body; `RateLimited` (429, `Retry-After`); `Backpressure` (downstream unhealthy, DLQ above threshold, `Retry-After`).
 - **Events referenced (RECOVERED).** `ingress.ready`, `ingress.resubmit`, `quarantine`, `pipeline.dlq`, `mapping.changed`, `identity.changed`.
 - **Lineage.** `trace_id`, `parent_trace_id` on resubmits; every canonical row carries `mapping_version_id` (decisions.md D22).
-- **RBAC vocabulary.** Slice 19 uses a `role` claim plus a `dis:<resource>:<action>` permission namespace. This is the chosen provisional vocabulary pending D25. No Phase 1 screen gates on the fine-grained permission array; Phase 1 gates on `userType` and `tenant_id` only.
+- **RBAC vocabulary.** The token carries a `roles` array in a `dis:<capability>` namespace (`dis:upload`, `dis:read`, `dis:ops`, `dis:mapping_admin`) - the provisional values from Sanjeev's slice-2 Customer Master fake (`libs/dis-testing` fixtures) and `contracts/identity-service/attribute-needs.md`, pending D25. There is no `user_type` claim; the tenant-vs-ops split is the `dis:ops` role. Phase 1 gates on the `dis:ops` role and `tenant_id` only - no screen gates on fine-grained permissions.
+- **Identifiers.** Canonical ids are external strings: tenant `t_*`, store `s_*`, user `u_*` (Sanjeev's fixtures). The external<->internal-UUID translation location is OPEN (`docs/decisions.md` D37, hard deadline Slice 7). Older example payloads below that still show `ten_*` / `usr_*` ids are stale provisional illustrations to reconcile.
 
 ---
 
 ## 1. Cross-cutting
 
 ### 1.1 GET /v1/me  ·  scope T+P  ·  screens: all (AuthBoundary, header)
-Current user identity and profile for the authenticated session.
-Response (PROVISIONAL, current slice 19 fixture shape):
+The signed-in user's display profile for the authenticated session. This is a profile call, distinct from authz: identity and authz come from the token claims (`sub`, `tenant_id`, `store_id`, `roles`), which the UI decodes locally. The profile fields below are NOT token claims; they come from a separate dis-ui-server to Customer Master call (`contracts/identity-service/attribute-needs.md` routes user email/name/display fields there).
+Response (PROVISIONAL profile shape; email and name are UI-dev fixtures with no source in Sanjeev's repo):
 ```jsonc
 {
-  "user_id": "usr_tenant_demo",
-  "email": "tenant.admin@demo.ithina.test",
-  "user_type": "TENANT",            // TENANT | PLATFORM
-  "tenant_id": "ten_demo_0001",     // null for PLATFORM
-  "tenant_name": "Demo Retail Co",  // null for PLATFORM; server-side display join
-  "role": "tenant_owner",           // PROVISIONAL value; token carries role per arch 4.17
-  "permissions": ["dis:sample:upload", "dis:mapping:view", "dis:mapping:promote", "dis:quarantine:view"]
+  "user_id": "u_acmeuser0001",
+  "email": "acme.user@example.test",
+  "name": "Acme User",
+  "tenant_id": "t_acme9k2l1mn4",     // null for ops (cross-tenant)
+  "tenant_name": "Acme Retail"       // null for ops; server-side display join
 }
 ```
-Open: arch 4.17 lists no `/me` handler. Identity may instead come from decoding token claims client-side. Resolution pending Sanjeev and slice 13. (See dis-ui-server-contract.md.)
+Open: arch 4.17 lists no `/me` handler, so whether dis-ui-server exposes this profile call (vs. another shape) is OPEN, pending Sanjeev and slice 13. Authz never depends on it - the UI gates on the token's `roles` and `tenant_id`. (See dis-ui-server-contract.md.)
 
 ### 1.2 GET /v1/dashboard/summary  ·  scope T (ops via tenant switch)  ·  screen: Tenant Dashboard
 Per-tenant at-a-glance: last submission per source, quarantined counts, active source count, recent latency snapshot.
@@ -255,7 +254,9 @@ This is a recommendation, not a decision. Sanjeev owns the real cut.
 ## 9. Open questions and reconciliation
 
 1. **GET /me existence.** Arch 4.17 lists no `/me` handler. Confirm whether dis-ui-server exposes 1.1, or whether the UI derives identity from token claims. Pending Sanjeev and slice 13.
-2. **RBAC vocabulary.** All `role`, `user_type`, and `permissions` values here are provisional pending D25. The recovered surface map section 6.2 used an admin-frontend-style 4-tuple; this doc and slice 19 use the `dis:<resource>:<action>` namespace. D25 settles which is canonical.
+2. **RBAC vocabulary.** Authz is a `roles` array in a `dis:<capability>` namespace (`dis:upload`, `dis:read`, `dis:ops`, `dis:mapping_admin`) - the provisional values from Sanjeev's slice-2 fake and `attribute-needs.md`, pending D25. There is no `user_type`; the tenant-vs-ops split is the `dis:ops` role. The recovered surface map section 6.2 used an admin-frontend-style 4-tuple; D25 settles which is canonical.
+6. **External id vs UUID (D37).** Ids are external strings (`t_*` / `s_*` / `u_*`); the DB keys by UUID. The translation location is OPEN (`docs/decisions.md` D37, Slice 7 deadline). Stale `ten_*` / `usr_*` ids in some example payloads predate this and should be read as illustrative only.
+7. **Profile call.** `email`, `name`, and `tenant_name` (1.1) are not token claims; they come from a separate dis-ui-server to Customer Master profile call that is itself OPEN. The specific fixture values are UI-dev placeholders, not from Sanjeev's sources.
 3. **Path and shape drift.** Only the onboarding shapes (2.1, 2.2) are RECOVERED verbatim. Everything else is derived from the surface map's documented data and actions and must be checked against the original OpenAPI spec if it resurfaces, or against Sanjeev's slice 15 to 17 implementation, whichever lands first.
 4. **Sources grouping.** The surface map treats Sources as a screen adjacent to Mapping CRUD; this doc folds the source endpoints (1.3 to 1.6) into cross-cutting because the dashboard and onboarding both read them. Confirm grouping with Sanjeev.
 5. **Endpoint count.** The lost original was described as 26 endpoints across 7 groups. This rebuild lands near that across the same 7 groups; exact parity with the original is not claimed.

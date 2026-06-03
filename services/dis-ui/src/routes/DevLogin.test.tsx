@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { AuthProvider } from '../auth/AuthProvider'
+import { ME_FIXTURES } from '../lib/dis-ui-server/fixtures'
 import { AppRoutes } from './AppRoutes'
 
 // The protected Home page fetches via TanStack Query, so the full route tree
@@ -30,15 +31,15 @@ describe('DevLogin persona switch', () => {
     const user = userEvent.setup()
     renderApp()
 
-    // Sign in as the TENANT persona.
-    await user.click(await screen.findByRole('button', { name: /tenant admin/i }))
+    // Sign in as the tenant persona; Home greets with that user's profile email.
+    await user.click(await screen.findByRole('button', { name: /tenant user/i }))
     expect(
-      await screen.findByText(/Hello, tenant\.admin@acme-retail\.example/),
+      await screen.findByText(`Hello, ${ME_FIXTURES['u_acmeuser0001'].email}`),
     ).toBeInTheDocument()
 
-    // Log out, then sign in as the PLATFORM persona; the snapshot reflects the switch.
+    // Log out, then sign in as the ops persona; the greeting reflects the switch.
     await user.click(screen.getByRole('button', { name: /log out/i }))
-    await user.click(await screen.findByRole('button', { name: /platform ops/i }))
-    expect(await screen.findByText(/Hello, ops@sevyn8\.example/)).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: /ops \(dev only\)/i }))
+    expect(await screen.findByText(`Hello, ${ME_FIXTURES['u_opsdev0001'].email}`)).toBeInTheDocument()
   })
 })

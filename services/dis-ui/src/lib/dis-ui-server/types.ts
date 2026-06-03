@@ -1,17 +1,16 @@
-import type { UserType } from '../../auth/AuthSnapshot'
-
-// The dis-ui-server GET /me response shape (demand-list section 1.1). This is the
-// BFF's enriched view of the signed-in user. It overlaps the token-derived
-// AuthSnapshot but adds tenant_name, which is a server-side display join and is
-// not carried in the Customer Master token.
+// The dis-ui-server GET /me response: the signed-in user's display profile.
+//
+// This models a future dis-ui-server -> Customer Master profile call. It is OPEN,
+// NOT a confirmed endpoint: architecture 4.17 lists no GET /me handler, and
+// attribute-needs.md (the identity-service needs doc) explicitly routes the user's
+// email / name / display fields to a separate dis-ui-server -> Customer Master
+// call, not the data-plane identity-service. These fields are NOT token claims;
+// the token carries only sub / tenant_id / store_id / roles (see AuthSnapshot).
 export type MeResponse = {
   user_id: string
   email: string
-  user_type: UserType
+  name: string
   tenant_id: string | null
-  // Display name of the tenant. null for PLATFORM (ops) users, who are
-  // cross-tenant and belong to no single tenant.
+  // Display name of the tenant; null for ops users (cross-tenant, no single tenant).
   tenant_name: string | null
-  // PROVISIONAL pending decisions.md D25, mirrors AuthSnapshot.permissions.
-  permissions: string[]
 }

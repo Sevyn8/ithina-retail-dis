@@ -8,15 +8,13 @@ const KEY = new TextEncoder().encode(STUB_SECRET)
 
 type Claims = {
   sub?: string
-  email?: unknown
-  user_type?: unknown
   tenant_id?: unknown
-  role?: unknown
-  permissions?: unknown
+  store_id?: unknown
+  roles?: unknown
 }
 
-// Local signer so tests can control expiry and omit claims (signStubToken always
-// produces a valid, fresh token, which only covers the happy path).
+// Local signer so tests can control expiry and omit/misshape claims (signStubToken
+// always produces a valid, fresh token, which only covers the happy path).
 async function sign(claims: Claims, expiration: string | number = '8h'): Promise<string> {
   const { sub, ...rest } = claims
   const builder = new SignJWT(rest as Record<string, unknown>)
@@ -34,24 +32,28 @@ async function sign(claims: Claims, expiration: string | number = '8h'): Promise
 const tenant = PERSONAS[0]
 
 describe('verifyToken', () => {
-  it('returns a snapshot for a valid token (TENANT)', async () => {
+  it('returns a snapshot for a valid token', async () => {
     const token = await sign({
-      sub: tenant.user_id,
-      email: tenant.email,
-      user_type: tenant.user_type,
+      sub: tenant.sub,
       tenant_id: tenant.tenant_id,
-      role: tenant.role,
-      permissions: tenant.permissions,
+      store_id: tenant.store_id,
+      roles: tenant.roles,
     })
     const snapshot = await verifyToken(token)
     expect(snapshot).toEqual({
-      user_id: tenant.user_id,
-      email: tenant.email,
-      user_type: 'TENANT',
-      tenant_id: tenant.tenant_id,
-      role: tenant.role,
-      permissions: tenant.permissions,
+      userId: tenant.sub,
+      tenantId: tenant.tenant_id,
+      storeId: tenant.store_id,
+      roles: tenant.roles,
     })
+  })
+
+  it('accepts a null tenant_id and store_id (ops, cross-tenant)', async () => {
+    const token = await sign({ sub: 'u_opsdev0001', tenant_id: null, store_id: null, roles: ['dis:ops'] })
+    const snapshot = await verifyToken(token)
+    expect(snapshot.tenantId).toBeNull()
+    expect(snapshot.storeId).toBeNull()
+    expect(snapshot.roles).toEqual(['dis:ops'])
   })
 
   it('rejects a malformed token', async () => {
@@ -62,39 +64,17 @@ describe('verifyToken', () => {
   it('rejects an expired token', async () => {
     const past = Math.floor(Date.now() / 1000) - 60
     const token = await sign(
-      {
-        sub: tenant.user_id,
-        email: tenant.email,
-        user_type: tenant.user_type,
-        tenant_id: tenant.tenant_id,
-        role: tenant.role,
-        permissions: tenant.permissions,
-      },
+      { sub: tenant.sub, tenant_id: tenant.tenant_id, store_id: tenant.store_id, roles: tenant.roles },
       past,
     )
     await expect(verifyToken(token)).rejects.toMatchObject({ reason: 'expired' })
   })
 
-  it('rejects a token with missing or invalid claims (unknown persona)', async () => {
-    const noUserType = await sign({
-      sub: 'u1',
-      email: 'someone@example.com',
-      role: 'tenant_admin',
-      tenant_id: 't1',
-      permissions: [],
-    })
-    await expect(verifyToken(noUserType)).rejects.toMatchObject({ reason: 'invalid-claims' })
+  it('rejects a token with missing or invalid claims', async () => {
+    const noSub = await sign({ tenant_id: 't_x', store_id: null, roles: ['dis:read'] })
+    await expect(verifyToken(noSub)).rejects.toMatchObject({ reason: 'invalid-claims' })
 
-    const tenantWithoutTenantId = await sign({
-      sub: 'u2',
-      email: 'someone@example.com',
-      user_type: 'TENANT',
-      tenant_id: null,
-      role: 'tenant_admin',
-      permissions: [],
-    })
-    await expect(verifyToken(tenantWithoutTenantId)).rejects.toMatchObject({
-      reason: 'invalid-claims',
-    })
+    const badRoles = await sign({ sub: 'u_x', tenant_id: 't_x', store_id: null, roles: 'dis:read' })
+    await expect(verifyToken(badRoles)).rejects.toMatchObject({ reason: 'invalid-claims' })
   })
 })

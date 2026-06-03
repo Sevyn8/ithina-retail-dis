@@ -13,13 +13,18 @@ and `docs/decisions.md` D25 (the Customer Master RBAC claim vocabulary).
 ## Auth model
 
 - The UI sends a Customer Master bearer token on every dis-ui-server call.
-- dis-ui-server verifies the JWT against Customer Master's JWKS, extracts
-  `tenant_id` and a `role` claim, and enforces RBAC at the handler level
-  (tenant-scoped handlers require `tenant_id`; ops-only handlers require the ops
-  role).
+- dis-ui-server verifies the JWT against Customer Master's JWKS and extracts the
+  claims that Sanjeev's slice-2 fake pins (PROVISIONAL pending D25): `sub`,
+  `tenant_id`, `store_id`, and a `roles` array (e.g. `dis:upload`, `dis:read`,
+  `dis:ops`, `dis:mapping_admin`). RBAC is enforced at the handler level
+  (tenant-scoped handlers require `tenant_id`; ops-only handlers require the
+  `dis:ops` role).
 - On token expiry dis-ui-server returns 401 and the UI refreshes (real mode).
-- Slice 19 substitutes an HMAC-signed stub JWT verified locally;
-  `src/auth/verifyToken.ts` is the single seam that swaps to JWKS verification.
+- Slice 19/20 substitutes an HMAC-signed stub JWT verified locally with the same
+  issuer/audience (`https://customer-master.local` / `dis`) and claim set;
+  `src/auth/verifyToken.ts` is the single seam that swaps HMAC for JWKS (slice 13).
+  The UI decodes these claims into its `AuthSnapshot` (`userId`, `tenantId`,
+  `storeId`, `roles`); profile fields are NOT token claims (see GET /me).
 
 ## Handler set (architecture section 4.17)
 
@@ -36,39 +41,53 @@ and `docs/decisions.md` D25 (the Customer Master RBAC claim vocabulary).
 
 **Note:** architecture 4.17 lists **no `GET /me` endpoint**. See Open questions.
 
-## GET /me (PROVISIONAL - slice-19 fixture shape)
+## GET /me (PROVISIONAL profile call - OPEN)
 
-The UI's `getMe()` currently returns this shape, derived from the `/dev/login`
-personas. It is the Checkpoint 3 fixture, not a canonical contract.
+The UI's `getMe()` returns the signed-in user's display profile:
 
 ```ts
 type MeResponse = {
   user_id: string
   email: string
-  user_type: 'TENANT' | 'PLATFORM'
-  tenant_id: string | null      // null for PLATFORM (cross-tenant)
-  tenant_name: string | null    // null for PLATFORM; getMe-only enrichment, not a token claim
-  permissions: string[]         // PROVISIONAL, pending D25
+  name: string
+  tenant_id: string | null      // null for ops (cross-tenant)
+  tenant_name: string | null    // null for ops; server-side display join
 }
 ```
 
-`tenant_name` is the one field beyond the token's claims (the token carries
-`tenant_id` + `role`, not `tenant_name`); it is a server-side display join the
-BFF would add.
+These are profile/display fields, **none of which are token claims**. The token
+carries only `sub` / `tenant_id` / `store_id` / `roles`; `email`, `name`, and
+`tenant_name` come from a **separate dis-ui-server -> Customer Master profile
+call** (`contracts/identity-service/attribute-needs.md` routes user email/name/
+display fields there, explicitly out of the data-plane identity-service). Whether
+that call is a `GET /me` endpoint or another shape is OPEN (see Open questions).
+In fixture mode the UI returns hardcoded profile fixtures keyed by `sub`.
 
 ## Open questions
 
-1. **The GET /me fork.** Architecture 4.17 lists no `/me` endpoint, but the UI
-   assumes one. Whether real identity comes from a `GET /me` call or from
-   decoding the token's claims is open, pending Sanjeev and slice 13. Slice 19
-   decodes the stub locally and is correct either way.
-2. **RBAC vocabulary.** `user_type` (TENANT/PLATFORM), `role`, and `permissions`
-   are provisional placeholders pending decisions.md D25 (the Customer Master
-   claim vocabulary). No UI currently gates on `permissions`.
-3. **`/me` caching.** The `getMe` query uses `staleTime: Infinity` (identity is
+1. **The profile call.** Identity/authz comes from the token claims (`sub`,
+   `tenant_id`, `roles`), which the UI decodes locally. The display profile
+   (`email`, `name`, `tenant_name`) is a separate dis-ui-server -> Customer Master
+   call; architecture 4.17 lists no `GET /me` handler, so whether dis-ui-server
+   exposes one is OPEN, pending Sanjeev and slice 13. The UI's `getMe()` models it
+   behind fixtures and is correct either way.
+2. **RBAC vocabulary.** The token's `roles` array uses a `dis:<capability>`
+   namespace (`dis:upload`, `dis:read`, `dis:ops`, `dis:mapping_admin`) - the
+   PROVISIONAL values from Sanjeev's slice-2 fake / `attribute-needs.md`, pending
+   `decisions.md` D25 (the recovered surface map used an admin-frontend 4-tuple;
+   D25 settles which is canonical). Phase 1 gates only on the `dis:ops` role and
+   `tenant_id`; no UI gates on fine-grained permissions.
+3. **External id vs UUID (D37).** Token/contract ids are external strings
+   (`t_*` / `s_*` / `u_*`); the DB keys by UUID. The translation location is OPEN
+   (`decisions.md` D37, hard deadline Slice 7). The UI only ever sees the external
+   form.
+4. **`/me` caching.** The `getMe` query uses `staleTime: Infinity` (identity is
    stable within a session). Revisit when real mode and tenant-switching exist.
 
 ## Canonical sources to reconcile against
 
-- `docs/ui-engineer-demand-list.md` section 1.1 (absent at time of writing).
-- `docs/decisions.md` D25 (Customer Master as external dependency; claim vocabulary still open).
+- `docs/ui-engineer-demand-list.md` section 1.1 (the endpoint inventory).
+- `docs/decisions.md` D25 (Customer Master claim vocabulary, still open) and D37
+  (external id vs UUID translation, open).
+- `libs/dis-testing/src/dis_testing/fixtures.py` and
+  `contracts/identity-service/attribute-needs.md` (Sanjeev's provisional claim set).

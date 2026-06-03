@@ -1,40 +1,37 @@
-import type { UserType } from '../AuthSnapshot'
-
-// DEV ONLY. The personas offered at /dev/login. At minimum one TENANT and one
-// PLATFORM persona, per the slice doc. Claim values are provisional fixtures:
-// the user_type spelling (TENANT/PLATFORM) follows the slice doc; permissions are
-// PROVISIONAL pending decisions.md D25; PLATFORM is cross-tenant (tenant_id null).
+// DEV ONLY. The personas offered at /dev/login. Each models the Customer Master
+// token claim set Sanjeev's slice-2 fakes pin (sub, tenant_id, store_id, roles -
+// PROVISIONAL pending decisions.md D25). Personas carry NO profile fields; email/
+// name/tenant_name live in the separate profile fixtures (lib/dis-ui-server).
 
 export type StubPersona = {
   id: string
   label: string
-  user_id: string
-  email: string
-  user_type: UserType
+  sub: string
+  // null for ops (cross-tenant). Ids use the t_*/s_*/u_* external form from
+  // Sanjeev's fixtures; the external<->UUID translation is OPEN (decisions.md D37).
   tenant_id: string | null
-  role: string
-  permissions: string[]
+  store_id: string | null
+  roles: string[]
 }
 
 export const PERSONAS: StubPersona[] = [
   {
-    id: 'tenant-admin',
-    label: 'Tenant admin (Acme Retail)',
-    user_id: '0190a000-0000-7000-8000-000000000001',
-    email: 'tenant.admin@acme-retail.example',
-    user_type: 'TENANT',
-    tenant_id: '0190a000-0000-7000-8000-0000000000aa',
-    role: 'tenant_admin',
-    permissions: ['upload:create', 'mapping:read', 'quarantine:read', 'audit:read'],
+    // The real slice-2 fixture identity (libs/dis-testing fixtures.py).
+    id: 'tenant',
+    label: 'Tenant user (Acme Retail)',
+    sub: 'u_acmeuser0001',
+    tenant_id: 't_acme9k2l1mn4',
+    store_id: 's_acme0001a4b7',
+    roles: ['dis:upload', 'dis:read'],
   },
   {
-    id: 'platform-ops',
-    label: 'Platform ops',
-    user_id: '0190a000-0000-7000-8000-000000000002',
-    email: 'ops@sevyn8.example',
-    user_type: 'PLATFORM',
+    // DEV-ONLY construct: no ops user exists in Sanjeev's fixtures (seed.py seeds
+    // tenants/stores only). Ops is cross-tenant, so tenant_id/store_id are null.
+    id: 'ops',
+    label: 'Ops (dev only)',
+    sub: 'u_opsdev0001',
     tenant_id: null,
-    role: 'ops',
-    permissions: ['mapping:read', 'mapping:write', 'quarantine:read_all', 'audit:read', 'duckdb:query'],
+    store_id: null,
+    roles: ['dis:ops', 'dis:read', 'dis:mapping_admin'],
   },
 ]

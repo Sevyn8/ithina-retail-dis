@@ -24,7 +24,7 @@ This slice builds five screens plus the navigation shell. It does NOT build the 
 
 4. **Phase 1 scope reductions are strict.** Mapping Versions is read-only (no edit, create, or deprecate). Quarantine is the tenant slice, read plus detail only (no resubmit, no resolve). Audit is trace_id direct lookup only (no cross-tenant search, no filters). There is no Shadow Rollout Review, no Sources CRUD, no Dashboard, no Notifications, and no Ops surface in this slice.
 
-5. **RBAC gates on userType and tenant_id only.** No screen branches on the fine-grained `permissions` array (D25 open). Ops and cross-tenant surfaces must not be reachable by a TENANT persona.
+5. **RBAC gates on the `dis:ops` role and tenant_id only.** Gating uses `isOps(snapshot)` (the `dis:ops` role) and `tenant_id`; no screen branches on a fine-grained permission array, and there is no `userType` claim (D25 open). Ops and cross-tenant surfaces must not be reachable by a non-ops persona.
 
 6. **No backend modifications.** Pure UI. Do not edit `services/dis-ui-server/`, `services/identity-service/`, or any backend code.
 
@@ -36,7 +36,7 @@ This slice builds five screens plus the navigation shell. It does NOT build the 
 
 ## Acceptance criteria
 
-1. The app shell renders a tenant sidebar with the Phase 1 navigation (Upload, Quarantine, Audit, and Mappings reached via a source); ops-only items are not shown to a TENANT persona.
+1. The app shell renders a tenant sidebar with the Phase 1 navigation (Upload, Quarantine, Audit, and Mappings reached via a source); ops-only items are not shown to a non-ops persona (one without the `dis:ops` role).
 2. All Phase 1 routes are registered and wrapped in `AuthBoundary`; deep links resolve; an unknown route shows a not-found state.
 3. Reusable Loading, Empty, Error, and PermissionDenied state components exist and are used across the screens (surface map 6.4). Screens do not roll their own.
 4. A minimal read-only Sources index renders fixture sources (demand list 1.3) and links each to its Mappings. This is a navigation backbone, not the Phase 2 Sources CRUD screen.
@@ -49,7 +49,7 @@ This slice builds five screens plus the navigation shell. It does NOT build the 
 11. Audit and Trace Lookup (route `/audit`): a trace_id direct lookup (demand list 5.1) renders the ordered per-stage lifecycle; a quarantined trace shows its quarantined terminal stage. Cross-tenant search and filters are out of scope.
 12. Mapping Versions and CRUD, read-only (route `/sources/{source_id}/mappings`): the version list (demand list 3.1) with status badges and a version view (3.2) showing the full definition. Edit, create, and deprecate are out of scope.
 13. Every Phase 1 screen renders its loading, empty, and error states.
-14. A TENANT persona can complete the demonstrable path in fixture mode: Upload to Review to approve, then Quarantine to detail, then Audit by trace_id, then a source's Mappings.
+14. A tenant persona (no `dis:ops` role) can complete the demonstrable path in fixture mode: Upload to Review to approve, then Quarantine to detail, then Audit by trace_id, then a source's Mappings.
 15. Commit history shows the slice landing via coherent per-checkpoint commits on `main`.
 
 ## Failure-mode categories
@@ -60,7 +60,7 @@ Categories Claude Code must consider in plan mode. Specific handling shapes come
 
 **FM2: Scope creep.** The Phase 1 reductions in constraint 4 are strict. The plan for each screen must enumerate explicitly what the screen does NOT do this slice.
 
-**FM3: RBAC over-gating.** Gate on userType and tenant_id only. Do not build permission-array gating. A TENANT persona must not be able to reach an ops or cross-tenant surface, including by deep link.
+**FM3: RBAC over-gating.** Gate on the `dis:ops` role (`isOps`) and tenant_id only, not a `userType`. Do not build permission-array gating. A non-ops persona must not be able to reach an ops or cross-tenant surface, including by deep link.
 
 **FM4: TanStack Query consistency.** Reuse the slice 19 query patterns (the single QueryClient is already mounted). Consistent query keys, loading and error handling per query. Do not re-architect the data layer.
 

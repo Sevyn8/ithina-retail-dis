@@ -2,10 +2,10 @@ import { useAuth } from '../auth/useAuth'
 import { useMe } from '../lib/dis-ui-server/me'
 
 // Hello-world page. AuthBoundary guarantees an authenticated snapshot before Home
-// renders; Home fetches the profile via getMe() (TanStack Query) and renders the
-// greeting from the getMe() result (AC 10). The email also appears in the
-// AppLayout header from the token-derived snapshot; that overlap is intentional.
-// tenant_name is shown here because it is a getMe-only field the token lacks.
+// renders; Home fetches the display profile via getMe() (TanStack Query) and
+// greets from the getMe() result (AC 10). email and tenant_name are profile fields
+// (not token claims); the token-derived AuthSnapshot carries only userId / tenantId
+// / storeId / roles, so the greeting reads them from the profile, not the snapshot.
 export function Home() {
   const { snapshot } = useAuth()
   const { data, isPending, isError } = useMe(snapshot)

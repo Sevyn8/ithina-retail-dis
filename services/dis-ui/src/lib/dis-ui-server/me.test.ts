@@ -6,52 +6,48 @@ import { getMe } from './me'
 
 function toSnapshot(persona: StubPersona): AuthSnapshot {
   return {
-    user_id: persona.user_id,
-    email: persona.email,
-    user_type: persona.user_type,
-    tenant_id: persona.tenant_id,
-    role: persona.role,
-    permissions: persona.permissions,
+    userId: persona.sub,
+    tenantId: persona.tenant_id,
+    storeId: persona.store_id,
+    roles: persona.roles,
   }
 }
 
-const tenant = PERSONAS.find((p) => p.user_type === 'TENANT')!
-const platform = PERSONAS.find((p) => p.user_type === 'PLATFORM')!
+const tenant = PERSONAS.find((p) => p.id === 'tenant')!
+const ops = PERSONAS.find((p) => p.id === 'ops')!
 
 describe('getMe (fixture mode)', () => {
   it('returns the tenant profile with tenant_name', async () => {
     const me = await getMe(toSnapshot(tenant))
     expect(me).toEqual({
-      user_id: tenant.user_id,
-      email: tenant.email,
-      user_type: 'TENANT',
-      tenant_id: tenant.tenant_id,
+      user_id: 'u_acmeuser0001',
+      email: 'acme.user@example.test',
+      name: 'Acme User',
+      tenant_id: 't_acme9k2l1mn4',
       tenant_name: 'Acme Retail',
-      permissions: tenant.permissions,
     })
   })
 
-  it('returns the platform profile with null tenant_id and tenant_name', async () => {
-    const me = await getMe(toSnapshot(platform))
-    expect(me.user_type).toBe('PLATFORM')
+  it('returns the ops profile with null tenant_id and tenant_name', async () => {
+    const me = await getMe(toSnapshot(ops))
     expect(me.tenant_id).toBeNull()
     expect(me.tenant_name).toBeNull()
-    expect(me.email).toBe(platform.email)
+    expect(me.user_id).toBe('u_opsdev0001')
+    expect(me.email).toBe(ME_FIXTURES['u_opsdev0001'].email)
   })
 
   it('rejects for a user with no fixture', async () => {
-    const unknown: AuthSnapshot = { ...toSnapshot(tenant), user_id: 'no-such-user' }
+    const unknown: AuthSnapshot = { ...toSnapshot(tenant), userId: 'no-such-user' }
     await expect(getMe(unknown)).rejects.toThrow(/no fixture/)
   })
 })
 
-describe('ME_FIXTURES matches the /dev/login personas exactly', () => {
+describe('every /dev/login persona has a profile fixture', () => {
   it.each(PERSONAS.map((p) => [p.id, p] as const))('persona %s', (_id, persona) => {
-    const fixture = ME_FIXTURES[persona.user_id]
+    const fixture = ME_FIXTURES[persona.sub]
     expect(fixture).toBeDefined()
-    expect(fixture.email).toBe(persona.email)
-    expect(fixture.user_type).toBe(persona.user_type)
+    expect(fixture.user_id).toBe(persona.sub)
+    // The profile tenant_id aligns with the token persona's tenant_id.
     expect(fixture.tenant_id).toBe(persona.tenant_id)
-    expect(fixture.permissions).toEqual(persona.permissions)
   })
 })

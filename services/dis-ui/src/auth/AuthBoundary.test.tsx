@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { SignJWT } from 'jose'
 import { MemoryRouter } from 'react-router'
 
+import { ME_FIXTURES } from '../lib/dis-ui-server/fixtures'
 import { AppRoutes } from '../routes/AppRoutes'
 import { AuthProvider } from './AuthProvider'
 import { STUB_AUDIENCE, STUB_ISSUER, STUB_SECRET } from './dev/devStubSecret'
@@ -30,14 +31,12 @@ function renderAt(path: string) {
 async function expiredToken(): Promise<string> {
   const past = Math.floor(Date.now() / 1000) - 60
   return new SignJWT({
-    email: 'tenant.admin@acme-retail.example',
-    user_type: 'TENANT',
-    tenant_id: 't1',
-    role: 'tenant_admin',
-    permissions: [],
+    tenant_id: 't_acme9k2l1mn4',
+    store_id: 's_acme0001a4b7',
+    roles: ['dis:read'],
   })
     .setProtectedHeader({ alg: 'HS256' })
-    .setSubject('u1')
+    .setSubject('u_acmeuser0001')
     .setIssuedAt(past - 60)
     .setIssuer(STUB_ISSUER)
     .setAudience(STUB_AUDIENCE)
@@ -53,7 +52,8 @@ describe('AuthBoundary', () => {
   it('renders the protected page when a valid token is stored', async () => {
     writeToken(await signStubToken(PERSONAS[0]))
     renderAt('/')
-    expect(await screen.findByText(/Hello, tenant\.admin@acme-retail\.example/)).toBeInTheDocument()
+    const email = ME_FIXTURES[PERSONAS[0].sub].email
+    expect(await screen.findByText(`Hello, ${email}`)).toBeInTheDocument()
   })
 
   it('redirects to /dev/login when no token is stored', async () => {
