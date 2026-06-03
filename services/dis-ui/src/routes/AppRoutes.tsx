@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router'
 
 import { AuthBoundary } from '../auth/AuthBoundary'
 import { AppLayout } from './AppLayout'
+import { AuditLookup } from './AuditLookup'
 import { DevLogin } from './DevLogin'
 import { MappingReview } from './MappingReview'
 import { NotFound } from './NotFound'
@@ -29,7 +30,7 @@ export function AppRoutes() {
           <Route path="/upload" element={<SampleUpload />} />
           <Route path="/upload/:sampleId/review" element={<MappingReview />} />
           <Route path="/quarantine" element={<QuarantineConsole />} />
-          <Route path="/audit" element={<Placeholder title="Audit (Checkpoint 4)" />} />
+          <Route path="/audit" element={<AuditLookup />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Route>

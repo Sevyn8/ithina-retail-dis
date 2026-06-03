@@ -23,11 +23,11 @@ describe('AppRoutes (Phase 1 skeleton)', () => {
 
   // /upload and /upload/:sampleId/review are now real screens (Checkpoint 2),
   // covered by SampleUpload.test / MappingReview.test. Remaining placeholders:
-  // /quarantine is a real screen (Checkpoint 3), covered by QuarantineConsole.test.
-  it.each([
-    ['/audit', /Audit/i],
-    ['/sources/manual_csv_upload/mappings', /Mapping Versions/i],
-  ])('resolves placeholder route %s', async (path, heading) => {
+  // /quarantine (Checkpoint 3) and /audit (Checkpoint 4) are real screens now.
+  // Remaining placeholder: Mapping Versions (Checkpoint 5).
+  it.each([['/sources/manual_csv_upload/mappings', /Mapping Versions/i]])(
+    'resolves placeholder route %s',
+    async (path, heading) => {
     renderAt(path)
     expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
   })

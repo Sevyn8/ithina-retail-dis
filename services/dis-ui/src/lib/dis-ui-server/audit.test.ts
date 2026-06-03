@@ -1,0 +1,35 @@
+import type { AuthSnapshot } from '../../auth/AuthSnapshot'
+import { getAuditTrace } from './audit'
+
+const tenant: AuthSnapshot = {
+  userId: 'u_acmeuser0001',
+  tenantId: 't_acme9k2l1mn4',
+  storeId: 's_acme0001a4b7',
+  roles: ['dis:read'],
+}
+const otherTenant: AuthSnapshot = { ...tenant, tenantId: 't_other00001' }
+
+describe('audit fixtures (fixture mode)', () => {
+  it('returns the healthy trace lifecycle with mapping_version_id on the mapped stage', async () => {
+    const trace = await getAuditTrace(tenant, 'tr_acme0010')
+    expect(trace).not.toBeNull()
+    expect(trace?.stages.map((s) => s.stage)).toEqual(['received', 'validated', 'mapped', 'committed'])
+    const mapped = trace?.stages.find((s) => s.stage === 'mapped')
+    expect(mapped?.mapping_version_id).toBe(1)
+  })
+
+  it('returns a quarantined terminal stage with an error_code', async () => {
+    const trace = await getAuditTrace(tenant, 'tr_acme0001')
+    const terminal = trace?.stages.at(-1)
+    expect(terminal?.stage).toBe('quarantined')
+    expect(terminal?.error_code).toBe('CANONICAL_SHAPE_INVALID')
+  })
+
+  it('returns null for an unknown trace_id', async () => {
+    expect(await getAuditTrace(tenant, 'tr_unknown')).toBeNull()
+  })
+
+  it('returns null for a trace owned by another tenant (own-tenant only)', async () => {
+    expect(await getAuditTrace(otherTenant, 'tr_acme0010')).toBeNull()
+  })
+})
