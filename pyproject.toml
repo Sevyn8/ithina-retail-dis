@@ -81,6 +81,7 @@ dev = [
   "dis-pii",
   "dis-storage",
   "dis-audit",
+  "mirror-sync-consumer",
 ]
 
 [build-system]
@@ -107,6 +108,7 @@ known-first-party = [
   "dis_rls",
   "dis_storage",
   "dis_validation",
+  "mirror_sync_consumer",
 ]
 
 [tool.pytest.ini_options]
@@ -114,7 +116,7 @@ asyncio_mode = "auto"
 # Unit tests live next to code (libs/<name>/tests); integration/e2e in repo-root tests/.
 # importlib mode lets identically-named test files coexist across libs without
 # __init__.py juggling.
-testpaths = ["tests", "libs"]
+testpaths = ["tests", "libs", "services"]
 addopts = "--import-mode=importlib"
 markers = [
   "integration: requires the local docker-compose stack (Postgres + fakes + emulators)",
@@ -135,6 +137,7 @@ members = [
   "libs/dis-pii",
   "libs/dis-storage",
   "libs/dis-audit",
+  "services/mirror-sync-consumer",
 ]
 
 [tool.uv.sources]
@@ -148,3 +151,4 @@ dis-rls = { workspace = true }
 dis-pii = { workspace = true }
 dis-storage = { workspace = true }
 dis-audit = { workspace = true }
+mirror-sync-consumer = { workspace = true }

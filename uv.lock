@@ -18,6 +18,7 @@ members = [
     "dis-storage",
     "dis-testing",
     "ithina-dis",
+    "mirror-sync-consumer",
 ]
 
 [[package]]
@@ -1472,6 +1473,7 @@ dev = [
     { name = "dis-testing" },
     { name = "faker" },
     { name = "jsonschema" },
+    { name = "mirror-sync-consumer" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1523,6 +1525,7 @@ dev = [
     { name = "dis-testing", editable = "libs/dis-testing" },
     { name = "faker", specifier = ">=30" },
     { name = "jsonschema", specifier = ">=4.23" },
+    { name = "mirror-sync-consumer", editable = "services/mirror-sync-consumer" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
@@ -1743,6 +1746,27 @@ wheels = [
 [package.optional-dependencies]
 msgpack = [
     { name = "msgpack" },
+]
+
+[[package]]
+name = "mirror-sync-consumer"
+version = "0.0.0"
+source = { editable = "services/mirror-sync-consumer" }
+dependencies = [
+    { name = "dis-core" },
+    { name = "dis-rls" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
 [[package]]
