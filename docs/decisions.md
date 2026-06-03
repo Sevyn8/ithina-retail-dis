@@ -412,3 +412,59 @@ These are not consistent on whether tokenization is one-way (HMAC, no recovery) 
 **Evidence (introspected, `ithina_dis_db`).** `pg_class.relrowsecurity = f` and `relforcerowsecurity = f` for `identity_mirror.tenants` and `identity_mirror.stores`; `pg_policies` has no rows for schema `identity_mirror`. (Contrast: `bronze.data_ingress_events` and `canonical.*` are `relrowsecurity = t, relforcerowsecurity = t` with a `tenant_isolation` policy.)
 
 **Why Slice 7.** Mirror Sync writes real tenants/stores into `identity_mirror`; its upsert path and role posture depend on whether RLS is in force there. Resolve before that code is written. Do not edit the DDL or the build-guide under Slice 4 — this entry only registers the contradiction. **Scope.** Docs only. Relates to hard rule 1 / D12.
+
+---
+
+### D42 Audit `audit.events` drift: D33/D14/§8 duplicate-audit fields are absent from the live schema `OPEN`
+
+**Status.** `OPEN`. Records a doc-vs-schema drift surfaced during Slice 6 (`dis-audit`) by live introspection of `ithina_dis_db`; it does **not** resolve it (no DDL edited). The D38-analog for the audit table. **Resolution owner: Slice 10** (streaming consumer, which emits duplicate-audit detail per D33).
+
+**The gap.** D33 / `architecture.md` §2.3.3 specify, on a duplicate event-table INSERT, `outcome = DUPLICATE_NOOP` or `DUPLICATE_OVERWRITTEN` and a `prior_trace_id`. `architecture.md:702` lists the per-row audit field set as `{trace_id, tenant_id, store_id, source_id, stage, status, ts, row_hash, error_code, error_detail}`. The **live `audit.events` cannot represent these**:
+- `ck_audit_events_outcome_vocab` permits only `SUCCESS, FAILURE, SKIPPED, RETRIED` — `DUPLICATE_NOOP`/`DUPLICATE_OVERWRITTEN` would violate the CHECK.
+- There is **no** `prior_trace_id`, `store_id`, `source_id`, `source_event_id`, or `row_hash` column.
+
+**Evidence (introspected, `ithina_dis_db`).** `pg_get_constraintdef(ck_audit_events_outcome_vocab)` = `CHECK ((outcome)::text = ANY (ARRAY['SUCCESS','FAILURE','SKIPPED','RETRIED']))`. `information_schema.columns` for `audit.events` returns 23 columns; a filter for `store_id`/`source_id`/`source_event_id`/`row_hash` returns 0 rows. The only structured-context column is `event_data JSONB` (its `COMMENT` documents stage-specific shapes).
+
+**Intended home (not closed by DDL here).** The duplicate-audit detail (`DUPLICATE_*` distinction, `prior_trace_id`, the dedup key `store_id`/`source_id`/`source_event_id`, `row_hash`) lands in the `event_data` JSONB, not first-class columns — unless Slice 10 elects a DDL change (extend the CHECK / add columns). `dis-audit` therefore does **not** define `DUPLICATE_*` outcomes or those columns; its `Outcome`/`EventScope` enums mirror the live CHECKs exactly. Cross-referenced from D33 and D38. **Scope.** Docs only; no DDL edited under Slice 6.
+
+**Drift-guard limit (Slice 6 AC2).** The `dis-audit` model reconciliation against the live schema is a column-**name set** match only (both directions), not a per-column type / nullability / FK check. So a *type narrowing* on an existing column (e.g. `varchar(64)` → `varchar(32)`, or widening an int) passes the set match and is caught only as a runtime INSERT failure — which fire-and-forget then swallows (a D45 silent-loss-family case). Recorded, not fixed; no test or DDL change here. To be addressed when audit schema-vs-contract drift is next touched (Slice 10), alongside the duplicate-audit detail above.
+
+---
+
+### D43 Every DIS audit event carries a known `tenant_id`; no tenant-less audit path `SETTLED`
+
+**Status.** `SETTLED` (product boundary). Parallels D41 in shape (a schema looser than the rule) but is **settled, not OPEN**: the operator has ruled this a permanent product boundary, not a v1.0 convenience.
+
+**Decision.** Every DIS audit event carries a known `tenant_id`. DIS has no tenant-less audit path. The `dis-audit` writer goes through `dis_rls.rls_session(engine, tenant_id)` (hard rule 12); an event with no `tenant_id` is refused loudly (`AuditWriteError`, logged), never silently dropped.
+
+**Why (product facts).** Uploads are always for a known tenant and one of its stores — the tenant comes from the authenticated Customer Master session; the store is supplied or read from the CSV. Downstream pipeline stages inherit that tenant. Authentication is Customer Master's responsibility (D25), so DIS does not record auth events and a failed sign-in is never a DIS audit event. Scheduled jobs (Slice 18, daily-compute) and ops actions (Slice 12, replay) act per-tenant.
+
+**Schema-vs-product gap (recorded, not closed by DDL).** The live `rls_audit_events_tenant` policy permits `tenant_id IS NULL` and the column is nullable, so the schema is **looser** than the product rule. The product rule wins. The NULL branch is left as intentional headroom, not a supported path. Making `tenant_id NOT NULL` to match the rule is a separate DDL slice, not undertaken here; its absence is a tolerated, recorded mismatch — **not debt the next slice must clear**.
+
+**Evidence (introspected, `ithina_dis_db`).** `audit.events.tenant_id` `is_nullable = YES`; policy `rls_audit_events_tenant` `USING (tenant_id = current_setting('app.tenant_id', true)::uuid OR tenant_id IS NULL)`; `relrowsecurity = t, relforcerowsecurity = t`. `fk_audit_events_tenant → identity_mirror.tenants(tenant_id)`.
+
+**Supporting evidence — non-deferred Phase-1 emitters all emit post-identity.** dis-ui-server `upload_session` (Slice 8, after session validate); csv-ingest-worker (Slice 9, identity inherited from the upload session); streaming-consumer (Slice 10, `tenant_id` carried on `ingress.ready`); quarantine-drainer (Slice 11, rows carry `tenant_id`); daily-compute (Slice 18, `app.tenant_id` per tenant). The `events.sql:83` "pre-auth receiver errors" comment refers to **receiver services, all DEFERRED**; whether a deferred receiver ever emits a tenant-less event is a decision owned by that future receiver slice — not a v1.0 deferral and not this decision's trigger.
+
+**What Slice 6 builds.** The writer requires a non-NULL `tenant_id` (`rls_session` posture); the `AuditEvent` model mirrors the nullable column for the both-directions drift guard, but the writer enforces the product rule, so a `None` raises `AuditWriteError` (logged, never a silent drop). **Scope.** `dis-audit` writer + this register entry; no DDL edited.
+
+---
+
+### D44 Phase-1 audit-write idempotency: tolerate duplicates in Cloud SQL
+
+**Decision.** Phase-1 audit writes to Cloud SQL `audit.events` **tolerate duplicate rows**. The writer adds no dedup key and no `ON CONFLICT`; each emit is a new `uuidv7()`-keyed row.
+
+**Why.** The live `audit.events` has no UNIQUE key beyond `pk_audit_events (id, event_date)` on the synthetic `id` — no natural key on `(trace_id, stage)`. This matches the documented audit posture: `architecture.md` §2.3.3 and the BigQuery `audit_events` caveats (3, 4) state audit accepts retry/replay duplicates and dedups at query time. Pub/Sub redelivery and the `DUPLICATE_NOOP` reprocess path can re-emit the same `(trace_id, stage)`; that is accepted, not prevented.
+
+**Divergence registered.** `architecture.md:657` describes audit as "At-least-once; idempotent in BQ via `insertId`." Cloud SQL has no `insertId` analog, so Phase-1 has weaker (no transport-level) idempotency than the Phase-3 BigQuery target. Acceptable at beta scale; the read-time/query-time dedup stance is unchanged. **Evidence (introspected).** `pg_constraint` for `audit.events` shows one `p` constraint `pk_audit_events (id, event_date)` and no `u` constraint. **Scope.** `dis-audit` writer; no DDL edited.
+
+---
+
+### D45 Audit partition coverage is finite and has no DEFAULT partition — out-of-range writes are silently lost `OPEN`
+
+**Status.** `OPEN` (operational gap). Surfaced during Slice 6 by live introspection; registered, not closed (partition automation is a separate operational concern, not a Slice 6 deliverable).
+
+**The gap.** `audit.events` is `PARTITION BY RANGE (event_date)` with daily partitions **only `2026-06-01` … `2026-06-07`** and **no DEFAULT partition**. No partition-creation job exists yet (the DDL notes subsequent partitions are created by a Cloud Scheduler job or a daily-compute side task — `schemas/postgres/audit/events.sql:177-180`). A write whose `event_date` falls outside the covered range raises *"no partition of relation events found for row"*; under fire-and-forget (hard rule 11) that is then swallowed, so the audit row vanishes. With coverage ending `2026-06-07`, this produces **silent audit loss within days** of the current date (`2026-06-03`). This is grant-independent.
+
+**Not the grant.** `ALTER DEFAULT PRIVILEGES IN SCHEMA audit … TO ithina_dis_user` **is** in force (`pg_default_acl`: `audit | r | granted_by ithina_dis_admin | ithina_dis_user=arwd`, `a` = INSERT), matching `build-guide.md:89`, so admin-created future partitions auto-inherit INSERT. The risk is the **absence of the partitions themselves**, not a missing grant.
+
+**Mitigation in `dis-audit`.** The writer logs a swallowed write failure as an error explicitly flagged as worth alerting (a missing partition / missing grant / schema mismatch is "not absorbed as routine"). It does **not** create partitions. **Resolution owner.** A partition-management operational task (Cloud Scheduler / daily-compute side task) before audit traffic reaches an uncovered date. **Scope.** Docs + a writer log line; no DDL edited.
