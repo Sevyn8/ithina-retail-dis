@@ -53,8 +53,8 @@ const MAPPINGS: Record<string, Record<string, MappingVersionDetail[]>> = {
         active_from: null,
         active_to: null,
         mapping_rules: {
-          rename: { item_code: 'sku_id', qty: 'quantity', txn_date: 'event_ts', pos_terminal: 'store_id' },
-          normalize: { event_ts: 'iso8601' },
+          rename: { item_code: 'sku_id', qty: 'quantity', txn_date: 'source_sale_timestamp', pos_terminal: 'store_id' },
+          normalize: { source_sale_timestamp: 'iso8601' },
           cast: { quantity: 'integer', price: 'numeric' },
           derive: {},
         },
@@ -70,8 +70,8 @@ const MAPPINGS: Record<string, Record<string, MappingVersionDetail[]>> = {
         active_from: '2026-05-28',
         active_to: null,
         mapping_rules: {
-          rename: { item_code: 'sku_id', qty: 'quantity', txn_date: 'event_ts' },
-          normalize: { event_ts: 'iso8601' },
+          rename: { item_code: 'sku_id', qty: 'quantity', txn_date: 'source_sale_timestamp' },
+          normalize: { source_sale_timestamp: 'iso8601' },
           cast: { quantity: 'integer', price: 'numeric' },
           derive: {},
         },

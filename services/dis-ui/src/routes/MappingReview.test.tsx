@@ -42,8 +42,8 @@ describe('MappingReview', () => {
     const select = screen.getByLabelText('Canonical for pos_terminal')
     await user.selectOptions(select, 'store_id')
     expect((select as HTMLSelectElement).value).toBe('store_id')
-    await user.selectOptions(select, 'price')
-    expect((select as HTMLSelectElement).value).toBe('price')
+    await user.selectOptions(select, 'unit_sale_price')
+    expect((select as HTMLSelectElement).value).toBe('unit_sale_price')
   })
 
   it('renders dry-run preview rows', async () => {

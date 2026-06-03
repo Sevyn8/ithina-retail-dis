@@ -1,5 +1,8 @@
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
-import { getAuditTrace } from './audit'
+import { AUDIT_HEALTHY_TRACE_ID, getAuditTrace } from './audit'
+import { QUARANTINE_TRACE_IDS } from './quarantine'
+
+const UNKNOWN_TRACE_ID = '0190ac0e-1a01-7001-8a01-0000000000ff'
 
 const tenant: AuthSnapshot = {
   userId: 'u_acmeuser0001',
@@ -11,7 +14,7 @@ const otherTenant: AuthSnapshot = { ...tenant, tenantId: 't_other00001' }
 
 describe('audit fixtures (fixture mode)', () => {
   it('returns the healthy trace lifecycle with mapping_version_id on the mapped stage', async () => {
-    const trace = await getAuditTrace(tenant, 'tr_acme0010')
+    const trace = await getAuditTrace(tenant, AUDIT_HEALTHY_TRACE_ID)
     expect(trace).not.toBeNull()
     expect(trace?.stages.map((s) => s.stage)).toEqual(['received', 'validated', 'mapped', 'committed'])
     const mapped = trace?.stages.find((s) => s.stage === 'mapped')
@@ -19,17 +22,17 @@ describe('audit fixtures (fixture mode)', () => {
   })
 
   it('returns a quarantined terminal stage with an error_code', async () => {
-    const trace = await getAuditTrace(tenant, 'tr_acme0001')
+    const trace = await getAuditTrace(tenant, QUARANTINE_TRACE_IDS.acmeCanonical)
     const terminal = trace?.stages.at(-1)
     expect(terminal?.stage).toBe('quarantined')
     expect(terminal?.error_code).toBe('CANONICAL_SHAPE_INVALID')
   })
 
   it('returns null for an unknown trace_id', async () => {
-    expect(await getAuditTrace(tenant, 'tr_unknown')).toBeNull()
+    expect(await getAuditTrace(tenant, UNKNOWN_TRACE_ID)).toBeNull()
   })
 
   it('returns null for a trace owned by another tenant (own-tenant only)', async () => {
-    expect(await getAuditTrace(otherTenant, 'tr_acme0010')).toBeNull()
+    expect(await getAuditTrace(otherTenant, AUDIT_HEALTHY_TRACE_ID)).toBeNull()
   })
 })

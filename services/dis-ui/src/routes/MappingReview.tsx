@@ -5,6 +5,7 @@ import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import {
+  CANONICAL_COLUMNS,
   approveSample,
   dryRunSample,
   patchSampleMapping,
@@ -14,8 +15,6 @@ import type { ApproveResult, DryRunResult, SampleColumn } from '../lib/dis-ui-se
 
 // PROVISIONAL canonical-column vocabulary for the override dropdown. The demand
 // list does not define the canonical column set; this is a flagged placeholder.
-const CANONICAL_COLUMNS = ['sku_id', 'quantity', 'event_ts', 'store_id', 'price', 'sku_description']
-
 type Override = { proposed_canonical: string; authoritative: boolean }
 
 function confidenceLabel(confidence: number): { text: string; className: string } {

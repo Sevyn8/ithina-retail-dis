@@ -50,6 +50,29 @@ export type DryRunResult = { rows: Record<string, unknown>[] }
 // 2.5 POST .../approve.
 export type ApproveResult = { source_id: string; mapping_version: number; status: 'staged' }
 
+// Canonical column targets offered by the Mapping Review override dropdown. These
+// are REAL field names mirrored from the dis-canonical models (slice 03):
+// sale_events (sku_id, store_id, quantity, unit_sale_price, unit_retail_price,
+// source_sale_timestamp, transaction_id, currency, tax_treatment) and
+// store_sku_current_position (current_retail_price, product_name,
+// product_description). This is a curated Phase-1 subset, NOT the full canonical
+// vocabulary (50+ fields across four entities); the subset choice is provisional,
+// the names are authoritative.
+export const CANONICAL_COLUMNS = [
+  'sku_id',
+  'store_id',
+  'quantity',
+  'unit_sale_price',
+  'unit_retail_price',
+  'current_retail_price',
+  'source_sale_timestamp',
+  'transaction_id',
+  'product_name',
+  'product_description',
+  'currency',
+  'tax_treatment',
+] as const
+
 const KNOWN_SAMPLE_ID = 'smp_acme0001'
 
 // Grounded on the demand-list 2.2 example + surface-map screen-4 wireframe, so the
@@ -82,7 +105,7 @@ const SAMPLE_FIXTURES: Record<string, SampleAnalysis> = {
         inferred_type: 'string',
         sample_values: ['03-12-25'],
         null_pct: 0.01,
-        proposed_canonical: 'event_ts',
+        proposed_canonical: 'source_sale_timestamp',
         confidence: 0.62,
         transforms: [{ type: 'date_format', value: 'DD-MM-YY' }],
       },
@@ -102,9 +125,9 @@ const SAMPLE_FIXTURES: Record<string, SampleAnalysis> = {
 // PROVISIONAL canonical preview rows (no row schema in demand list 2.4).
 const DRY_RUN_FIXTURE: DryRunResult = {
   rows: [
-    { sku_id: 'A123', quantity: 12, event_ts: '2025-12-03', store_id: 'T-2A' },
-    { sku_id: 'B456', quantity: 3, event_ts: '2025-12-03', store_id: 'T-2A' },
-    { sku_id: 'C789', quantity: 1, event_ts: '2025-12-04', store_id: 'T-2A' },
+    { sku_id: 'A123', quantity: 12, source_sale_timestamp: '2025-12-03', store_id: 'T-2A' },
+    { sku_id: 'B456', quantity: 3, source_sale_timestamp: '2025-12-03', store_id: 'T-2A' },
+    { sku_id: 'C789', quantity: 1, source_sale_timestamp: '2025-12-04', store_id: 'T-2A' },
   ],
 }
 

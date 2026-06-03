@@ -2,6 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
 import { SERVER_MODE } from './mode'
+import { QUARANTINE_TRACE_IDS } from './quarantine'
+
+// trace_ids are UUIDv7 (dis-core trace_id.py). Synthetic UUIDv7-shaped fixture for
+// the healthy trace; the quarantined trace reuses QUARANTINE_TRACE_IDS.acmeCanonical
+// (imported) so the same id appears in both the Quarantine and Audit screens.
+export const AUDIT_HEALTHY_TRACE_ID = '0190ac0e-1a01-7001-8a01-000000000010'
 
 // Audit trace lookup (demand list 5.1), tenant slice. Fixture mode (default)
 // returns the inlined fixtures; real mode is OPEN (slice 13) and throws. Shapes
@@ -29,11 +35,11 @@ export type AuditTrace = {
 
 // Both traces belong to the primary tenant and the real seeded source
 // `manual_csv_upload` (kind-style composite key; no invented src_* id). The
-// quarantined trace reuses tr_acme0001 (the Checkpoint 3 Quarantine row) so the
-// two screens cross-reference.
+// quarantined trace reuses QUARANTINE_TRACE_IDS.acmeCanonical (the Quarantine row)
+// so the two screens cross-reference on the same UUIDv7.
 const AUDIT_FIXTURES: Record<string, AuditTrace> = {
-  tr_acme0010: {
-    trace_id: 'tr_acme0010',
+  [AUDIT_HEALTHY_TRACE_ID]: {
+    trace_id: AUDIT_HEALTHY_TRACE_ID,
     tenant_id: 't_acme9k2l1mn4',
     source_id: 'manual_csv_upload',
     stages: [
@@ -44,8 +50,8 @@ const AUDIT_FIXTURES: Record<string, AuditTrace> = {
     ],
     prior_trace_id: null,
   },
-  tr_acme0001: {
-    trace_id: 'tr_acme0001',
+  [QUARANTINE_TRACE_IDS.acmeCanonical]: {
+    trace_id: QUARANTINE_TRACE_IDS.acmeCanonical,
     tenant_id: 't_acme9k2l1mn4',
     source_id: 'manual_csv_upload',
     stages: [

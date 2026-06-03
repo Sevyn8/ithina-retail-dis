@@ -21,33 +21,33 @@ describe('QuarantineConsole (tenant slice)', () => {
 
   it('renders the fixture rows', async () => {
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })
-    expect(await screen.findByRole('button', { name: 'tr_acme0001' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'tr_acme0003' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.shopifySourceShape })).toBeInTheDocument()
     expect(screen.getAllByText('Manual CSV Upload').length).toBeGreaterThan(0)
   })
 
   it('narrows the list by source', async () => {
     const user = userEvent.setup()
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })
-    await screen.findByRole('button', { name: 'tr_acme0001' })
+    await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical })
     await user.selectOptions(screen.getByLabelText('Source filter'), 'Shopify POS')
-    expect(screen.getByRole('button', { name: 'tr_acme0003' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'tr_acme0001' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.shopifySourceShape })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical })).not.toBeInTheDocument()
   })
 
   it('narrows the list by status', async () => {
     const user = userEvent.setup()
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })
-    await screen.findByRole('button', { name: 'tr_acme0001' })
+    await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical })
     await user.selectOptions(screen.getByLabelText('Status filter'), 'resolved')
-    expect(screen.getByRole('button', { name: 'tr_acme0004' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'tr_acme0001' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.shopifyFk })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical })).not.toBeInTheDocument()
   })
 
   it('opens row detail with payload and mapping version', async () => {
     const user = userEvent.setup()
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })
-    await user.click(await screen.findByRole('button', { name: 'tr_acme0001' }))
+    await user.click(await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical }))
     expect(await screen.findByRole('heading', { name: 'Row detail' })).toBeInTheDocument()
     expect(screen.getByText(/A123/)).toBeInTheDocument() // original payload
     expect(screen.getByText(/· v1/)).toBeInTheDocument() // processing mapping version
