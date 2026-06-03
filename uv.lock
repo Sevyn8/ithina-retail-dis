@@ -10,6 +10,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "dis-audit",
     "dis-canonical",
     "dis-core",
     "dis-pii",
@@ -581,6 +582,27 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/89/50/767448e792d41bfb6094ee317a355c1cb221dca24b2e178e2203bbea2a77/deepdiff-8.6.2.tar.gz", hash = "sha256:186dcbd181e4d76cef11ab05f802d0056c5d6083c5a6748c1473e9d7481e183e", size = 634860, upload-time = "2026-03-18T17:16:33.785Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2b/5f/c52bd1255db763d0cdcb7084d2e90c42119cb229302c56bdf1d0aa78abd2/deepdiff-8.6.2-py3-none-any.whl", hash = "sha256:4d22034a866c3928303a9332c279362f714192d9305bac17c498720d095fd1b4", size = 91979, upload-time = "2026-03-18T17:16:32.171Z" },
+]
+
+[[package]]
+name = "dis-audit"
+version = "0.0.0"
+source = { editable = "libs/dis-audit" }
+dependencies = [
+    { name = "dis-core" },
+    { name = "dis-rls" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
 [[package]]
@@ -1441,6 +1463,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "dis-audit" },
     { name = "dis-canonical" },
     { name = "dis-core" },
     { name = "dis-pii" },
@@ -1491,6 +1514,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "dis-audit", editable = "libs/dis-audit" },
     { name = "dis-canonical", editable = "libs/dis-canonical" },
     { name = "dis-core", editable = "libs/dis-core" },
     { name = "dis-pii", editable = "libs/dis-pii" },

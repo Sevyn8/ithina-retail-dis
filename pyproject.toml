@@ -80,6 +80,7 @@ dev = [
   "dis-rls",
   "dis-pii",
   "dis-storage",
+  "dis-audit",
 ]
 
 [build-system]
@@ -133,6 +134,7 @@ members = [
   "libs/dis-rls",
   "libs/dis-pii",
   "libs/dis-storage",
+  "libs/dis-audit",
 ]
 
 [tool.uv.sources]
@@ -145,3 +147,4 @@ dis-canonical = { workspace = true }
 dis-rls = { workspace = true }
 dis-pii = { workspace = true }
 dis-storage = { workspace = true }
+dis-audit = { workspace = true }
