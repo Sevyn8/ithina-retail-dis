@@ -3,8 +3,10 @@ import { Navigate, Route, Routes } from 'react-router'
 import { AuthBoundary } from '../auth/AuthBoundary'
 import { AppLayout } from './AppLayout'
 import { DevLogin } from './DevLogin'
+import { MappingReview } from './MappingReview'
 import { NotFound } from './NotFound'
 import { Placeholder } from './Placeholder'
+import { SampleUpload } from './SampleUpload'
 import { SourcesIndex } from './SourcesIndex'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
@@ -23,11 +25,8 @@ export function AppRoutes() {
             path="/sources/:sourceId/mappings"
             element={<Placeholder title="Mapping Versions (Checkpoint 5)" />}
           />
-          <Route path="/upload" element={<Placeholder title="Sample Upload (Checkpoint 2)" />} />
-          <Route
-            path="/upload/:sampleId/review"
-            element={<Placeholder title="Mapping Review (Checkpoint 2)" />}
-          />
+          <Route path="/upload" element={<SampleUpload />} />
+          <Route path="/upload/:sampleId/review" element={<MappingReview />} />
           <Route path="/quarantine" element={<Placeholder title="Quarantine (Checkpoint 3)" />} />
           <Route path="/audit" element={<Placeholder title="Audit (Checkpoint 4)" />} />
           <Route path="*" element={<NotFound />} />

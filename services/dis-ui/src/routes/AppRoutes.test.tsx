@@ -21,9 +21,9 @@ describe('AppRoutes (Phase 1 skeleton)', () => {
     expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
   })
 
+  // /upload and /upload/:sampleId/review are now real screens (Checkpoint 2),
+  // covered by SampleUpload.test / MappingReview.test. Remaining placeholders:
   it.each([
-    ['/upload', /Sample Upload/i],
-    ['/upload/smp_1/review', /Mapping Review/i],
     ['/quarantine', /Quarantine/i],
     ['/audit', /Audit/i],
     ['/sources/manual_csv_upload/mappings', /Mapping Versions/i],
