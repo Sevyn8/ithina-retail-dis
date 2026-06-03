@@ -78,6 +78,7 @@ dev = [
   "dis-testing",
   "dis-canonical",
   "dis-rls",
+  "dis-pii",
 ]
 
 [build-system]
@@ -129,6 +130,7 @@ members = [
   "libs/dis-testing",
   "libs/dis-canonical",
   "libs/dis-rls",
+  "libs/dis-pii",
 ]
 
 [tool.uv.sources]
@@ -139,3 +141,4 @@ dis-core = { workspace = true }
 dis-testing = { workspace = true }
 dis-canonical = { workspace = true }
 dis-rls = { workspace = true }
+dis-pii = { workspace = true }

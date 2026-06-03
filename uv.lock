@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "dis-canonical",
     "dis-core",
+    "dis-pii",
     "dis-rls",
     "dis-testing",
     "ithina-dis",
@@ -614,6 +615,17 @@ requires-dist = [
     { name = "python-json-logger", specifier = ">=2.0,<4.0" },
     { name = "uuid-utils", specifier = ">=0.9" },
 ]
+
+[[package]]
+name = "dis-pii"
+version = "0.0.0"
+source = { editable = "libs/dis-pii" }
+dependencies = [
+    { name = "dis-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dis-core", editable = "libs/dis-core" }]
 
 [[package]]
 name = "dis-rls"
@@ -1415,6 +1427,7 @@ dependencies = [
 dev = [
     { name = "dis-canonical" },
     { name = "dis-core" },
+    { name = "dis-pii" },
     { name = "dis-rls" },
     { name = "dis-testing" },
     { name = "faker" },
@@ -1463,6 +1476,7 @@ requires-dist = [
 dev = [
     { name = "dis-canonical", editable = "libs/dis-canonical" },
     { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-pii", editable = "libs/dis-pii" },
     { name = "dis-rls", editable = "libs/dis-rls" },
     { name = "dis-testing", editable = "libs/dis-testing" },
     { name = "faker", specifier = ">=30" },
