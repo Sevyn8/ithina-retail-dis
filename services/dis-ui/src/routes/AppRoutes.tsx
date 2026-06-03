@@ -6,6 +6,7 @@ import { DevLogin } from './DevLogin'
 import { MappingReview } from './MappingReview'
 import { NotFound } from './NotFound'
 import { Placeholder } from './Placeholder'
+import { QuarantineConsole } from './QuarantineConsole'
 import { SampleUpload } from './SampleUpload'
 import { SourcesIndex } from './SourcesIndex'
 
@@ -27,7 +28,7 @@ export function AppRoutes() {
           />
           <Route path="/upload" element={<SampleUpload />} />
           <Route path="/upload/:sampleId/review" element={<MappingReview />} />
-          <Route path="/quarantine" element={<Placeholder title="Quarantine (Checkpoint 3)" />} />
+          <Route path="/quarantine" element={<QuarantineConsole />} />
           <Route path="/audit" element={<Placeholder title="Audit (Checkpoint 4)" />} />
           <Route path="*" element={<NotFound />} />
         </Route>
