@@ -33,8 +33,9 @@ describe('Notifications (tenant slice)', () => {
     renderAt(tenant)
     expect(await screen.findByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
     expect(await screen.findByText('2 rows quarantined')).toBeInTheDocument()
-    expect(screen.getByText('[warning]')).toBeInTheDocument()
-    expect(screen.getByText('[error]')).toBeInTheDocument()
+    // severity now renders as a semantic badge (word, not bracketed text) - selector-only
+    expect(screen.getByText('warning')).toBeInTheDocument()
+    expect(screen.getByText('error')).toBeInTheDocument()
     // the already-read seed row shows a "read" marker rather than a button
     expect(screen.getByText('Source connected')).toBeInTheDocument()
     expect(screen.getAllByText('read').length).toBe(1)

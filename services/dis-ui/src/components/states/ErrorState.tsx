@@ -1,6 +1,9 @@
-// Reusable error state (surface map 6.4). Named ErrorState (not Error) to avoid
-// shadowing the global. Surface Map is not in the repo, so the exact visual is
-// provisional.
+import { TriangleAlert } from 'lucide-react'
+
+import { Button } from '@/components/ui/button'
+
+// Reusable error state (craft spec): icon + message + optional retry action. Named
+// ErrorState (not Error) to avoid shadowing the global. role=alert so it is announced.
 export function ErrorState({
   message = 'Something went wrong.',
   onRetry,
@@ -9,12 +12,15 @@ export function ErrorState({
   onRetry?: () => void
 }) {
   return (
-    <div role="alert" className="p-4 text-sm">
-      <p className="text-red-700">{message}</p>
+    <div role="alert" className="flex flex-col items-center gap-2 p-10 text-center">
+      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-danger/10 text-danger">
+        <TriangleAlert aria-hidden="true" className="h-5 w-5" />
+      </span>
+      <p className="text-body-strong text-foreground">{message}</p>
       {onRetry !== undefined ? (
-        <button type="button" onClick={onRetry} className="mt-2 underline">
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
           Retry
-        </button>
+        </Button>
       ) : null}
     </div>
   )

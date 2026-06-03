@@ -2,16 +2,33 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
+import { StatusBadge } from '../components/StatusBadge'
+import type { StatusTone } from '../components/StatusBadge'
 import { useMappingVersion, useMappingVersions } from '../lib/dis-ui-server/mappings'
+import type { MappingStatus } from '../lib/dis-ui-server/mappings'
+import { cn } from '@/lib/utils'
 
-// Mapping Versions (surface map screen 6), TENANT slice, READ-ONLY listing. Version
-// list (demand list 3.1) with status badges + a per-version full immutable definition
-// (3.2). No edit / create / deprecate here (New version is disabled). A STAGED version
-// links to Shadow Rollout Review (slice 22), where promote/reject happen. No
-// Audit-by-mapping_version_id link (needs 5.2 search).
+function statusTone(status: MappingStatus): StatusTone {
+  if (status === 'active') {
+    return 'success'
+  }
+  if (status === 'staged') {
+    return 'warning'
+  }
+  return 'neutral'
+}
+
+// Mapping Versions (surface map screen 6), TENANT slice, READ-ONLY listing, on the
+// design-system craft bar. Version list (demand list 3.1) with status badges + a
+// per-version full immutable definition (3.2). No edit / create / deprecate here (New
+// version is a visibly-disabled affordance). A STAGED version links to Shadow Rollout
+// Review (slice 22). No Audit-by-mapping_version_id link (needs 5.2 search).
 export function MappingVersions() {
   const { sourceId } = useParams()
   const { snapshot } = useAuth()
@@ -33,85 +50,93 @@ export function MappingVersions() {
   }
 
   return (
-    <section>
-      <div className="mb-3 flex items-baseline justify-between">
-        <h1 className="text-xl font-semibold">Mappings: {sourceId}</h1>
+    <section className="flex flex-col gap-4">
+      <header className="flex items-baseline justify-between">
+        <div>
+          <h1 className="text-display">Mappings: {sourceId}</h1>
+          <p className="text-caption text-muted-foreground">Version history for this source.</p>
+        </div>
         {/* FM2: read-only. Creating a new version is a Phase 2 affordance. */}
-        <button type="button" disabled className="rounded border px-3 py-1 text-gray-400">
+        <Button type="button" variant="outline" size="sm" disabled>
           New version (Phase 2)
-        </button>
-      </div>
+        </Button>
+      </header>
 
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b">
-            <th className="py-1">Version</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>By</th>
-            <th>Fields</th>
-            <th>Transforms</th>
-            <th>Suite</th>
-            <th>Active window</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {list.data.map((row) => (
-            <tr key={row.version} className="border-b">
-              <td className="py-1">v{row.version}</td>
-              <td>
-                <span
-                  className={
-                    row.status === 'active'
-                      ? 'font-semibold text-green-700'
-                      : row.status === 'staged'
-                        ? 'text-yellow-700'
-                        : 'text-gray-500'
-                  }
-                >
-                  {row.status.toUpperCase()}
-                </span>
-              </td>
-              <td>{row.created_at}</td>
-              <td>{row.created_by}</td>
-              <td>{row.field_count}</td>
-              <td>{row.transform_count}</td>
-              <td>v{row.suite_version}</td>
-              <td>
-                {row.active_from === null
-                  ? '-'
-                  : `${row.active_from} to ${row.active_to ?? 'current'}`}
-              </td>
-              <td>
-                <button type="button" onClick={() => setSelected(row.version)} className="underline">
-                  View
-                </button>
-                {/* A staged version is reviewable in shadow rollout (slice 22). */}
-                {row.status === 'staged' ? (
-                  <Link to={`/sources/${sourceId}/shadow`} className="ml-3 underline">
-                    Review shadow rollout
-                  </Link>
-                ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Card>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Version</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>By</TableHead>
+                <TableHead>Fields</TableHead>
+                <TableHead>Transforms</TableHead>
+                <TableHead>Suite</TableHead>
+                <TableHead>Active window</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {list.data.map((row) => (
+                <TableRow key={row.version}>
+                  <TableCell className="font-medium text-foreground">v{row.version}</TableCell>
+                  <TableCell>
+                    <StatusBadge tone={statusTone(row.status)}>{row.status.toUpperCase()}</StatusBadge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{row.created_at}</TableCell>
+                  <TableCell className="text-muted-foreground">{row.created_by}</TableCell>
+                  <TableCell>{row.field_count}</TableCell>
+                  <TableCell>{row.transform_count}</TableCell>
+                  <TableCell>v{row.suite_version}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {row.active_from === null ? '-' : `${row.active_from} to ${row.active_to ?? 'current'}`}
+                  </TableCell>
+                  <TableCell>
+                    <span className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelected(row.version)}
+                        className="text-primary underline-offset-4 hover:underline"
+                      >
+                        View
+                      </button>
+                      {/* A staged version is reviewable in shadow rollout (slice 22). */}
+                      {row.status === 'staged' ? (
+                        <Link
+                          to={`/sources/${sourceId}/shadow`}
+                          className={cn(buttonVariants({ variant: 'outline', size: 'xs' }))}
+                        >
+                          Review shadow rollout
+                        </Link>
+                      ) : null}
+                    </span>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
       {selected !== null ? (
-        <div className="mt-4 rounded border p-3">
-          <h2 className="text-sm font-semibold">Definition (v{selected}, immutable)</h2>
-          {detail.isPending ? (
-            <LoadingState label="Loading definition..." />
-          ) : detail.isError || detail.data === null || detail.data === undefined ? (
-            <ErrorState message="Could not load the mapping definition." />
-          ) : (
-            <pre className="mt-1 overflow-x-auto rounded bg-gray-100 p-2 text-xs">
-              {JSON.stringify(detail.data.mapping_rules, null, 2)}
-            </pre>
-          )}
-        </div>
+        <Card>
+          <CardHeader>
+            <h2 className="text-subheading">Definition (v{selected}, immutable)</h2>
+          </CardHeader>
+          <CardContent>
+            {detail.isPending ? (
+              <LoadingState label="Loading definition..." />
+            ) : detail.isError || detail.data === null || detail.data === undefined ? (
+              <ErrorState message="Could not load the mapping definition." />
+            ) : (
+              <pre className="overflow-x-auto rounded-md border border-border bg-muted/50 p-2 text-xs">
+                {JSON.stringify(detail.data.mapping_rules, null, 2)}
+              </pre>
+            )}
+          </CardContent>
+        </Card>
       ) : null}
     </section>
   )

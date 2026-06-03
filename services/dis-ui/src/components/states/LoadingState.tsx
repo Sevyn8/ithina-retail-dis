@@ -1,9 +1,12 @@
-// Reusable loading state (surface map 6.4). Screens use this; they do not roll
-// their own. Surface Map is not in the repo, so the exact visual is provisional.
+import { Loader2 } from 'lucide-react'
+
+// Reusable loading state (craft spec): a spinner + label. role=status so it is
+// announced and queryable; screens use this rather than rolling their own.
 export function LoadingState({ label = 'Loading...' }: { label?: string }) {
   return (
-    <p role="status" className="p-4 text-sm text-gray-500">
+    <div role="status" className="flex items-center gap-2 p-6 text-caption text-muted-foreground">
+      <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
       {label}
-    </p>
+    </div>
   )
 }

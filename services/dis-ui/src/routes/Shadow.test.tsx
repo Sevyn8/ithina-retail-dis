@@ -31,8 +31,9 @@ describe('Shadow Rollout Review (tenant slice)', () => {
   it('renders stats and a diff sample', async () => {
     renderAt('/sources/manual_csv_upload/shadow')
     expect(await screen.findByRole('heading', { name: /Shadow review: manual_csv_upload/ })).toBeInTheDocument()
-    expect(screen.getByText(/Window: last 48h/)).toBeInTheDocument()
-    expect(screen.getByText(/Validation pass rate: 99.4%/)).toBeInTheDocument()
+    // stats now render as metric cards (label + value); same values - selector-only
+    expect(screen.getByText('last 48h')).toBeInTheDocument()
+    expect(screen.getByText(/99.4%/)).toBeInTheDocument()
     // a diff sample row on the canonical column
     expect(await screen.findByText('A123')).toBeInTheDocument()
     expect(screen.getAllByText('source_sale_timestamp').length).toBeGreaterThan(0)
@@ -50,7 +51,7 @@ describe('Shadow Rollout Review (tenant slice)', () => {
     cleanup()
     renderAt('/sources/manual_csv_upload/mappings')
     await screen.findByRole('heading', { name: /Mappings:/ })
-    expect(screen.getByText('ACTIVE')).toHaveClass('text-green-700')
+    expect(screen.getByText('ACTIVE')).toHaveClass('text-success') // semantic StatusBadge token
     // v2 is now deprecated and v3 active: exactly one active badge
     expect(screen.getAllByText('ACTIVE')).toHaveLength(1)
     expect(screen.getAllByText('DEPRECATED').length).toBe(2)

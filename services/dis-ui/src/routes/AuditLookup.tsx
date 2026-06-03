@@ -2,16 +2,23 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 
 import { useAuth } from '../auth/useAuth'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { CopyButton } from '../components/CopyButton'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
+import { StatusBadge } from '../components/StatusBadge'
 import { useAuditTrace } from '../lib/dis-ui-server/audit'
-import type { AuditStage } from '../lib/dis-ui-server/audit'
 
-// Audit and Trace Lookup (surface map screen 8), TENANT slice. trace_id direct
-// lookup only (demand list 5.1): enter a trace_id, render its ordered per-stage
-// lifecycle; a quarantined trace ends at a quarantined stage with an error_code.
-// FM2: no cross-tenant search (5.2), no filters, no result list. Own-tenant only.
+// Audit and Trace Lookup (surface map screen 8), TENANT slice, on the design-system
+// craft bar. trace_id direct lookup only (demand list 5.1): enter a trace_id, render
+// its ordered per-stage lifecycle (carded table, outcome as a semantic badge); a
+// quarantined trace ends at a quarantined stage with an error_code. FM2: no
+// cross-tenant search (5.2), no filters, no result list. Own-tenant only.
 export function AuditLookup() {
   const { snapshot } = useAuth()
   const [input, setInput] = useState('')
@@ -26,30 +33,33 @@ export function AuditLookup() {
   }
 
   return (
-    <section>
-      <h1 className="text-xl font-semibold">Audit and Trace Lookup</h1>
-      <form onSubmit={submit} className="mt-3 flex items-end gap-2">
-        <label className="text-sm">
-          Trace ID
-          <input
+    <section className="flex flex-col gap-4">
+      <header>
+        <h1 className="text-display">Audit and Trace Lookup</h1>
+        <p className="text-caption text-muted-foreground">Trace a row through its lifecycle.</p>
+      </header>
+
+      <form onSubmit={submit} className="flex items-end gap-2">
+        <div>
+          <Label htmlFor="trace-id">Trace ID</Label>
+          <Input
+            id="trace-id"
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            className="mt-1 block w-80 rounded border px-2 py-1"
+            className="mt-1 w-80 font-mono"
           />
-        </label>
-        <button type="submit" className="rounded border px-3 py-1">
-          Look up
-        </button>
+        </div>
+        <Button type="submit">Look up</Button>
       </form>
 
-      <div className="mt-4">{renderResult()}</div>
+      <div>{renderResult()}</div>
     </section>
   )
 
   function renderResult() {
     if (queried === null) {
-      return <p className="text-sm text-gray-500">Enter a trace id to look up its lifecycle.</p>
+      return <p className="text-caption text-muted-foreground">Enter a trace id to look up its lifecycle.</p>
     }
     if (trace.isPending) {
       return <LoadingState label="Looking up trace..." />
@@ -61,30 +71,42 @@ export function AuditLookup() {
       return <EmptyState title="Trace not found" message={`No trace ${queried} for this tenant.`} />
     }
     return (
-      <div className="text-sm">
-        <p className="text-gray-500">
-          {trace.data.trace_id} · {trace.data.source_id}
-        </p>
-        <ol className="mt-2 flex flex-col gap-1">
-          {trace.data.stages.map((stage) => (
-            <li key={stage.stage} className={stage.status === 'ok' ? '' : 'text-red-700'}>
-              {renderStage(stage)}
-            </li>
-          ))}
-        </ol>
-      </div>
+      <Card>
+        <CardContent>
+          <p className="flex items-center gap-1 font-mono text-caption text-muted-foreground">
+            {trace.data.trace_id} · {trace.data.source_id}
+            <CopyButton value={trace.data.trace_id} label="Copy trace id" />
+          </p>
+          <Table className="mt-2">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Outcome</TableHead>
+                <TableHead>Stage</TableHead>
+                <TableHead>At</TableHead>
+                <TableHead>Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {trace.data.stages.map((stage) => (
+                <TableRow key={stage.stage}>
+                  <TableCell>
+                    <StatusBadge tone={stage.status === 'ok' ? 'success' : 'danger'}>
+                      {stage.status === 'ok' ? 'OK' : 'FAIL'}
+                    </StatusBadge>
+                  </TableCell>
+                  <TableCell className="font-medium text-foreground">{stage.stage}</TableCell>
+                  <TableCell className="text-muted-foreground">{stage.at}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {stage.mapping_version_id !== undefined ? `v${stage.mapping_version_id}` : ''}
+                    {stage.mapping_version_id !== undefined && stage.error_code !== undefined ? ' · ' : ''}
+                    {stage.error_code !== undefined ? stage.error_code : ''}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     )
   }
-}
-
-function renderStage(stage: AuditStage): string {
-  const marker = stage.status === 'ok' ? 'OK' : 'FAIL'
-  const parts = [`[${marker}]`, stage.stage, stage.at]
-  if (stage.mapping_version_id !== undefined) {
-    parts.push(`v${stage.mapping_version_id}`)
-  }
-  if (stage.error_code !== undefined) {
-    parts.push(stage.error_code)
-  }
-  return parts.join('  ')
 }

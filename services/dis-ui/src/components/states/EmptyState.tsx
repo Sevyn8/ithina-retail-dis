@@ -1,8 +1,8 @@
+import { Inbox } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-// Reusable empty state (surface map 6.4). Also backs the placeholder screens and
-// the not-found route this checkpoint. Surface Map is not in the repo, so the
-// exact visual is provisional.
+// Reusable empty state (craft spec): icon + heading + guidance + optional action
+// (children). Used across screens and the not-found route.
 export function EmptyState({
   title,
   message,
@@ -13,9 +13,12 @@ export function EmptyState({
   children?: ReactNode
 }) {
   return (
-    <section className="p-6 text-center">
-      <h1 className="text-lg font-semibold">{title}</h1>
-      {message !== undefined ? <p className="mt-2 text-sm text-gray-500">{message}</p> : null}
+    <section className="flex flex-col items-center gap-2 p-10 text-center">
+      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <Inbox aria-hidden="true" className="h-5 w-5" />
+      </span>
+      <h2 className="text-subheading">{title}</h2>
+      {message !== undefined ? <p className="text-caption text-muted-foreground">{message}</p> : null}
       {children}
     </section>
   )

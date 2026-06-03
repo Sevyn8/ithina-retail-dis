@@ -78,7 +78,8 @@ describe('QuarantineConsole (tenant slice)', () => {
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })
     await user.click(await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical }))
     await user.click(await screen.findByRole('button', { name: 'Resubmit' }))
-    expect(screen.getByText('Resubmit this row?')).toBeInTheDocument()
+    // the confirm now mounts in a Dialog portal - await its content (timing only)
+    expect(await screen.findByText('Resubmit this row?')).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /replay/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /fixed_file/i })).toBeInTheDocument()
   })
@@ -96,7 +97,7 @@ describe('QuarantineConsole (tenant slice)', () => {
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })
     await user.click(await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical }))
     await user.click(await screen.findByRole('button', { name: 'Resubmit' }))
-    await user.click(screen.getByRole('radio', { name: /fixed_file/i }))
+    await user.click(await screen.findByRole('radio', { name: /fixed_file/i }))
     await user.click(screen.getByRole('button', { name: 'Confirm resubmit' }))
     expect(mutate.mock.calls[0][0]).toEqual({
       resubmit_type: 'fixed_file',
@@ -109,7 +110,7 @@ describe('QuarantineConsole (tenant slice)', () => {
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })
     await user.click(await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical }))
     await user.click(await screen.findByRole('button', { name: 'Resubmit' }))
-    await user.click(screen.getByRole('button', { name: 'Confirm resubmit' }))
+    await user.click(await screen.findByRole('button', { name: 'Confirm resubmit' }))
     // detail refetched via shared-prefix invalidation: chain depth advanced to 1
     expect(await screen.findByText('Chain depth: 1')).toBeInTheDocument()
   })

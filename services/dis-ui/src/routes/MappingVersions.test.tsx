@@ -32,8 +32,10 @@ describe('MappingVersions (read-only)', () => {
   it('distinguishes the active version from the deprecated one', async () => {
     renderAt('manual_csv_upload')
     await screen.findByRole('heading', { name: /Mappings:/ })
-    expect(screen.getByText('ACTIVE')).toHaveClass('text-green-700')
-    expect(screen.getByText('DEPRECATED')).toHaveClass('text-gray-500')
+    // status now renders as a semantic StatusBadge (token classes; same green/neutral
+    // intent) - selector-only update
+    expect(screen.getByText('ACTIVE')).toHaveClass('text-success')
+    expect(screen.getByText('DEPRECATED')).toHaveClass('text-muted-foreground')
   })
 
   it('opens the full immutable definition when a version is viewed', async () => {

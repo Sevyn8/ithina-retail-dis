@@ -1,6 +1,9 @@
 import { useParams } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
@@ -11,11 +14,12 @@ import {
   useShadowStats,
 } from '../lib/dis-ui-server/shadow'
 
-// Shadow Rollout Review (surface map screen 5), TENANT slice. Onboarding step 3:
-// review a STAGED mapping version's shadow output (demand list 2.6 stats, 2.7 diff)
-// and Promote (2.8) or Reject (2.9). Reached only from a source that has a staged
-// version (FM4); a source with no staged version renders the empty state. Tenant
-// scoped, no ops surface (FM3). "Extend window" is omitted (no endpoint in 2.6-2.9).
+// Shadow Rollout Review (surface map screen 5), TENANT slice, on the design-system
+// craft bar. Onboarding step 3: review a STAGED mapping version's shadow output
+// (demand list 2.6 stats as metric cards, 2.7 diff as a carded table) and Promote
+// (2.8) or Reject (2.9). Reached only from a source that has a staged version (FM4); a
+// source with no staged version renders the empty state. Tenant scoped, no ops surface
+// (FM3). "Extend window" is omitted (no endpoint in 2.6-2.9). Behavior is unchanged.
 export function Shadow() {
   const { sourceId } = useParams()
   const { snapshot } = useAuth()
@@ -44,83 +48,82 @@ export function Shadow() {
 
   const s = stats.data
   const busy = promote.isPending || reject.isPending
+  const metrics: { label: string; value: string; sub?: string }[] = [
+    { label: 'Window', value: s.window, sub: `${s.input_chunks} input chunks` },
+    { label: 'Staged output', value: `${s.staged_rows} rows` },
+    {
+      label: 'Validation pass rate',
+      value: `${(s.validation_pass_rate * 100).toFixed(1)}%`,
+      sub: `${s.validation_fail_count} fails`,
+    },
+    s.active_version !== null
+      ? { label: `Diff vs active v${s.active_version}`, value: `${s.diff_differing} differ`, sub: `${s.diff_identical} identical · ${s.diff_column}` }
+      : { label: 'Diff', value: 'First onboarding', sub: 'no prior active version' },
+  ]
 
   return (
-    <section>
-      <h1 className="text-xl font-semibold">
-        Shadow review: {sourceId} (v{s.staged_version} staged
-        {s.active_version !== null ? ` vs v${s.active_version} active` : ''})
-      </h1>
+    <section className="flex flex-col gap-4">
+      <header>
+        <h1 className="text-display">
+          Shadow review: {sourceId} (v{s.staged_version} staged
+          {s.active_version !== null ? ` vs v${s.active_version} active` : ''})
+        </h1>
+        <p className="text-caption text-muted-foreground">Step 3 of 3: review shadow output, then promote or iterate.</p>
+      </header>
 
-      <div className="mt-3 rounded border p-3 text-sm">
-        <h2 className="font-semibold">Shadow stats</h2>
-        <p>
-          Window: {s.window} · {s.input_chunks} input chunks
-        </p>
-        <p>Staged output: {s.staged_rows} rows</p>
-        <p>
-          Validation pass rate: {(s.validation_pass_rate * 100).toFixed(1)}% ({s.validation_fail_count}{' '}
-          fails)
-        </p>
-        {s.active_version !== null ? (
-          <p>
-            Diff vs active v{s.active_version}: {s.diff_identical} identical, {s.diff_differing} differ in{' '}
-            {s.diff_column}
-          </p>
-        ) : (
-          <p>No prior active version (first onboarding); diff not shown.</p>
-        )}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {metrics.map((m) => (
+          <Card key={m.label}>
+            <CardContent>
+              <div className="text-label text-muted-foreground">{m.label}</div>
+              <div className="text-heading">{m.value}</div>
+              {m.sub !== undefined ? <div className="text-caption text-muted-foreground">{m.sub}</div> : null}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div className="mt-3 rounded border p-3 text-sm">
-        <h2 className="font-semibold">Diff samples (staged vs active)</h2>
-        {diff.isPending ? (
-          <LoadingState label="Loading diff..." />
-        ) : diff.isError ? (
-          <ErrorState message="Could not load the diff sample." onRetry={() => void diff.refetch()} />
-        ) : diff.data.length === 0 ? (
-          <p className="text-gray-500">No diff sample (no prior active version).</p>
-        ) : (
-          <table className="mt-1 w-full text-left">
-            <thead>
-              <tr className="border-b">
-                <th className="py-1">SKU</th>
-                <th>Column</th>
-                <th>Active</th>
-                <th>Staged</th>
-              </tr>
-            </thead>
-            <tbody>
-              {diff.data.map((row) => (
-                <tr key={row.sku_id} className="border-b">
-                  <td className="py-1">{row.sku_id}</td>
-                  <td>{row.column}</td>
-                  <td>{row.active_value}</td>
-                  <td>{row.staged_value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <Card>
+        <CardContent>
+          <h2 className="text-subheading mb-2">Diff samples (staged vs active)</h2>
+          {diff.isPending ? (
+            <LoadingState label="Loading diff..." />
+          ) : diff.isError ? (
+            <ErrorState message="Could not load the diff sample." onRetry={() => void diff.refetch()} />
+          ) : diff.data.length === 0 ? (
+            <p className="text-caption text-muted-foreground">No diff sample (no prior active version).</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>SKU</TableHead>
+                  <TableHead>Column</TableHead>
+                  <TableHead>Active</TableHead>
+                  <TableHead>Staged</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {diff.data.map((row) => (
+                  <TableRow key={row.sku_id}>
+                    <TableCell className="font-medium text-foreground">{row.sku_id}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.column}</TableCell>
+                    <TableCell className="text-muted-foreground">{row.active_value}</TableCell>
+                    <TableCell>{row.staged_value}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-      <div className="mt-3 flex gap-3">
-        <button
-          type="button"
-          onClick={() => promote.mutate()}
-          disabled={busy}
-          className="rounded border px-3 py-1"
-        >
+      <div className="flex gap-3">
+        <Button type="button" onClick={() => promote.mutate()} disabled={busy}>
           Promote to active
-        </button>
-        <button
-          type="button"
-          onClick={() => reject.mutate()}
-          disabled={busy}
-          className="rounded border px-3 py-1"
-        >
+        </Button>
+        <Button type="button" variant="outline" onClick={() => reject.mutate()} disabled={busy}>
           Reject, iterate
-        </button>
+        </Button>
       </div>
     </section>
   )
