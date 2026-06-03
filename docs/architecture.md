@@ -163,7 +163,7 @@ Personal identifiers (phone, email, loyalty_id, PAN, Aadhaar, and other fields p
                                     │   │ Cloud SQL Postgres           │    │
                                     │   │ identity_mirror schema:      │    │
                                     │   │  - tenants             │    │
-                                    │   │  - stores (is_active)  │    │
+                                    │   │  - stores (status)     │    │
                                     │   │ (canonical FK ─────────────► │    │
                                     │   │  reference these mirrors)    │    │
                                     │   └──────────────┬───────────────┘    │
@@ -327,7 +327,7 @@ All resolve methods return `{tenant_id, store_id, + metadata}` from the cache wh
 
 ### 4.3 Mirror Sync Consumer
 **What it is.** A containerized service that maintains the `identity_mirror` schema. Ships with two modes: a Pub/Sub subscriber on `identity.changed` (the architectural target), and a DB-pull mode that reads tenant/store records directly from Customer Master's Postgres database.
-**Role.** Maintains a small mirror of identity data (`tenants`, `stores`) inside the data-platform Postgres. Acts as the local source of truth for FK references from canonical tables. Treats deletes as soft (sets `is_active = false`), so canonical rows do not get cascade-killed by a Customer Master cleanup.
+**Role.** Maintains a small mirror of identity data (`tenants`, `stores`) inside the data-platform Postgres. Acts as the local source of truth for FK references from canonical tables. Replicates Customer Master's `status` verbatim (upsert-only; never deletes — there is no `is_active` column), so canonical rows do not get cascade-killed by a Customer Master cleanup.
 **Why it exists.** Postgres FK cannot reach across instances. The mirror reconstitutes equivalent integrity inside the data-platform DB.
 **Two modes (see `decisions.md` D35).** DB-pull is the v1.0 launch mode and ships first, because Customer Master does not yet emit `identity.changed`. Pub/Sub consumer mode activates once Customer Master emits the events. Both modes share the same upsert path, so canonical FK behaviour is identical. DB-pull persists past launch as a reconciliation mechanism even after Pub/Sub is live.
 

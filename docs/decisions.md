@@ -329,7 +329,7 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 
 ### D37 External identity IDs (`t_*`/`s_*`) vs internal UUID keys — translation location undefined `OPEN`
 
-**Status.** `OPEN`. This entry records an open decision; it does **not** resolve it. Raised during Slice 2 (see the Slice 2 plan §2 / R1). **Hard deadline: before Slice 7 (Mirror Sync) begins.**
+**Status.** `OPEN`. This entry records an open decision; it does **not** resolve it. Raised during Slice 2 (see the Slice 2 plan §2 / R1). **Deadline re-pointed (Slice 7):** the original "before Slice 7" deadline assumed Slice 7 needed the external↔internal translation. It does not — Mirror Sync (DB-pull) replicates Customer Master's own UUID-keyed columns and needs no external-id resolution for FK integrity (the mirror's keys are the UUIDs; CM's external ids, `display_code`/`store_code`, are not replicated and not required). **New hard deadline: the first receiver or consumer that must resolve identity from an external identifier.** D37 stays OPEN; it is not Slice 7's to settle.
 
 **The gap.** The frozen identity-service OpenAPI and the `identity.changed` Pub/Sub schema expose tenants and stores as external string identifiers — `^t_[a-z0-9]{12}$` / `^s_[a-z0-9]{12}$`. The DIS schema (Slice 1) keys `identity_mirror.tenants`, `identity_mirror.stores`, and all `canonical.*` / `config.source_mappings.tenant_id` by 128-bit `UUID` (UUIDv7, "mirrors `platform_db.core.*.id`"). A 12-char base36 string (~62 bits) cannot encode a 128-bit UUID, so these are two distinct identifier spaces. No column, encoding, or layer maps one to the other anywhere in the schema, the contracts, or this register (D1–D36).
 
@@ -403,9 +403,9 @@ These are not consistent on whether tokenization is one-way (HMAC, no recovery) 
 
 ---
 
-### D41 `identity_mirror` RLS posture: build-guide vs applied schema `OPEN`
+### D41 `identity_mirror` RLS posture: build-guide vs applied schema `RESOLVED`
 
-**Status.** `OPEN`. Records a doc-vs-schema contradiction surfaced during Slice 4 (`dis-rls`) by live introspection of `ithina_dis_db`; it does **not** resolve it. **Hard deadline: before Slice 7 (Mirror Sync) begins.**
+**Status.** `RESOLVED` (Slice 7, by fresh live introspection of `ithina_dis_db`). Originally surfaced during Slice 4 (`dis-rls`). **Resolution: RLS-off on `identity_mirror` is correct.** The mirror holds identity that every tenant's canonical rows FK against and that ops/streaming read across tenants; RLS there would add no isolation that matters and would complicate the cross-tenant Mirror Sync write. So the Mirror Sync upsert is a plain write as the DIS service role — no per-row tenant scoping, no distinct role (it still flows through `dis-rls` `rls_session` solely to inherit the `current_database()` target guard; the per-row `app.tenant_id` is a harmless no-op under RLS-off). The stale side is `build-guide.md:108` ("`identity_mirror` is RLS-protected", with its per-row-vs-distinct-role plan-mode question); correcting that text is an operator call at the commit gate (register-only here).
 
 **The gap.** `build-guide.md:108` (Slice 7) states "`identity_mirror` is RLS-protected" and asks plan-mode to choose between setting `app.tenant_id` per-row on upsert vs running Mirror Sync under a distinct role. But live introspection shows `identity_mirror.tenants` and `identity_mirror.stores` have **`relrowsecurity = false` and no policy** — consistent with the Slice 1/2 findings and the seeder's own comment that it writes to RLS-not-enabled schemas. So either the schema must gain RLS (a migration) or the build-guide text must drop the "RLS-protected" claim.
 
@@ -468,3 +468,29 @@ These are not consistent on whether tokenization is one-way (HMAC, no recovery) 
 **Not the grant.** `ALTER DEFAULT PRIVILEGES IN SCHEMA audit … TO ithina_dis_user` **is** in force (`pg_default_acl`: `audit | r | granted_by ithina_dis_admin | ithina_dis_user=arwd`, `a` = INSERT), matching `build-guide.md:89`, so admin-created future partitions auto-inherit INSERT. The risk is the **absence of the partitions themselves**, not a missing grant.
 
 **Mitigation in `dis-audit`.** The writer logs a swallowed write failure as an error explicitly flagged as worth alerting (a missing partition / missing grant / schema mismatch is "not absorbed as routine"). It does **not** create partitions. **Resolution owner.** A partition-management operational task (Cloud Scheduler / daily-compute side task) before audit traffic reaches an uncovered date. **Scope.** Docs + a writer log line; no DDL edited.
+
+---
+
+### D46 `identity_mirror` soft-delete is via `status`, not an `is_active` column `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 7). A doc-vs-schema gap: `services/mirror-sync-consumer/CLAUDE.md`, its `README.md`, and `architecture.md` §4.3 describe Mirror Sync soft-deleting via an `is_active` column. **No such column exists** on either mirror table.
+
+**Evidence (introspected, `ithina_dis_db`).** `identity_mirror.tenants` columns: `tenant_id, name, status, pc_created_at, pc_updated_at, pc_suspended_at, pc_terminated_at, mirror_synced_at`. `identity_mirror.stores` columns: `store_id, tenant_id, name, status, country, timezone, currency, tax_treatment, pc_created_at, pc_updated_at, pc_closed_at, mirror_synced_at`. A query for an `is_active` column in schema `identity_mirror` returns no rows. Lifecycle lives in `status` (tenants: `…/SUSPENDED/TERMINATED`; stores: `…/INACTIVE/CLOSED`) with the per-lifecycle `pc_*` timestamps alongside.
+
+**Resolution.** Lifecycle is Customer Master's `status` replicated verbatim; the sync is **upsert-only — never delete, never soft-delete**, which is what Slice 7 implements. The service `CLAUDE.md` is corrected here; correcting the `README.md` / `architecture.md` `is_active` language is an operator call at the commit gate. **Scope.** Docs only; no DDL. Relates to D12, D39, D41.
+
+---
+
+### D47 DIS keeps every mirrored row; Customer-Master-side deletion handling is deferred `OPEN`
+
+**Status.** `OPEN` (deferred, registered by Slice 7). Mirror Sync (DB-pull) is upsert-only and **does not delete or mark-absent** a mirror row when its Customer Master source is hard-deleted or removed. Deleting a mirror row would orphan or cascade against the canonical / audit / config rows that FK to it (D12, D39; the mirror store FK is `ON DELETE RESTRICT`).
+
+**The gap & symmetry.** A CM row removed at source leaves a stale mirror row. Resolving this needs both a CM-side delete/deactivation path **and** a data-governance policy for the referential cleanup. Note the symmetry: the same orphan-vs-cascade risk lands inside Customer Master itself (its own children reference the row), so a policy that solves it on one side without the other reintroduces the risk. **Trigger:** Customer Master implements a delete/deactivation path AND a governance policy defines the cleanup. **Scope.** Docs only.
+
+---
+
+### D48 A Customer-Master-shaped test Postgres harness exists and is reusable `SETTLED`
+
+**Status.** `SETTLED` (Slice 7). DB-pull reads Customer Master's *Postgres*, but the Slice 2 Customer Master fake is **HTTP-only** (JWTs / sessions / events) and the real CM (port 5432) is off-limits to tests. Slice 7 therefore built a faithful stand-in: `dis_testing.customer_master_db` provisions an in-cluster `ithina_platform_db` database on 5433 with `core.tenants` / `core.stores`, **FORCE ROW LEVEL SECURITY** + the platform-access policy, seeded from `dis_testing.fixtures`, with `SELECT` granted to the NOBYPASSRLS service role (so the no-context-→-zero-rows behavior is exercised for real). The reader asserts `current_database()` is the CM database; the writer is `ithina_dis_db` — both on 5433, the real CM never touched.
+
+**Reuse, not rebuild.** A later CM-reading slice (e.g. the Pub/Sub consumer mode, or any service that reads CM) **reuses this harness** rather than rebuilding it. **Correction registered:** the Slice 7 doc's "Slice 2 Customer Master fake" dependency and criterion 8 wording were inaccurate for a DB-pull read (the fake cannot serve a DB read); the slice doc has been edited to name the test-CM Postgres harness so the doc and the build agree. **Scope.** Test infrastructure + docs; no production DDL.

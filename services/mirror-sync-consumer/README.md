@@ -19,7 +19,7 @@ DB-pull persists past launch as a reconciliation mechanism even after Pub/Sub go
 - Receive event; ack-extend if processing time approaches deadline.
 - Dispatch by `entity` type to the corresponding sync function (`sync/tenants.py` or `sync/stores.py`).
 - For `created` and `updated`: upsert into `identity_mirror.tenants` or `stores` with `source_ts` as conflict-resolution key (older events don't overwrite newer).
-- For `deactivated`: soft-delete via `is_active = false` (do not hard-delete; canonical rows may still reference).
+- For `deactivated`: replicate Customer Master's `status` (no `is_active` column exists); never hard-delete (canonical rows may still reference).
 - Emit audit event with `trace_id` derived from event metadata.
 - Ack message on successful commit.
 
@@ -38,8 +38,8 @@ DB-pull persists past launch as a reconciliation mechanism even after Pub/Sub go
 - Open a read-only session against Customer Master's Postgres.
 - Read `tenants` and `stores` tables in full (or by `updated_at` watermark on subsequent runs).
 - For each row: upsert into `identity_mirror.tenants` or `stores` using the same sync functions Pub/Sub mode uses (`sync/tenants.py`, `sync/stores.py`).
-- Apply soft-delete semantics for any row whose Customer Master state is inactive.
-- Emit audit events at run start and run completion (one per entity type); emit per-row events only on failure to keep audit volume bounded.
+- Replicate Customer Master's `status` verbatim (upsert-only; never delete, never soft-delete — there is no `is_active` column).
+- Log run start and run completion with per-tenant counts (structured logs). Audit is log-only this slice — no `audit.events` rows and no `dis-audit` dependency.
 
 **Exit — DB-pull mode.**
 - Success: identity_mirror reflects the current state of Customer Master tenants/stores; run summary logged with counts.
@@ -76,7 +76,7 @@ services/mirror-sync-consumer/
 │       ├── sync/               # shared upsert logic for both modes
 │       │   ├── __init__.py
 │       │   ├── tenants.py      # upsert tenants
-│       │   └── stores.py       # upsert stores (soft-delete via is_active)
+│       │   └── stores.py       # upsert stores (lifecycle via status)
 │       │
 │       └── sinks/
 │           ├── __init__.py
@@ -109,7 +109,7 @@ services/mirror-sync-consumer/
 
 **Why two modes.** Customer Master does not yet emit `identity.changed`. The Pub/Sub design is the architectural target (see `architecture.md` §4.3 and `decisions.md` D11). DB-pull mode lets DIS development proceed without blocking on Customer Master's emit work. Both modes call the same `sync/` upsert path so behavior is identical from `identity_mirror`'s perspective. DB-pull persists as reconciliation even after Pub/Sub goes live.
 
-**Why `sync/` is split by entity (tenants, stores).** Different tables, different schema, different soft-delete semantics. Splitting makes each clear and testable.
+**Why `sync/` is split by entity (tenants, stores).** Different tables, different schema, different columns and lifecycle. Splitting makes each clear and testable.
 
 **Why `pull/` has a `reader.py` reading Customer Master Postgres directly.** DB-pull mode is the only place in DIS that reads Customer Master's DB schema. This coupling is intentional and bounded to one file (`reader.py`). When Pub/Sub mode activates, the reader can stay (reconciliation use case) or be deprecated; either way, the impact is contained.
 
