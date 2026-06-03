@@ -14,7 +14,8 @@ const tenant: AuthSnapshot = {
 describe('AppLayout shell', () => {
   it('renders the top bar (brand, theme toggle, logout) and the sidebar', async () => {
     renderWithProviders(<AppLayout />, { snapshot: tenant })
-    expect(await screen.findByText('DIS UI')).toBeInTheDocument()
+    // Brand is now a mark + "DIS" wordmark (selector-only update for slice 23 chrome).
+    expect(await screen.findByText('DIS')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Toggle theme' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /log out/i })).toBeInTheDocument()
     expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()

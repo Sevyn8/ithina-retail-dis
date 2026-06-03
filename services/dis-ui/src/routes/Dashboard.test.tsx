@@ -26,9 +26,10 @@ describe('Dashboard', () => {
     expect(screen.getByText('Shopify POS')).toBeInTheDocument()
     expect(screen.getByText('warning')).toBeInTheDocument()
     expect(screen.getByText(/1,?247/)).toBeInTheDocument() // rows_24h (locale-tolerant)
-    // latency
-    expect(screen.getByText(/p50: 2100 ms/)).toBeInTheDocument()
-    expect(screen.getByText(/p99: 11200 ms/)).toBeInTheDocument()
+    // latency now renders as metric stat cards (selector-only update for slice 23
+    // craft bar; the values are unchanged)
+    expect(screen.getByText('2100 ms')).toBeInTheDocument()
+    expect(screen.getByText('11200 ms')).toBeInTheDocument()
   })
 
   it('shows the empty state for a tenant with no data', async () => {

@@ -1,24 +1,28 @@
 import { useAuth } from '../auth/useAuth'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
+import { StatusBadge } from '../components/StatusBadge'
+import type { StatusTone } from '../components/StatusBadge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useDashboardSummary } from '../lib/dis-ui-server/dashboard'
 import type { SourceHealth } from '../lib/dis-ui-server/dashboard'
 
-function healthClass(health: SourceHealth): string {
+function healthTone(health: SourceHealth): StatusTone {
   if (health === 'healthy') {
-    return 'text-green-700'
+    return 'success'
   }
   if (health === 'warning') {
-    return 'text-yellow-700'
+    return 'warning'
   }
-  return 'text-red-700'
+  return 'danger'
 }
 
-// Tenant Dashboard (surface map screen 1), at `/`. Reads dashboard/summary
-// (demand list 1.2) and renders the per-source health rollup + the latency
-// snapshot. Tenant-scoped; read-only. No notifications widget (Checkpoint 2), no
-// action buttons, no ops widgets (FM1).
+// Tenant Dashboard (surface map screen 1), at `/`, on the design-system craft bar.
+// Reads dashboard/summary (demand list 1.2) and renders the per-source health rollup
+// (carded table, health as semantic badge) + the latency snapshot (metric stat cards).
+// Tenant-scoped; read-only. No notifications widget or action buttons (FM4: same data).
 export function Dashboard() {
   const { snapshot } = useAuth()
   const summary = useDashboardSummary(snapshot)
@@ -34,39 +38,64 @@ export function Dashboard() {
   }
 
   const { sources, latency_1h } = summary.data
+  const latency: { label: string; value: number }[] = [
+    { label: 'p50', value: latency_1h.p50_ms },
+    { label: 'p95', value: latency_1h.p95_ms },
+    { label: 'p99', value: latency_1h.p99_ms },
+  ]
 
   return (
-    <section>
-      <h1 className="text-xl font-semibold">Dashboard</h1>
+    <section className="flex flex-col gap-6">
+      <header>
+        <h1 className="text-display">Dashboard</h1>
+        <p className="text-caption text-muted-foreground">Is your data flowing right now?</p>
+      </header>
 
-      <h2 className="mt-4 text-sm font-semibold">Health by source</h2>
-      <table className="mt-1 w-full text-left text-sm">
-        <thead>
-          <tr className="border-b">
-            <th className="py-1">Source</th>
-            <th>Health</th>
-            <th>Rows (24h)</th>
-            <th>Quarantined open</th>
-            <th>Last ok</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sources.map((source) => (
-            <tr key={source.source_id} className="border-b">
-              <td className="py-1">{source.name}</td>
-              <td className={healthClass(source.health)}>{source.health}</td>
-              <td>{source.rows_24h.toLocaleString()}</td>
-              <td>{source.quarantined_open}</td>
-              <td>{source.last_ok_at}</td>
-            </tr>
+      <Card>
+        <CardHeader>
+          <CardTitle>Health by source</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Source</TableHead>
+                <TableHead>Health</TableHead>
+                <TableHead>Rows (24h)</TableHead>
+                <TableHead>Quarantined open</TableHead>
+                <TableHead>Last ok</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sources.map((source) => (
+                <TableRow key={source.source_id}>
+                  <TableCell className="font-medium text-foreground">{source.name}</TableCell>
+                  <TableCell>
+                    <StatusBadge tone={healthTone(source.health)}>{source.health}</StatusBadge>
+                  </TableCell>
+                  <TableCell>{source.rows_24h.toLocaleString()}</TableCell>
+                  <TableCell>{source.quarantined_open}</TableCell>
+                  <TableCell className="text-muted-foreground">{source.last_ok_at}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <section>
+        <h2 className="text-label mb-2 text-muted-foreground">Latency last 1h</h2>
+        <div className="grid grid-cols-3 gap-3">
+          {latency.map((metric) => (
+            <Card key={metric.label}>
+              <CardContent>
+                <div className="text-label text-muted-foreground">{metric.label}</div>
+                <div className="text-heading">{metric.value} ms</div>
+              </CardContent>
+            </Card>
           ))}
-        </tbody>
-      </table>
-
-      <h2 className="mt-4 text-sm font-semibold">Latency last 1h</h2>
-      <p className="text-sm">
-        p50: {latency_1h.p50_ms} ms · p95: {latency_1h.p95_ms} ms · p99: {latency_1h.p99_ms} ms
-      </p>
+        </div>
+      </section>
     </section>
   )
 }
