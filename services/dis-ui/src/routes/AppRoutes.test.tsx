@@ -15,22 +15,14 @@ function renderAt(path: string) {
   return renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: [path] })
 }
 
-describe('AppRoutes (Phase 1 skeleton)', () => {
+describe('AppRoutes (Phase 1)', () => {
   it('redirects the index to /sources', async () => {
     renderAt('/')
     expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
   })
 
-  // /upload and /upload/:sampleId/review are now real screens (Checkpoint 2),
-  // covered by SampleUpload.test / MappingReview.test. Remaining placeholders:
-  // /quarantine (Checkpoint 3) and /audit (Checkpoint 4) are real screens now.
-  // Remaining placeholder: Mapping Versions (Checkpoint 5).
-  it.each([['/sources/manual_csv_upload/mappings', /Mapping Versions/i]])(
-    'resolves placeholder route %s',
-    async (path, heading) => {
-    renderAt(path)
-    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
-  })
+  // All five Phase-1 screens are now real (Checkpoints 2-5) and are covered by
+  // their own screen tests; no placeholder routes remain.
 
   it('renders the not-found state for an unknown route', async () => {
     renderAt('/no-such-page')

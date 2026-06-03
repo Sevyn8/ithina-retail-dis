@@ -5,16 +5,16 @@ import { AppLayout } from './AppLayout'
 import { AuditLookup } from './AuditLookup'
 import { DevLogin } from './DevLogin'
 import { MappingReview } from './MappingReview'
+import { MappingVersions } from './MappingVersions'
 import { NotFound } from './NotFound'
-import { Placeholder } from './Placeholder'
 import { QuarantineConsole } from './QuarantineConsole'
 import { SampleUpload } from './SampleUpload'
 import { SourcesIndex } from './SourcesIndex'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
 // wrap it in a MemoryRouter. /dev/login is public; everything under AuthBoundary
-// requires a valid token. The index redirects to /sources (the Phase-1 entry);
-// later screens are placeholders until their checkpoints.
+// requires a valid token. The index redirects to /sources (the Phase-1 entry).
+// All five Phase-1 screens are wired; an unknown path renders the not-found state.
 export function AppRoutes() {
   return (
     <Routes>
@@ -23,10 +23,7 @@ export function AppRoutes() {
         <Route element={<AppLayout />}>
           <Route index element={<Navigate to="/sources" replace />} />
           <Route path="/sources" element={<SourcesIndex />} />
-          <Route
-            path="/sources/:sourceId/mappings"
-            element={<Placeholder title="Mapping Versions (Checkpoint 5)" />}
-          />
+          <Route path="/sources/:sourceId/mappings" element={<MappingVersions />} />
           <Route path="/upload" element={<SampleUpload />} />
           <Route path="/upload/:sampleId/review" element={<MappingReview />} />
           <Route path="/quarantine" element={<QuarantineConsole />} />
