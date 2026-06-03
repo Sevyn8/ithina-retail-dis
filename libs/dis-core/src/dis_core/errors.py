@@ -196,3 +196,57 @@ class AuditWriteError(DisError):
         self.trace_id = trace_id
         self.stage = stage
         self.failure_code = failure_code
+
+
+# -- Mirror Sync errors (Slice 7) ----------------------------------------------
+# Raised by the mirror-sync-consumer service (DB-pull mode), which reads Customer
+# Master's Postgres under a platform read context and upserts into identity_mirror.
+# Each carries trace_id and the load-bearing identifier (code-quality rule 5); never
+# a raw payload. The DIS-side write reuses dis-rls' RlsContextError (wrong DB / role).
+
+
+class MirrorSyncError(DisError):
+    """Base for mirror-sync-consumer (DB-pull) failures.
+
+    Carries the per-run ``trace_id`` and, where a per-tenant context applies, the
+    ``tenant_id``, so a failed sync is diagnosable (code-quality rule 5).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        trace_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.trace_id = trace_id
+        self.tenant_id = tenant_id
+
+
+class CustomerMasterReadError(MirrorSyncError):
+    """The Customer Master read could not be performed safely.
+
+    Raised when the CM connection reached the wrong target (not the expected
+    Customer Master database, or — worse — the DIS database), or the platform read
+    context did not take effect in the read transaction (``app.user_type`` is not
+    ``'PLATFORM'``). Under CM's FORCE RLS a mis-set context silently returns zero
+    rows (``docs/ithina_master_db_read_access.md`` §2), so this is raised **before**
+    any mirror write rather than letting an empty read masquerade as an empty source.
+    Carries what was observed on the server (``database`` / ``role`` / ``user_type``).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        database: str | None = None,
+        role: str | None = None,
+        user_type: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message, trace_id=trace_id)
+        self.database = database
+        self.role = role
+        self.user_type = user_type
