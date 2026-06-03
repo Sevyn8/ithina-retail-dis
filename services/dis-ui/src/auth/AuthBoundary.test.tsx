@@ -52,8 +52,10 @@ describe('AuthBoundary', () => {
   it('renders the protected page when a valid token is stored', async () => {
     writeToken(await signStubToken(PERSONAS[0]))
     renderAt('/')
+    // After the index redirect to /sources, the shell header shows the profile
+    // email (the retired Home greeting is gone); assert the protected shell rendered.
     const email = ME_FIXTURES[PERSONAS[0].sub].email
-    expect(await screen.findByText(`Hello, ${email}`)).toBeInTheDocument()
+    expect(await screen.findByText(email)).toBeInTheDocument()
   })
 
   it('redirects to /dev/login when no token is stored', async () => {

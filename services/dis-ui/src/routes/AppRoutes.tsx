@@ -1,20 +1,36 @@
-import { Route, Routes } from 'react-router'
+import { Navigate, Route, Routes } from 'react-router'
 
 import { AuthBoundary } from '../auth/AuthBoundary'
 import { AppLayout } from './AppLayout'
 import { DevLogin } from './DevLogin'
-import { Home } from './Home'
+import { NotFound } from './NotFound'
+import { Placeholder } from './Placeholder'
+import { SourcesIndex } from './SourcesIndex'
 
-// Router-agnostic route registry. App.tsx wraps this in a BrowserRouter for the
-// real app; tests wrap it in a MemoryRouter. /dev/login is public; everything
-// under AuthBoundary requires a valid token.
+// Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
+// wrap it in a MemoryRouter. /dev/login is public; everything under AuthBoundary
+// requires a valid token. The index redirects to /sources (the Phase-1 entry);
+// later screens are placeholders until their checkpoints.
 export function AppRoutes() {
   return (
     <Routes>
       <Route path="/dev/login" element={<DevLogin />} />
       <Route element={<AuthBoundary />}>
         <Route element={<AppLayout />}>
-          <Route index element={<Home />} />
+          <Route index element={<Navigate to="/sources" replace />} />
+          <Route path="/sources" element={<SourcesIndex />} />
+          <Route
+            path="/sources/:sourceId/mappings"
+            element={<Placeholder title="Mapping Versions (Checkpoint 5)" />}
+          />
+          <Route path="/upload" element={<Placeholder title="Sample Upload (Checkpoint 2)" />} />
+          <Route
+            path="/upload/:sampleId/review"
+            element={<Placeholder title="Mapping Review (Checkpoint 2)" />}
+          />
+          <Route path="/quarantine" element={<Placeholder title="Quarantine (Checkpoint 3)" />} />
+          <Route path="/audit" element={<Placeholder title="Audit (Checkpoint 4)" />} />
+          <Route path="*" element={<NotFound />} />
         </Route>
       </Route>
     </Routes>

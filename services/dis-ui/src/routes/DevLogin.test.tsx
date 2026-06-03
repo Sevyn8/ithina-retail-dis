@@ -31,15 +31,13 @@ describe('DevLogin persona switch', () => {
     const user = userEvent.setup()
     renderApp()
 
-    // Sign in as the tenant persona; Home greets with that user's profile email.
+    // Sign in as the tenant persona; the shell header shows that user's profile email.
     await user.click(await screen.findByRole('button', { name: /tenant user/i }))
-    expect(
-      await screen.findByText(`Hello, ${ME_FIXTURES['u_acmeuser0001'].email}`),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(ME_FIXTURES['u_acmeuser0001'].email)).toBeInTheDocument()
 
-    // Log out, then sign in as the ops persona; the greeting reflects the switch.
+    // Log out, then sign in as the ops persona; the header email reflects the switch.
     await user.click(screen.getByRole('button', { name: /log out/i }))
     await user.click(await screen.findByRole('button', { name: /ops \(dev only\)/i }))
-    expect(await screen.findByText(`Hello, ${ME_FIXTURES['u_opsdev0001'].email}`)).toBeInTheDocument()
+    expect(await screen.findByText(ME_FIXTURES['u_opsdev0001'].email)).toBeInTheDocument()
   })
 })

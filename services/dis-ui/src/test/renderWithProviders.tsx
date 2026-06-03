@@ -10,8 +10,12 @@ import type { AuthContextValue } from '../auth/context'
 // Test helper: wraps UI in a fresh QueryClient (retry off, so failures surface at
 // once and no cache bleeds between tests) plus a synchronous AuthContext value
 // (bypassing AuthProvider's async token verification) plus a MemoryRouter. Pass a
-// snapshot to render as that authenticated user, or null for unauthenticated.
-export function renderWithProviders(ui: ReactNode, opts: { snapshot: AuthSnapshot | null }) {
+// snapshot to render as that authenticated user, or null for unauthenticated;
+// pass initialEntries to control the starting route (e.g. for AppRoutes tests).
+export function renderWithProviders(
+  ui: ReactNode,
+  opts: { snapshot: AuthSnapshot | null; initialEntries?: string[] },
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const authValue: AuthContextValue = {
     status: opts.snapshot === null ? 'unauthenticated' : 'authenticated',
@@ -22,7 +26,7 @@ export function renderWithProviders(ui: ReactNode, opts: { snapshot: AuthSnapsho
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthContext.Provider value={authValue}>
-        <MemoryRouter>{ui}</MemoryRouter>
+        <MemoryRouter initialEntries={opts.initialEntries ?? ['/']}>{ui}</MemoryRouter>
       </AuthContext.Provider>
     </QueryClientProvider>,
   )
