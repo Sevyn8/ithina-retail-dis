@@ -17,8 +17,9 @@ The Identity Service client errors live here (moved from
 
 Per-domain errors for the data-plane libs (RLS, PII, storage, mapping,
 validation, audit) are added by their own slices as they gain a real raiser;
-this module deliberately ships only the root plus the consolidated Slice 2
-interim errors (build to current need).
+this module ships the root, the consolidated Slice 2 interim identity errors, and
+(Slice 4) the data-plane errors for ``dis-rls``, ``dis-pii``, and ``dis-storage``
+(build to current need).
 """
 
 from __future__ import annotations
@@ -85,3 +86,78 @@ class IdentityServiceUnavailableError(IdentityClientError):
             trace_id=trace_id,
         )
         self.retry_after = retry_after
+
+
+# -- Data-plane safety errors (Slice 4) ----------------------------------------
+# Raised by dis-rls / dis-pii / dis-storage. Each carries the load-bearing context
+# (root CLAUDE.md code-quality rule 5: errors carry tenant_id, trace_id, and the
+# load-bearing identifier). NONE of these ever carry a raw PII value (hard rule 2).
+
+
+class RlsContextError(DisError):
+    """The RLS session could not be opened safely.
+
+    Raised by ``dis-rls`` when the connection reached the wrong target (e.g. not
+    ``ithina_dis_db``) or the connected role can bypass RLS (SUPERUSER or BYPASSRLS),
+    either of which would make tenant isolation silently void. Carries what was
+    actually observed on the server so the failure is diagnosable.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        database: str | None = None,
+        role: str | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.database = database
+        self.role = role
+        self.tenant_id = tenant_id
+
+
+class PiiBackendNotConfiguredError(DisError):
+    """A source mapping flags PII column(s) but no backend is configured to handle them.
+
+    The ``dis-pii`` fail-loud gate raises this *before* any persistence path so PII
+    cannot land silently (hard rule 2). ``columns`` are the flagged column *names*
+    only — never the values. In v1.0 no real backend exists, so the gate raises on
+    every detected PII column.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        columns: tuple[str, ...] = (),
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.columns = columns
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
+class StorageError(DisError):
+    """A ``dis-storage`` operation failed (path construction, signing, or object access).
+
+    Carries the object path and tenant/trace context when known; never a payload.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        object_path: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.object_path = object_path
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
