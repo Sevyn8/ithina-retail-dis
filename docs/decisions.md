@@ -132,7 +132,8 @@
 **Decision.** Pandera is the validation engine. Reasons in D4a. Wherever the architecture document carries "GE/Pandera" wording, treat as Pandera; the historical record is retained for context only.
 
 ### D22 Mapping version pinning on canonical rows
-**Decision.** Every canonical row (hot and history) carries a `mapping_version_id BIGINT NOT NULL` column. The streaming consumer stamps this column with the mapping version that produced the row.
+**Decision.** Every mapping-produced canonical row carries a `mapping_version_id BIGINT NOT NULL` column: the hot table (`store_sku_current_position`) and both event tables (`store_sku_sale_events`, `store_sku_change_events`). The streaming consumer stamps this column with the mapping version that produced the row.
+**Scope: signal_history excluded by design.** `store_sku_signal_history` is daily-compute output derived from already-canonical rows, not produced by the mapping engine (D31, D32); it carries no `mapping_version_id`, its provenance is `trace_id` plus `compute_metadata`. The "hot and history" phrasing referred to the event (history-tier) tables, not signal_history.
 **Replay default.** Replay uses the mapping version recorded on the original row, not current active. Ops can override to "current active" with an explicit flag, and the audit trail records both versions.
 **Alternatives considered.** No version on canonical rows (which would silently produce audit drift). Mapping version stored only in audit (cheaper to add but reconstruction requires audit join on every dispute, and audit can be incomplete after retention expires).
 **Why.** Audit and replay are load-bearing in a multi-tenant ETL platform. Without mapping version on the canonical row, "why does this row look wrong" cannot be answered cleanly (source bug vs mapping bug vs business rule). Replay against current mapping produces different canonical results than the original, undetectable post-hoc. Adding one column now costs one Alembic migration; adding it after history accumulates means rewriting analytics queries, dbt models, replay tooling, and re-explaining historical canonical values per tenant.
@@ -241,6 +242,8 @@ to filter to the current truth. dbt models in BigQuery `canonical_history.*` exp
 
 **Forward note.** Trace-level dedup at streaming-consumer entry (check audit for prior `CANONICAL_WRITTEN` on the same `trace_id` before reprocessing) is a future compute-saving optimisation, not correctness-critical. See `architecture.md` §9.2.
 
+**Schema gap (see D38, OPEN).** The dedup key named above (`source_id`, `source_event_id`) does **not** map to columns that exist in the applied canonical schema. This divergence is registered as D38 and must be resolved before Slice 10 builds the read-time dedup.
+
 
 ---
 
@@ -301,6 +304,8 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 1. **Phase 1 (synchronous, UI-driven).** Lives as an endpoint inside `dis-ui-server` (e.g. `POST /v1/upload-sessions`). Validates the Customer Master session, generates `trace_id`, builds the canonical GCS path via `libs/dis-storage`, returns a short-lived signed PUT URL, emits audit.
 2. **Phase 2 (asynchronous, GCS-event-driven).** Lives as a standalone worker service `services/csv-ingest-worker/`. Triggered by GCS object-finalized notifications. Runs DuckDB preflight, PII tokenization, bronze metadata write, `ingress.ready` publish, audit emission, idempotency.
 
+**Store-keying refactor recorded separately.** The composite `(tenant_id, store_id)` store-FK refactor that rode in on this decision's commit (`84b67eb`) is an independent decision; it is recorded as D39, not here.
+
 **Why.**
 - The DIS UI is the only initiator of CSV upload Phase 1. Having a separate `receiver-csv-upload` service for this means the browser talks to two backends (dis-ui-server for everything else + receiver for upload start). That defeats the purpose of having a BFF (D26).
 - Phase 1 is small: auth + trace_id + signed-URL issuance. It doesn't merit a separate deployable; folding it into dis-ui-server as an endpoint is the right size.
@@ -336,3 +341,36 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 3. A translation layer (identity-service and/or mirror-sync owns the external↔internal map).
 
 **Why it must be settled by Slice 7.** Slice 7 (Mirror Sync, DB-pull) writes *real* Customer Master records into the UUID-keyed `identity_mirror`. Real records carry both representations and there is no fixture bridge in production — Slice 7 needs the actual translation to land rows whose external ids match what receivers and the streaming consumer resolve. The fixture bridge cannot carry Slice 7.
+
+---
+
+### D38 Event-table dedup key names columns absent from the applied schema — `OPEN`
+
+**Status.** `OPEN`. This entry records a schema-vs-decision divergence; it does **not** resolve it. Surfaced during Slice 3 (dis-canonical models, by live-schema introspection of `ithina_dis_db`). **Hard deadline: before Slice 10 (streaming consumer happy path) begins.**
+
+**The gap.** D33 and CLAUDE.md hard rule 7 define the event-table "same source event" dedup key, applied latest-wins at read time, as `(tenant_id, store_id, source_id, source_event_id)`. Introspection of the applied canonical schema shows **neither `source_id` nor `source_event_id` exists** on `canonical.store_sku_sale_events` or `canonical.store_sku_change_events` (nor on any canonical table). The only source-related columns present are `source_sale_timestamp` / `source_event_timestamp` (timestamps, not ids), `transaction_id` and `line_item_seq` (sale events only), and `related_sale_event_id`. The event tables carry no UNIQUE constraint (correctly, per D33's append-only posture), so nothing in the schema pins the key either. As written, the D33 / rule-7 `ROW_NUMBER() OVER (PARTITION BY tenant_id, store_id, source_id, source_event_id ...)` window cannot be computed from existing columns.
+
+**Not a dis-canonical defect.** The Slice 3 models mirror the applied schema exactly (verified by an independent column-set reconciliation, both directions, all four tables). The divergence is between the decision text and the migration that was applied (Slice 1), not in the Python models.
+
+**Candidate resolutions (no choice made here).**
+1. Add `source_id` and `source_event_id` columns to both event tables via an Alembic migration, populated by the streaming consumer from the mapping; the dedup key then maps literally.
+2. Redefine the dedup key against columns that already exist (e.g. a per-source `transaction_id` plus a source discriminator), and amend D33 / rule 7 to match.
+3. Carry the source identifiers inside `ingest_metadata` (jsonb) and compute the key from there (weaker — not indexable, not a first-class column).
+
+**Why it must be settled by Slice 10.** Slice 10 builds the streaming consumer's atomic dual-write and the read-time latest-wins semantics depend on this key. Either the columns must exist (option 1) or the key must be redefined (option 2) before that code is written; otherwise the consumer cannot implement D33 as specified. Do not edit the DDL or the rule wording under Slice 3 — this entry only registers the gap. Cross-referenced from D33.
+
+---
+
+### D39 Canonical store keying: composite `(tenant_id, store_id)` FK with global `store_id` uniqueness
+
+**Status.** Settled; in force in the applied schema. The refactor landed under the D36 commit (`84b67eb`) but is an independent decision (it only shared that commit), so it is recorded here with its own number rather than as a note under D36. Surfaced/registered during Slice 3 while introspecting the live `ithina_dis_db` schema for the dis-canonical models.
+
+**Decision.** Canonical tables key a store by the composite `(tenant_id, store_id)`, not by `store_id` alone. In the applied schema:
+- `identity_mirror.stores` has PRIMARY KEY `(tenant_id, store_id)` plus a global `UNIQUE (store_id)` (`uq_ims_store_id`); `identity_mirror.tenants` has PRIMARY KEY `(tenant_id)`.
+- Every canonical table (`store_sku_current_position`, `store_sku_sale_events`, `store_sku_change_events`, `store_sku_signal_history`) carries both a tenant FK `(tenant_id) -> identity_mirror.tenants(tenant_id)` and a composite store FK `(tenant_id, store_id) -> identity_mirror.stores(tenant_id, store_id)`.
+
+**Why composite.** Tenant isolation becomes structural: a store FK on `store_id` alone would let a canonical row reference a store without re-asserting its tenant, leaving room at the referential layer for a store to be tied to the wrong tenant. Keying the FK on `(tenant_id, store_id)` makes "this store belongs to this tenant" an engine-enforced invariant on every canonical write, complementing RLS (D12). The global `UNIQUE (store_id)` keeps `store_id` a stable standalone identifier for lookups and the mirror sync, so the composite FK adds tenant-scoping without giving up global uniqueness.
+
+**Evidence (introspected, `ithina_dis_db`).** `pk_ims = PRIMARY KEY (tenant_id, store_id)`; `uq_ims_store_id = UNIQUE (store_id)`; canonical `fk_*_store = FOREIGN KEY (tenant_id, store_id) REFERENCES identity_mirror.stores(tenant_id, store_id)`.
+
+**Scope.** Docs only; records a decision already in force. No schema or DDL change. Relates to D12 (mirror table plus real FK as the cross-DB integrity substitute); cross-referenced from D36.
