@@ -6,9 +6,10 @@ export type NavItem = {
   ops?: boolean
 }
 
-// Phase 1 tenant navigation. Mappings is intentionally NOT a top-level item; it is
-// reached via a source (/sources/:sourceId/mappings). No ops items this slice.
+// Tenant navigation. Dashboard is the index (`/`); Mappings is intentionally NOT a
+// top-level item (reached via a source, /sources/:sourceId/mappings). No ops items.
 export const NAV_ITEMS: NavItem[] = [
+  { label: 'Dashboard', to: '/' },
   { label: 'Sources', to: '/sources' },
   { label: 'Upload', to: '/upload' },
   { label: 'Quarantine', to: '/quarantine' },

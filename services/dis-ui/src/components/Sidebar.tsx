@@ -21,6 +21,7 @@ export function Sidebar({ items = NAV_ITEMS }: { items?: NavItem[] }) {
           <li key={item.to}>
             <NavLink
               to={item.to}
+              end={item.to === '/'}
               className={({ isActive }) =>
                 `block rounded px-2 py-1 text-sm ${isActive ? 'bg-gray-200 font-semibold' : ''}`
               }

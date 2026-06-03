@@ -15,14 +15,19 @@ function renderAt(path: string) {
   return renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: [path] })
 }
 
-describe('AppRoutes (Phase 1)', () => {
-  it('redirects the index to /sources', async () => {
+describe('AppRoutes', () => {
+  it('renders the Tenant Dashboard at the index', async () => {
     renderAt('/')
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
+  })
+
+  it('still resolves /sources', async () => {
+    renderAt('/sources')
     expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
   })
 
-  // All five Phase-1 screens are now real (Checkpoints 2-5) and are covered by
-  // their own screen tests; no placeholder routes remain.
+  // The screens themselves are covered by their own screen tests; no placeholder
+  // routes remain.
 
   it('renders the not-found state for an unknown route', async () => {
     renderAt('/no-such-page')

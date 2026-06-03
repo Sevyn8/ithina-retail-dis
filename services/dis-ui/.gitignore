@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Stray 0-byte artifacts pnpm writes to the cwd in this environment (named after
+# the package + the binary). Anchored to the dir root so they never match
+# anything under node_modules.
+/dis-ui@0.0.0
+/vite
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

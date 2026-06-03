@@ -1,8 +1,9 @@
-import { Navigate, Route, Routes } from 'react-router'
+import { Route, Routes } from 'react-router'
 
 import { AuthBoundary } from '../auth/AuthBoundary'
 import { AppLayout } from './AppLayout'
 import { AuditLookup } from './AuditLookup'
+import { Dashboard } from './Dashboard'
 import { DevLogin } from './DevLogin'
 import { MappingReview } from './MappingReview'
 import { MappingVersions } from './MappingVersions'
@@ -13,15 +14,15 @@ import { SourcesIndex } from './SourcesIndex'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
 // wrap it in a MemoryRouter. /dev/login is public; everything under AuthBoundary
-// requires a valid token. The index redirects to /sources (the Phase-1 entry).
-// All five Phase-1 screens are wired; an unknown path renders the not-found state.
+// requires a valid token. The index `/` is the Tenant Dashboard (slice 21);
+// /sources remains its own route. An unknown path renders the not-found state.
 export function AppRoutes() {
   return (
     <Routes>
       <Route path="/dev/login" element={<DevLogin />} />
       <Route element={<AuthBoundary />}>
         <Route element={<AppLayout />}>
-          <Route index element={<Navigate to="/sources" replace />} />
+          <Route index element={<Dashboard />} />
           <Route path="/sources" element={<SourcesIndex />} />
           <Route path="/sources/:sourceId/mappings" element={<MappingVersions />} />
           <Route path="/upload" element={<SampleUpload />} />
