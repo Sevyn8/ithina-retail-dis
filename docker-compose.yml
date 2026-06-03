@@ -35,6 +35,38 @@ services:
     ports:
       - "6379:6379"
 
+  # ---- Slice 2 fakes (test infrastructure; no real auth / resolution) ----
+  customer-master:
+    build:
+      context: .
+      dockerfile: infra/local/fakes.Dockerfile
+    command: uvicorn dis_testing.fakes.customer_master:app --host 0.0.0.0 --port 8082
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      PUBSUB_PROJECT_ID: local-dis
+    ports:
+      - "8082:8082"
+    depends_on:
+      - pubsub
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8082/healthz')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  identity-service-fake:
+    build:
+      context: .
+      dockerfile: infra/local/fakes.Dockerfile
+    command: uvicorn dis_testing.fakes.identity_service:app --host 0.0.0.0 --port 8081
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8081/healthz')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres-data:
   gcs-data:

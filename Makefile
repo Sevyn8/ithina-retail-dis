@@ -1,7 +1,7 @@
 include .env
 export
 
-.PHONY: help run-local stop-local reset-local test lint format db-migrate db-revision db-reset topics-create dbt-debug dbt-run sync clean
+.PHONY: help run-local stop-local reset-local test lint format db-migrate db-revision db-reset topics-create seed dbt-debug dbt-run sync clean
 
 help:
 	@echo "DIS local commands:"
@@ -17,6 +17,7 @@ help:
 	@echo "  make db-revision   - create a new Alembic migration (autogenerate)"
 	@echo "  make db-reset      - drop and recreate Postgres schemas (destructive)"
 	@echo "  make topics-create - create Pub/Sub topics on the emulator"
+	@echo "  make seed          - seed the default TEST fixtures into the DIS db (test-only)"
 	@echo "  make dbt-debug     - validate dbt config against current target"
 	@echo "  make dbt-run       - run dbt models"
 
@@ -66,6 +67,12 @@ db-reset:
 
 topics-create:
 	@uv run python tools/local/create_topics.py
+
+# Seed the default TEST fixtures (tenants, stores, one source mapping) into the
+# DIS database. Test infrastructure only — NOT a runtime path (runtime
+# identity_mirror population is Slice 7; source mappings, Slice 14). Idempotent.
+seed:
+	@uv run python -m dis_testing.seed
 
 dbt-debug:
 	cd dbt && uv run dbt debug

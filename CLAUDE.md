@@ -152,7 +152,7 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 
 **Commands:**
 - `make run-local` — bring up the stack, create topics, apply migrations.
-- `make check` — runs `scripts/check_setup.sh` (6-tier preflight). Run at session start and any time something feels off. Expect 57/57 PASS.
+- `make check` — runs `scripts/check_setup.sh` (6-tier preflight). Run at session start and any time something feels off. Expect 60/60 PASS.
 - `make reset-local` — wipe data volumes for a clean slate.
 - `make test` / `make lint` / `make format` / `make db-migrate` — daily commands.
 

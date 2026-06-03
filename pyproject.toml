@@ -67,7 +67,15 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.13",
   "faker>=30",
+  "pyyaml>=6.0",
   "types-pyyaml",
+  "jsonschema>=4.23",
+
+  # Workspace members. The root is a virtual project (package = false), so members
+  # are not installed unless something in a synced group depends on them. Listing
+  # them in the default dev group means `uv sync` / `uv run` install them editable.
+  "dis-core",
+  "dis-testing",
 ]
 
 [build-system]
@@ -81,9 +89,41 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "TID"]
 
+[tool.ruff.lint.isort]
+# First-party DIS packages so imports group as stdlib / third-party / first-party
+# (root CLAUDE.md import convention).
+known-first-party = [
+  "dis_core",
+  "dis_testing",
+  "dis_audit",
+  "dis_canonical",
+  "dis_mapping",
+  "dis_pii",
+  "dis_rls",
+  "dis_storage",
+  "dis_validation",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+# Unit tests live next to code (libs/<name>/tests); integration/e2e in repo-root tests/.
+# importlib mode lets identically-named test files coexist across libs without
+# __init__.py juggling.
+testpaths = ["tests", "libs"]
+addopts = "--import-mode=importlib"
+markers = [
+  "integration: requires the local docker-compose stack (Postgres + fakes + emulators)",
+]
 
 [tool.uv]
 package = false
+
+[tool.uv.workspace]
+# Workspace members are declared here as they are built (root CLAUDE.md: "workspace
+# members declared in root pyproject.toml once they exist"). Slice 2 adds the first two.
+members = ["libs/dis-core", "libs/dis-testing"]
+
+[tool.uv.sources]
+# dis-testing consumes the dis-core identity client interface; resolve from the workspace.
+dis-core = { workspace = true }
+dis-testing = { workspace = true }

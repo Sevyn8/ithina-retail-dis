@@ -166,8 +166,9 @@ else
     fail "Docker daemon not running" "run: sudo systemctl start docker"
 fi
 
-# Each container in the DIS stack
-for container in ithina-dis-postgres-1 ithina-dis-pubsub-1 ithina-dis-gcs-1 ithina-dis-redis-1; do
+# Each container in the DIS stack (core infra + Slice 2 fakes)
+for container in ithina-dis-postgres-1 ithina-dis-pubsub-1 ithina-dis-gcs-1 ithina-dis-redis-1 \
+                 ithina-dis-customer-master-1 ithina-dis-identity-service-fake-1; do
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
         pass "container running: $container"
     else
