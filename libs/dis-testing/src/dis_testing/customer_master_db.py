@@ -1,0 +1,181 @@
+"""A Customer-Master-shaped test Postgres for DB-pull tests (Slice 7).
+
+The Slice 2 Customer Master *fake* is HTTP-only (JWTs / sessions / events); it has no
+``core`` schema, so it cannot serve the Mirror Sync DB-pull read, which reads CM's Postgres
+directly. The real CM (port 5432) is off-limits to tests. This module provisions a faithful
+stand-in **inside the DIS 5433 cluster** as a separate database ``ithina_platform_db``:
+``core.tenants`` / ``core.stores`` with **FORCE ROW LEVEL SECURITY** and the platform-access
+policy, seeded from :mod:`dis_testing.fixtures`, with ``SELECT`` granted to the NOBYPASSRLS
+service role so the no-context-→-zero-rows behavior is exercised for real.
+
+Why this is safe for target safety: the reader connects to ``ithina_platform_db`` →
+``current_database()`` is the expected CM database (the assertion passes); the writer connects
+to ``ithina_dis_db`` → the dis-rls guard passes. Both are on 5433; **the real CM (5432) is never
+touched**. This harness is reusable: a later CM-reading slice reuses it rather than rebuilding it.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.engine import make_url
+
+import dis_testing.fixtures as fx
+
+# The Customer Master database name (the reader's target assertion expects this; local CM and
+# the cloud read replica share it). Created here inside the 5433 cluster as the test stand-in.
+CM_TEST_DB_NAME = "ithina_platform_db"
+
+# The NOBYPASSRLS service role granted SELECT on the test CM, so RLS actually applies to reads.
+_READER_ROLE = "ithina_dis_user"
+
+_CORE_DDL = (
+    "CREATE SCHEMA IF NOT EXISTS core",
+    """
+    CREATE TABLE IF NOT EXISTS core.tenants (
+        id            uuid PRIMARY KEY,
+        name          text NOT NULL,
+        status        text NOT NULL,
+        created_at    timestamptz NOT NULL,
+        updated_at    timestamptz NOT NULL,
+        suspended_at  timestamptz,
+        terminated_at timestamptz
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS core.stores (
+        id            uuid PRIMARY KEY,
+        tenant_id     uuid NOT NULL REFERENCES core.tenants (id),
+        name          text NOT NULL,
+        status        text NOT NULL,
+        country       text NOT NULL,
+        timezone      text NOT NULL,
+        currency      char(3) NOT NULL,
+        tax_treatment text NOT NULL,
+        created_at    timestamptz NOT NULL,
+        updated_at    timestamptz NOT NULL,
+        closed_at     timestamptz
+    )
+    """,
+    "ALTER TABLE core.tenants ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE core.tenants FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE core.stores ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE core.stores FORCE ROW LEVEL SECURITY",
+    # Mirrors the live CM policy shape (introspected): tenant-scoped OR platform sees all.
+    "DROP POLICY IF EXISTS tenants_self_access ON core.tenants",
+    """
+    CREATE POLICY tenants_self_access ON core.tenants
+        USING (
+            (id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+            OR current_setting('app.user_type', true) = 'PLATFORM'
+        )
+    """,
+    "DROP POLICY IF EXISTS stores_tenant_isolation ON core.stores",
+    """
+    CREATE POLICY stores_tenant_isolation ON core.stores
+        USING (
+            (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+            OR current_setting('app.user_type', true) = 'PLATFORM'
+        )
+    """,
+    f"GRANT USAGE ON SCHEMA core TO {_READER_ROLE}",
+    f"GRANT SELECT ON core.tenants TO {_READER_ROLE}",
+    f"GRANT SELECT ON core.stores TO {_READER_ROLE}",
+)
+
+_SEED_TENANT = text(
+    """
+    INSERT INTO core.tenants (id, name, status, created_at, updated_at)
+    VALUES (:id, :name, :status, :created_at, :updated_at)
+    ON CONFLICT (id) DO NOTHING
+    """
+)
+_SEED_STORE = text(
+    """
+    INSERT INTO core.stores
+        (id, tenant_id, name, status, country, timezone, currency, tax_treatment,
+         created_at, updated_at)
+    VALUES
+        (:id, :tenant_id, :name, :status, :country, :timezone, :currency, :tax_treatment,
+         :created_at, :updated_at)
+    ON CONFLICT (id) DO NOTHING
+    """
+)
+
+
+def _swap_db(url: str, database: str) -> str:
+    return make_url(url).set(database=database).render_as_string(hide_password=False)
+
+
+def reader_url_from(user_url: str) -> str:
+    """Derive the CM read DSN: the DIS service-role URL, pointed at the test CM database."""
+    return _swap_db(user_url, CM_TEST_DB_NAME)
+
+
+def cm_admin_engine(admin_url: str) -> Engine:
+    """A sync engine on the test CM database as the admin role (superuser bypasses RLS).
+
+    Tests use this for independent re-reads and for mutating CM rows (converge/idempotence).
+    """
+    return create_engine(_swap_db(admin_url, CM_TEST_DB_NAME))
+
+
+def provision_test_cm(admin_url: str) -> None:
+    """Create (idempotently) the test CM database, schema, RLS, grants, and seed it.
+
+    ``admin_url`` is the DIS admin DSN (``POSTGRES_ADMIN_URL``); the database name is swapped
+    as needed. Safe to call repeatedly.
+    """
+    # 1. CREATE DATABASE (cannot run in a transaction → AUTOCOMMIT), guarded by existence.
+    maintenance = create_engine(_swap_db(admin_url, "postgres"))
+    try:
+        with maintenance.connect() as conn:
+            conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+            exists = conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": CM_TEST_DB_NAME}
+            ).first()
+            if exists is None:
+                conn.execute(text(f'CREATE DATABASE "{CM_TEST_DB_NAME}"'))
+    finally:
+        maintenance.dispose()
+
+    # 2. Schema + RLS + grants, then seed (admin is superuser → bypasses RLS to seed).
+    engine = cm_admin_engine(admin_url)
+    try:
+        with engine.begin() as conn:
+            for stmt in _CORE_DDL:
+                conn.execute(text(stmt))
+        seed_test_cm(engine)
+    finally:
+        engine.dispose()
+
+
+def seed_test_cm(engine: Engine) -> None:
+    """Seed the default fixture tenants/stores into the test CM. Idempotent."""
+    with engine.begin() as conn:
+        for tenant in fx.TENANTS:
+            conn.execute(
+                _SEED_TENANT,
+                {
+                    "id": str(tenant.uuid),
+                    "name": tenant.name,
+                    "status": tenant.status,
+                    "created_at": tenant.pc_created_at,
+                    "updated_at": tenant.pc_updated_at,
+                },
+            )
+        for store in fx.STORES:
+            conn.execute(
+                _SEED_STORE,
+                {
+                    "id": str(store.uuid),
+                    "tenant_id": str(fx.tenant_uuid_for(store.tenant_external_id)),
+                    "name": store.name,
+                    "status": store.status,
+                    "country": store.country,
+                    "timezone": store.timezone,
+                    "currency": store.currency,
+                    "tax_treatment": store.tax_treatment,
+                    "created_at": store.pc_created_at,
+                    "updated_at": store.pc_updated_at,
+                },
+            )
