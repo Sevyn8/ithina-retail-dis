@@ -77,6 +77,7 @@ dev = [
   "dis-core",
   "dis-testing",
   "dis-canonical",
+  "dis-rls",
 ]
 
 [build-system]
@@ -121,12 +122,20 @@ package = false
 
 [tool.uv.workspace]
 # Workspace members are declared here as they are built (root CLAUDE.md: "workspace
-# members declared in root pyproject.toml once they exist"). Slice 3 adds dis-canonical.
-members = ["libs/dis-core", "libs/dis-testing", "libs/dis-canonical"]
+# members declared in root pyproject.toml once they exist"). Slice 3 adds dis-canonical;
+# Slice 4 adds the three data-plane safety libs.
+members = [
+  "libs/dis-core",
+  "libs/dis-testing",
+  "libs/dis-canonical",
+  "libs/dis-rls",
+]
 
 [tool.uv.sources]
 # Workspace libs resolve from the workspace. dis-testing and dis-canonical both
-# depend on dis-core; dis-canonical uses its identifier aliases.
+# depend on dis-core; dis-canonical uses its identifier aliases. The Slice 4 data-plane
+# libs each depend on dis-core (dis-pii on dis-core only — no dis-rls, no DB).
 dis-core = { workspace = true }
 dis-testing = { workspace = true }
 dis-canonical = { workspace = true }
+dis-rls = { workspace = true }

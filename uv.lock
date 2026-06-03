@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "dis-canonical",
     "dis-core",
+    "dis-rls",
     "dis-testing",
     "ithina-dis",
 ]
@@ -612,6 +613,23 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "python-json-logger", specifier = ">=2.0,<4.0" },
     { name = "uuid-utils", specifier = ">=0.9" },
+]
+
+[[package]]
+name = "dis-rls"
+version = "0.0.0"
+source = { editable = "libs/dis-rls" }
+dependencies = [
+    { name = "dis-core" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
 [[package]]
@@ -1397,6 +1415,7 @@ dependencies = [
 dev = [
     { name = "dis-canonical" },
     { name = "dis-core" },
+    { name = "dis-rls" },
     { name = "dis-testing" },
     { name = "faker" },
     { name = "jsonschema" },
@@ -1444,6 +1463,7 @@ requires-dist = [
 dev = [
     { name = "dis-canonical", editable = "libs/dis-canonical" },
     { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-rls", editable = "libs/dis-rls" },
     { name = "dis-testing", editable = "libs/dis-testing" },
     { name = "faker", specifier = ">=30" },
     { name = "jsonschema", specifier = ">=4.23" },
