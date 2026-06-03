@@ -21,3 +21,20 @@ globalThis.TextDecoder = TextDecoder as unknown as typeof globalThis.TextDecoder
 if (globalThis.crypto?.subtle === undefined) {
   Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
 }
+
+// jsdom omits window.matchMedia, which next-themes reads to detect the system color
+// scheme. Provide a minimal stub (defaults to light) so the ThemeProvider mounts
+// without throwing under tests.
+if (typeof window !== 'undefined' && window.matchMedia === undefined) {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList
+}
