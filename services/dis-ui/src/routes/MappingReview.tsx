@@ -1,13 +1,13 @@
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
+import { ProgressRail } from '@/components/ui/progress-rail'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
-import { OnboardingStepper } from '../components/OnboardingStepper'
 import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -19,11 +19,19 @@ import {
   useSample,
 } from '../lib/dis-ui-server/onboarding'
 import type { ApproveResult, DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
+import { CSV_JOURNEY_STEPS, CSV_JOURNEY_STEP_INDEX } from './csv-journey'
 
 type Override = { proposed_canonical: string; authoritative: boolean }
 
+// The three sub-steps the review route runs behind the shared journey rail.
+type JourneyStep = 'review' | 'preview' | 'golive'
+
+// High-confidence columns are auto-mapped and shown calmly; the rest are pulled out for
+// the operator's judgment. The threshold is the existing >=0.70 confidence band.
+const HIGH_CONFIDENCE = 0.7
+
 function confidenceBand(confidence: number): { text: string; tone: StatusTone } {
-  if (confidence >= 0.7) {
+  if (confidence >= HIGH_CONFIDENCE) {
     return { text: 'OK', tone: 'success' }
   }
   if (confidence >= 0.5) {
@@ -32,15 +40,19 @@ function confidenceBand(confidence: number): { text: string; tone: StatusTone } 
   return { text: 'Very low confidence', tone: 'danger' }
 }
 
-// Mapping Review (surface map screen 4, onboarding step 2), on the design-system craft
-// bar. Renders the inferred per-column mapping (carded table, confidence as a semantic
-// badge), supports overrides + authoritative toggles, dry-run preview, and
-// approve-to-staged. Behavior is unchanged; only the composition is rebuilt.
+// Review mapping / Preview / Go live (CSV journey steps 2-4; surface map screen 4), on the
+// redesign visual language behind the shared 4-step rail. The framing is AI-assisted and
+// human-approved: high-confidence columns are calm, low-confidence ones are pulled out for
+// review (editable canonical target + the confidence signal). The data layer (onboarding.ts:
+// the override echo, the 2.4 dry-run, the 2.5 approve) is UNCHANGED (R3); only the
+// composition and the step flow are new. We display only backend-provided signals (the
+// confidence, the canonical target, the mapping rules); no fabricated reasoning.
 export function MappingReview() {
   const { sampleId } = useParams()
   const navigate = useNavigate()
   const sample = useSample(sampleId ?? null)
 
+  const [step, setStep] = useState<JourneyStep>('review')
   const [overrides, setOverrides] = useState<Record<string, Override>>({})
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
   const [approved, setApproved] = useState<ApproveResult | null>(null)
@@ -71,104 +83,120 @@ export function MappingReview() {
     })
   }
 
-  async function runDryRun(): Promise<void> {
+  async function continueToPreview(): Promise<void> {
     setActionError(null)
     try {
       setDryRun(await dryRunSample(sampleId as string))
+      setStep('preview')
     } catch {
       setActionError('Dry-run failed.')
     }
   }
 
-  async function approve(): Promise<void> {
+  async function goLive(): Promise<void> {
     setActionError(null)
     try {
       setApproved(await approveSample(sampleId as string))
+      setStep('golive')
     } catch {
       setActionError('Approve failed.')
     }
   }
 
+  const currentIndex =
+    step === 'review'
+      ? CSV_JOURNEY_STEP_INDEX.review
+      : step === 'preview'
+        ? CSV_JOURNEY_STEP_INDEX.preview
+        : CSV_JOURNEY_STEP_INDEX.golive
+
+  const highConfidence = analysis.columns.filter((c) => c.confidence >= HIGH_CONFIDENCE)
+  const needsReview = analysis.columns.filter((c) => c.confidence < HIGH_CONFIDENCE)
+
+  function mappingRow(column: SampleColumn) {
+    const ov = overrideFor(column)
+    const band = confidenceBand(column.confidence)
+    return (
+      <TableRow key={column.source_col} className="align-top">
+        <TableCell className="font-medium text-foreground">
+          {column.source_col}
+          <div className="text-caption font-normal text-muted-foreground">
+            sample: {column.sample_values.join(', ')}
+          </div>
+        </TableCell>
+        <TableCell>{column.inferred_type}</TableCell>
+        <TableCell>{Math.round(column.null_pct * 100)}%</TableCell>
+        <TableCell>
+          <Select
+            aria-label={`Canonical for ${column.source_col}`}
+            value={ov.proposed_canonical}
+            onChange={(e) => setOverride(column.source_col, { ...ov, proposed_canonical: e.target.value })}
+            className="h-7 w-auto"
+          >
+            {CANONICAL_COLUMNS.map((canonical) => (
+              <option key={canonical} value={canonical}>
+                {canonical}
+              </option>
+            ))}
+          </Select>
+        </TableCell>
+        <TableCell>
+          <StatusBadge tone={band.tone}>
+            {Math.round(column.confidence * 100)}% {band.text}
+          </StatusBadge>
+        </TableCell>
+        <TableCell className="text-muted-foreground">
+          {column.transforms.length === 0
+            ? '-'
+            : column.transforms.map((t) => `${t.type}: ${t.value}`).join(', ')}
+        </TableCell>
+        <TableCell>
+          <input
+            type="checkbox"
+            aria-label={`Authoritative for ${column.source_col}`}
+            checked={ov.authoritative}
+            onChange={(e) => setOverride(column.source_col, { ...ov, authoritative: e.target.checked })}
+          />
+        </TableCell>
+      </TableRow>
+    )
+  }
+
+  function mappingTable(columns: SampleColumn[]) {
+    return (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Source column</TableHead>
+            <TableHead>Inferred type</TableHead>
+            <TableHead>Null %</TableHead>
+            <TableHead>Canonical</TableHead>
+            <TableHead>Confidence</TableHead>
+            <TableHead>Mapping rules</TableHead>
+            <TableHead>Authoritative</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>{columns.map((column) => mappingRow(column))}</TableBody>
+      </Table>
+    )
+  }
+
   return (
     <section className="flex flex-col gap-4">
       <header>
-        <h1 className="text-display">Mapping Review</h1>
-        <p className="text-caption text-muted-foreground">Review the proposed mapping.</p>
+        <h1 className="text-display">
+          {step === 'review' ? 'Review mapping' : step === 'preview' ? 'Preview' : 'Go live'}
+        </h1>
+        <p className="text-caption text-muted-foreground">
+          {step === 'review'
+            ? 'We mapped your columns to the canonical schema. Verify the ones we are unsure about.'
+            : step === 'preview'
+              ? 'Dry-run canonical rows produced by your approved mapping.'
+              : 'Your mapping is approved.'}
+        </p>
       </header>
 
-      <OnboardingStepper active="Review" />
-
-      <Card>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Source column</TableHead>
-                <TableHead>Inferred type</TableHead>
-                <TableHead>Null %</TableHead>
-                <TableHead>Canonical</TableHead>
-                <TableHead>Confidence</TableHead>
-                <TableHead>Mapping rules</TableHead>
-                <TableHead>Authoritative</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {analysis.columns.map((column) => {
-                const ov = overrideFor(column)
-                const band = confidenceBand(column.confidence)
-                return (
-                  <TableRow key={column.source_col} className="align-top">
-                    <TableCell className="font-medium text-foreground">
-                      {column.source_col}
-                      <div className="text-caption font-normal text-muted-foreground">
-                        sample: {column.sample_values.join(', ')}
-                      </div>
-                    </TableCell>
-                    <TableCell>{column.inferred_type}</TableCell>
-                    <TableCell>{Math.round(column.null_pct * 100)}%</TableCell>
-                    <TableCell>
-                      <Select
-                        aria-label={`Canonical for ${column.source_col}`}
-                        value={ov.proposed_canonical}
-                        onChange={(e) =>
-                          setOverride(column.source_col, { ...ov, proposed_canonical: e.target.value })
-                        }
-                        className="h-7 w-auto"
-                      >
-                        {CANONICAL_COLUMNS.map((canonical) => (
-                          <option key={canonical} value={canonical}>
-                            {canonical}
-                          </option>
-                        ))}
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge tone={band.tone}>
-                        {Math.round(column.confidence * 100)}% {band.text}
-                      </StatusBadge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {column.transforms.length === 0
-                        ? '-'
-                        : column.transforms.map((t) => `${t.type}: ${t.value}`).join(', ')}
-                    </TableCell>
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        aria-label={`Authoritative for ${column.source_col}`}
-                        checked={ov.authoritative}
-                        onChange={(e) =>
-                          setOverride(column.source_col, { ...ov, authoritative: e.target.checked })
-                        }
-                      />
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <ProgressRail steps={[...CSV_JOURNEY_STEPS]} current={currentIndex} />
 
       {actionError !== null ? (
         <p role="alert" className="text-sm text-danger">
@@ -176,49 +204,102 @@ export function MappingReview() {
         </p>
       ) : null}
 
-      {approved !== null ? (
-        <p role="status" className="text-sm text-success">
-          Mapping approved to staged (version {approved.mapping_version}) for {approved.source_id}.
-        </p>
-      ) : null}
+      {step === 'review' ? (
+        <>
+          {needsReview.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <h2 className="text-subheading">Needs your review</h2>
+                <p className="text-caption text-muted-foreground">
+                  {needsReview.length} column{needsReview.length === 1 ? '' : 's'} we are not confident
+                  about. Confirm or correct the canonical target.
+                </p>
+              </CardHeader>
+              <CardContent>{mappingTable(needsReview)}</CardContent>
+            </Card>
+          ) : null}
 
-      {dryRun !== null ? (
-        <div>
-          <h2 className="text-heading mb-1">Dry-run preview</h2>
-          <div className="overflow-x-auto rounded-md border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {Object.keys(dryRun.rows[0] ?? {}).map((key) => (
-                    <TableHead key={key}>{key}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {dryRun.rows.map((row, index) => (
-                  <TableRow key={index}>
-                    {Object.values(row).map((value, cell) => (
-                      <TableCell key={cell}>{String(value)}</TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          {highConfidence.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <h2 className="text-subheading text-muted-foreground">Auto-mapped</h2>
+                <p className="text-caption text-muted-foreground">
+                  {highConfidence.length} high-confidence column{highConfidence.length === 1 ? '' : 's'}.
+                  Edit if you need to.
+                </p>
+              </CardHeader>
+              <CardContent>{mappingTable(highConfidence)}</CardContent>
+            </Card>
+          ) : null}
+
+          <div className="flex gap-3">
+            <Button type="button" variant="ghost" onClick={() => navigate('/upload')}>
+              Back
+            </Button>
+            <Button type="button" onClick={() => void continueToPreview()}>
+              Continue to preview
+            </Button>
           </div>
-        </div>
+        </>
       ) : null}
 
-      <div className="flex gap-3">
-        <Button type="button" variant="outline" onClick={() => void runDryRun()}>
-          Dry-run preview
-        </Button>
-        <Button type="button" variant="ghost" onClick={() => navigate('/upload')}>
-          Back
-        </Button>
-        <Button type="button" onClick={() => void approve()}>
-          Approve to staged
-        </Button>
-      </div>
+      {step === 'preview' && dryRun !== null ? (
+        <>
+          <Card>
+            <CardContent>
+              <div className="overflow-x-auto rounded-md border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {Object.keys(dryRun.rows[0] ?? {}).map((key) => (
+                        <TableHead key={key}>{key}</TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dryRun.rows.map((row, index) => (
+                      <TableRow key={index}>
+                        {Object.values(row).map((value, cell) => (
+                          <TableCell key={cell}>{String(value)}</TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+          <div className="flex gap-3">
+            <Button type="button" variant="ghost" onClick={() => setStep('review')}>
+              Back
+            </Button>
+            <Button type="button" onClick={() => void goLive()}>
+              Go live
+            </Button>
+          </div>
+        </>
+      ) : null}
+
+      {step === 'golive' && approved !== null ? (
+        <Card>
+          <CardContent className="flex flex-col gap-3">
+            <p role="status" className="text-body-strong text-success">
+              Mapping approved to staged (version {approved.mapping_version}) for {approved.source_id}.
+            </p>
+            <p className="text-caption text-muted-foreground">
+              Future files for this source flow through this mapping once it is promoted to active.
+            </p>
+            <div>
+              <Link
+                to={`/sources/${approved.source_id}/mappings`}
+                className={buttonVariants({ variant: 'outline', size: 'sm' })}
+              >
+                View source mappings
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
     </section>
   )
 }

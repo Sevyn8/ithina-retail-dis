@@ -9,15 +9,17 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
-import { OnboardingStepper } from '../components/OnboardingStepper'
+import { ProgressRail } from '@/components/ui/progress-rail'
 import { cn } from '@/lib/utils'
 import { createSample, useSample } from '../lib/dis-ui-server/onboarding'
 import { deriveSourceId, makeSourceDraft, useSources } from '../lib/dis-ui-server/sources'
+import { CSV_JOURNEY_STEPS, CSV_JOURNEY_STEP_INDEX } from './csv-journey'
 
-// Sample Upload (surface map screen 3, onboarding step 1), on the design-system craft
-// bar. Accepts a CSV sample and metadata, calls the 2.1 fixture to create a sample,
-// polls 2.2, and on `ready` navigates to Mapping Review. Fixture mode: the file bytes
-// are not sent. Behavior is unchanged from before; only the composition is rebuilt.
+// Upload (CSV journey step 1; surface map screen 3, onboarding step 1), on the redesign
+// visual language behind the shared 4-step rail. Accepts a CSV sample and metadata, calls
+// the 2.1 fixture to create a sample, polls 2.2, and on `ready` advances to Review mapping.
+// Fixture mode: the file bytes are not sent. The data layer (onboarding.ts) is unchanged
+// (R3); only the composition and the rail are new.
 export function SampleUpload() {
   const navigate = useNavigate()
   const { snapshot } = useAuth()
@@ -77,11 +79,15 @@ export function SampleUpload() {
   return (
     <section className="max-w-2xl">
       <header className="mb-4">
-        <h1 className="text-display">Sample Upload</h1>
-        <p className="text-caption text-muted-foreground">Upload a sample of your data to begin.</p>
+        <h1 className="text-display">Upload a CSV</h1>
+        <p className="text-caption text-muted-foreground">
+          Upload a sample of your sales data. We map it, you review, it goes live.
+        </p>
       </header>
 
-      <OnboardingStepper active="Upload" />
+      <div className="mb-6">
+        <ProgressRail steps={[...CSV_JOURNEY_STEPS]} current={CSV_JOURNEY_STEP_INDEX.upload} />
+      </div>
 
       <div className="flex flex-col gap-4">
         {/* Styled dropzone. The native input is visually hidden but accessible; the
