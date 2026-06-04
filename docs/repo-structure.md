@@ -835,45 +835,52 @@ libs/dis-canonical/       # canonical schema models (Pydantic)
 ### libs/dis-mapping/
 
 ```
-libs/dis-mapping/         # mapping engine: rename / normalize / cast / derive
+libs/dis-mapping/         # pure mapping engine: rename / normalize / cast / derive (slice-05)
 ├── pyproject.toml
 ├── README.md
 ├── src/
 │   └── dis_mapping/
 │       ├── __init__.py
+│       ├── result.py               # MappingResult + CellNormalizationFailure (partial contribution)
 │       ├── models/
 │       │   ├── __init__.py
-│       │   ├── source_mapping.py   # the config.source_mappings shape
-│       │   └── transform.py        # transform spec (op, args)
-│       ├── engine/
-│       │   ├── __init__.py
-│       │   ├── rename.py
-│       │   ├── normalize.py        # declarative vocabulary
-│       │   ├── cast.py
-│       │   └── derive.py
-│       └── escape_hatch/
+│       │   ├── source_mapping.py   # the mapping_rules contract (D49): ordered transform lists
+│       │   └── transform.py        # bounded vocabulary + per-op arg validation
+│       └── engine/
 │           ├── __init__.py
-│           └── registry.py         # named custom transform functions
+│           ├── apply.py            # apply_mapping composition
+│           ├── rename.py
+│           ├── normalize.py        # op impls; ordered per-column lists
+│           ├── cast.py
+│           └── derive.py
 └── tests/
     └── unit/
 ```
 
+Note: the formerly-reserved `escape_hatch/` registry is DEFERRED and does not exist
+(slice-05 scope boundary; the bounded declarative vocabulary is the only transform surface).
+
 ### libs/dis-validation/
 
 ```
-libs/dis-validation/      # Pandera suites; pre-mapping and post-mapping
+libs/dis-validation/      # Pandera suites; pre-mapping and post-mapping (slice-05)
 ├── pyproject.toml
 ├── README.md
 ├── src/
 │   └── dis_validation/
 │       ├── __init__.py
-│       ├── suite_loader.py     # load a (tenant, source, version) suite
-│       ├── source_shape.py     # base classes for pre-mapping suites
-│       ├── canonical_shape.py  # base classes for post-mapping suites
+│       ├── provenance.py       # mapping-produced vs consumer-injected line + drift guard
+│       ├── source_shape.py     # SourceShapeSuiteDef (+ from_rename) + materializer
+│       ├── canonical_shape.py  # CanonicalShapeSuiteDef + model-derived materializer
+│       ├── runner.py           # run_source_shape / run_canonical_shape (D50 pre-check)
 │       └── failure_formatter.py # tenant-readable failure reasons
 └── tests/
     └── unit/
 ```
+
+Note: the formerly-reserved `suite_loader.py` (a DB-backed `(tenant, source, version)`
+loader) is the CONSUMER's side-input (Slice 10), not this pure lib's — this lib
+materializes handed-in definitions only.
 
 ### libs/dis-rls/
 

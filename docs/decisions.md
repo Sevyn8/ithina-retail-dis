@@ -494,3 +494,33 @@ These are not consistent on whether tokenization is one-way (HMAC, no recovery) 
 **Status.** `SETTLED` (Slice 7). DB-pull reads Customer Master's *Postgres*, but the Slice 2 Customer Master fake is **HTTP-only** (JWTs / sessions / events) and the real CM (port 5432) is off-limits to tests. Slice 7 therefore built a faithful stand-in: `dis_testing.customer_master_db` provisions an in-cluster `ithina_platform_db` database on 5433 with `core.tenants` / `core.stores`, **FORCE ROW LEVEL SECURITY** + the platform-access policy, seeded from `dis_testing.fixtures`, with `SELECT` granted to the NOBYPASSRLS service role (so the no-context-→-zero-rows behavior is exercised for real). The reader asserts `current_database()` is the CM database; the writer is `ithina_dis_db` — both on 5433, the real CM never touched.
 
 **Reuse, not rebuild.** A later CM-reading slice (e.g. the Pub/Sub consumer mode, or any service that reads CM) **reuses this harness** rather than rebuilding it. **Correction registered:** the Slice 7 doc's "Slice 2 Customer Master fake" dependency and criterion 8 wording were inaccurate for a DB-pull read (the fake cannot serve a DB read); the slice doc has been edited to name the test-CM Postgres harness so the doc and the build agree. **Scope.** Test infrastructure + docs; no production DDL.
+
+---
+
+### D49 `mapping_rules` drives normalization via a field named `normalize`; the `transforms` wording in D20/architecture.md is stale `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 5, by live introspection of `ithina_dis_db`). Records a confirmed doc-vs-schema naming divergence; the engine follows the live schema.
+
+**The divergence.** D20 and `architecture.md` (§6.1 step 6, the ASCII config box, and the Glossary's "Normalization" entry) describe normalization as driven by a declarative **`transforms`** field in the mapping config. The live `config.source_mappings.mapping_rules` JSONB uses **`normalize`**: the seeded row (`mapping_version_id=1`) carries `{"version":1,"rename":{},"normalize":{},"cast":{},"derive":{}}`, and the live column comment reads "The rename + normalize + cast + derive rules per source field. JSONB; shape is source-type dependent; documented in libs/dis-mapping; validated by Pandera when the streaming consumer loads it." D40's note had already recorded the `normalize` shape; Slice 5 re-introspected and confirmed it.
+
+**Resolution.** The field is **`normalize`**. `libs/dis-mapping`'s `SourceMapping` model reads `{version, rename, normalize, cast, derive}` and is the documented contract for the inner shape (the live row's sub-objects are empty, so live data does not constrain it; the column comment delegates the documentation to libs/dis-mapping). **Inner shape (Slice 5):** `normalize` and `derive` are `dict[canonical_col, ORDERED LIST of {op, args}]`, applied in declared sequence; ops are atomic and single-purpose; `cast` is `dict[canonical_col, {type, precision?, scale?}]`. Separator/locale args (`parse_decimal`, `parse_integer`) are mandatory declarations — never defaulted or inferred (the locale rule has no other doc home; it is pinned in the lib contract). Correcting the `transforms` wording in `architecture.md`/D20 prose is an operator call at the commit gate (register-only here). **Scope.** Docs + the Slice 5 `dis-mapping` model; no DDL.
+
+---
+
+### D50 pandera 0.31.1 polars engine crashes on Decimal-schema vs non-Decimal data; contained pre-check workaround in dis-validation `OPEN`
+
+**Status.** `OPEN` (upstream bug; contained workaround in force). Surfaced during Slice 5 implementation — the plan-mode probes validated Decimal-vs-Decimal but not Decimal-vs-other-dtype. **Owner: Slice 5. Removal trigger: the canary test goes red.**
+
+**The bug.** pandera 0.31.1 (the pinned, newest release — no patched 0.31.x exists) raises a raw `AssertionError` ("The return is expected to be of Decimal class", `pandera/engines/polars_engine.py`) when a schema column declaring `pl.Decimal(p,s)` validates data of ANY non-Decimal dtype (String and Float64 both reproduce). Every other dtype mismatch reports a typed `dtype(...)` failure case; Decimal-vs-Decimal precision/scale mismatches also report natively. Unhandled, a contribution with a wrong-typed Decimal column (e.g. a mapping missing its cast rule) would crash the canonical-shape gate with a non-`DisError` instead of routing a typed failure — a consumer crash-loop path, not a quarantine path.
+
+**The contained workaround** (`dis_validation.runner._decimal_dtype_precheck`). Scoped STRICTLY to Decimal-schema columns: before pandera runs, columns whose schema dtype is `pl.Decimal` and whose data dtype is not Decimal get the SAME failure-case row a native dtype check produces (same `check` string, same column-level grain), formatted by the same formatter — downstream sees one shape for one logical error (asserted by `test_decimal_dtype_mismatch_failure_is_indistinguishable_from_native`). The affected column alone is neutralized for the pandera run; every other column stays entirely pandera's. No `AssertionError` is caught anywhere.
+
+**The canary** (`libs/dis-validation/tests/unit/test_pandera_decimal_canary.py`) feeds pandera the broken case directly (outside the workaround) and asserts the raw `AssertionError` STILL occurs, plus asserts the bug's boundary (Decimal-vs-Decimal reports natively). Any upstream behaviour change — within or beyond the version pin — turns the canary red, forcing the workaround's removal review. Do not loosen the canary; remove the workaround. **Scope.** `dis-validation` runner + tests; no DDL.
+
+---
+
+### D51 Tier-0 structural CSV validation lives in dis-ui-server's upload endpoint, not the frontend and not the pure pipeline libs `OPEN`
+
+**Status.** `OPEN`, forward-looking (registered at the Slice 5 commit gate; operator-directed).
+
+Tier-0 structural CSV validation (file present, non-empty, decodes, parses as CSV, min-rows floor) lives in dis-ui-server as a module within the upload endpoint, not in the frontend and not in the pure pipeline libs (dis-mapping/dis-validation operate on parsed frames, never bytes); it is structural-only, with column/mapping-aware checks remaining tier 1 (the source-shape suite). **Owner:** the slice building dis-ui-server's upload endpoint. **Promotion trigger:** promote to a shared lib only if a second upload entry path needs the same gate. **Naming note:** `dis-ui-server` is the live architecture's name for the BFF (D26, D36; build-guide Slice 8) — no divergence. **Cross-refs:** D4, D18, slice-05.
