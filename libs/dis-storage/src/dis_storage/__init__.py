@@ -1,7 +1,11 @@
 """dis-storage — the only sanctioned GCS access path in DIS (root CLAUDE.md hard rule 9).
 
-- :func:`build_object_path` — the frozen canonical object-path scheme. The caller
-  supplies ``trace_id``; the lib never mints it (hard rule 4).
+- :func:`build_object_path` — the frozen canonical object-path scheme (UUID tenant
+  segment, decisions.md D53). The caller supplies ``trace_id``; the lib never mints
+  it (hard rule 4).
+- :func:`parse_object_path` / :class:`ParsedObjectPath` — the inverse: recover the
+  path components (tenant UUID typed; trace_id verbatim). The only sanctioned place
+  paths are parsed.
 - :class:`StorageClient` — a thin wrapper over ``google.cloud.storage.Client`` that
   honours ``STORAGE_EMULATOR_HOST`` (one place for GCS object read/write).
 - :func:`generate_upload_url` — V4 signed PUT URL issuance. Deterministic and offline
@@ -15,7 +19,13 @@ the signature; that is unverified until a real-GCS slice (first use: Slice 8's
 from __future__ import annotations
 
 from dis_storage.client import StorageClient
-from dis_storage.paths import build_object_path
+from dis_storage.paths import ParsedObjectPath, build_object_path, parse_object_path
 from dis_storage.signed_urls import generate_upload_url
 
-__all__ = ["StorageClient", "build_object_path", "generate_upload_url"]
+__all__ = [
+    "ParsedObjectPath",
+    "StorageClient",
+    "build_object_path",
+    "generate_upload_url",
+    "parse_object_path",
+]

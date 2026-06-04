@@ -15,8 +15,11 @@ For interfaces, types, file structure, see `README.md`.
 - **All GCS access goes through this lib.** Direct `google-cloud-storage` import
   elsewhere is forbidden by CI lint.
 - **Frozen path scheme** (do NOT improvise):
-  `tenant/{id}/source/{id}/yyyy=Y/mm=M/dd=D/{trace_id}.{ext}`. `build_object_path`
-  builds it; date segments are normalised to UTC.
+  `tenant/{tenant_uuid}/source/{id}/yyyy=Y/mm=M/dd=D/{trace_id}.{ext}`. The tenant
+  segment is the **internal tenant UUID** (lowercase 8-4-4-4-12, D53), never an
+  external code. `build_object_path` builds it (non-UUID tenant → `StorageError`;
+  date segments normalised to UTC); `parse_object_path` is the only sanctioned
+  inverse (tenant typed `UUID`, `trace_id` returned verbatim as `str`).
 - **Never mint `trace_id`** (hard rule 4): the caller supplies it; the path builder
   echoes it verbatim and imports no trace-id generator.
 - **`client.py` honours `STORAGE_EMULATOR_HOST`** (anonymous creds + endpoint

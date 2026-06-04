@@ -75,7 +75,7 @@ These hold across every service and lib. Violations are bugs, not preferences.
 
 8. **BigQuery access via BqClient only.** All BQ queries go through `libs/dis-core` BqClient which auto-injects `WHERE tenant_id = :tenant_id`. Direct `google-cloud-bigquery` import is forbidden in services. CI lint enforces.
 
-9. **GCS access via dis-storage only.** Canonical path: `tenant/{id}/source/{id}/yyyy=Y/mm=M/dd=D/{trace_id}.{ext}`. Never improvise paths. CI lint forbids direct `google-cloud-storage` import.
+9. **GCS access via dis-storage only.** Canonical path: `tenant/{tenant_uuid}/source/{source_id}/yyyy=Y/mm=M/dd=D/{trace_id}.{ext}` — the tenant segment is the internal tenant UUID (lowercase 8-4-4-4-12, decisions.md D53), never an external code. Never improvise paths; `dis-storage` is the only place paths are built or parsed. CI lint forbids direct `google-cloud-storage` import.
 
 10. **Pub/Sub envelopes are frozen contracts.** Schemas in `contracts/pubsub/*.schema.json`. Changing a schema is a coordinated cross-service change, not a single-service edit.
 
