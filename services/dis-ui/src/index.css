@@ -67,6 +67,15 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
 
+  /* Source-type identities (redesign R1). Each connector/source type carries its own
+     color, used consistently across the connector picker, the Dashboard breakdown, and
+     source rows. Additive: no existing screen references these. Consumed via the single
+     source-identity helper (literal classes bg-/text-/border-/ring-source-*). */
+  --color-source-csv: var(--source-csv);
+  --color-source-shopify-pos: var(--source-shopify-pos);
+  --color-source-square: var(--source-square);
+  --color-source-other: var(--source-other);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-geist-sans);
@@ -76,6 +85,8 @@
   --radius-md: 0.375rem;
   --radius-lg: 0.5rem;
   --radius-xl: 0.625rem;
+  /* Softer hero/identity-card radius (redesign R1). Additive. */
+  --radius-2xl: 0.875rem;
 
   --shadow-sm: var(--shadow-sm-value);
   --shadow-md: var(--shadow-md-value);
@@ -134,6 +145,13 @@
   --chart-4: oklch(0.58 0.22 25);
   --chart-5: oklch(0.55 0.22 280);
 
+  /* Source-type identities (redesign R1), light. Distinct hues, distinct from primary
+     (257): CSV cyan/teal (the live source), Shopify green, Square indigo, Other slate. */
+  --source-csv: oklch(0.62 0.12 205);
+  --source-shopify-pos: oklch(0.64 0.15 150);
+  --source-square: oklch(0.55 0.18 285);
+  --source-other: oklch(0.55 0.03 260);
+
   --sidebar: oklch(1.00 0 0);
   --sidebar-foreground: oklch(0.15 0 0);
   --sidebar-primary: oklch(0.62 0.19 257);
@@ -179,6 +197,13 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
 
+  /* Source-type identities (redesign R1), dark. Lighter/brighter than light mode so they
+     read on the dark surface; same hues as light. */
+  --source-csv: oklch(0.73 0.11 205);
+  --source-shopify-pos: oklch(0.75 0.14 150);
+  --source-square: oklch(0.68 0.17 285);
+  --source-other: oklch(0.70 0.03 260);
+
   --sidebar: oklch(0.16 0 0);
   --sidebar-foreground: oklch(0.92 0 0);
   --sidebar-primary: oklch(0.62 0.19 257);
@@ -197,6 +222,14 @@
   line-height: 32px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+/* Hero headline (redesign R1), one step above text-display. Additive. */
+@utility text-display-lg {
+  font-size: 30px;
+  line-height: 38px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 @utility text-heading {

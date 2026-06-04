@@ -1,4 +1,3 @@
-import { PERSONAS } from '../../auth/dev/personas'
 import type { MeResponse } from './types'
 
 // Fixture GET /me profile responses, keyed by the token's sub (user_id).
@@ -27,7 +26,3 @@ export const ME_FIXTURES: Record<string, MeResponse> = {
     tenant_name: null,
   },
 }
-
-// Keep the profile fixtures and the /dev/login personas in lockstep: every persona
-// must have a profile fixture (referenced by tests so drift is caught).
-export const PERSONA_SUBS: readonly string[] = PERSONAS.map((persona) => persona.sub)

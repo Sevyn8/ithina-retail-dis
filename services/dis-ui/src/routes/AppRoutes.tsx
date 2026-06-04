@@ -18,6 +18,7 @@ import { Shadow } from './Shadow'
 import { SourceCreate } from './SourceCreate'
 import { SourceEdit } from './SourceEdit'
 import { SourcesIndex } from './SourcesIndex'
+import { StyleReference } from '../_style/StyleReference'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
 // wrap it in a MemoryRouter. /dev/login is public; everything under AuthBoundary
@@ -28,6 +29,9 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/dev/login" element={<DevLogin />} />
+      {/* Dev-only style reference (redesign R1 de-risk gate). Public like /dev/login, NOT
+          in the tenant/ops nav; renders the new visual language for light/dark review. */}
+      <Route path="/dev/style" element={<StyleReference />} />
       <Route element={<AuthBoundary />}>
         <Route element={<AppLayout />}>
           <Route index element={<IndexRoute />} />
