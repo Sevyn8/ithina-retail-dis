@@ -18,8 +18,9 @@ Create Date: 2026-06-02
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
+from typing import cast
 
 from alembic import op
 
@@ -125,7 +126,10 @@ def _guard_target() -> None:
 def _create_initial_partitions() -> None:
     """Create 7 daily partitions per partitioned parent, CURRENT_DATE-relative.
     IF NOT EXISTS for cloud-replay safety."""
-    start = op.get_bind().exec_driver_sql("SELECT CURRENT_DATE").scalar()
+    # cast() only — typing for the scalar() Any|None; SELECT CURRENT_DATE always
+    # returns one date row, so the expression itself is untouched (slice-9d rule:
+    # never rewrite a committed migration's expressions).
+    start = cast(date, op.get_bind().exec_driver_sql("SELECT CURRENT_DATE").scalar())
     start = start - timedelta(days=_DAYS_BACK)
     span = _DAYS_BACK + _DAYS_FORWARD + 1  # inclusive -> 7 days
     for schema, table, _key in PARTITIONED:

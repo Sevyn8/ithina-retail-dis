@@ -53,6 +53,7 @@ test:
 # importlib mode). Config (strict, pydantic plugin, dis-ui exclude) lives in
 # pyproject [tool.mypy].
 MYPY_PACKAGES = \
+	alembic \
 	libs/dis-audit \
 	libs/dis-canonical \
 	libs/dis-core \
@@ -61,6 +62,7 @@ MYPY_PACKAGES = \
 	libs/dis-rls \
 	libs/dis-storage \
 	libs/dis-testing \
+	libs/dis-validation \
 	services/mirror-sync-consumer \
 	tests \
 	tools

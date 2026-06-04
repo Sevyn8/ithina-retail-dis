@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from pydantic import BaseModel
 
 from dis_canonical import (
     StoreSkuChangeEvent,
@@ -29,11 +30,19 @@ from dis_core.errors import DisError, SuiteDriftError
 from dis_validation import PROVENANCE, assert_no_drift, mapping_produced_columns
 from dis_validation.provenance import ColumnProvenance
 
-MAPPING_FED_MODELS = [StoreSkuCurrentPosition, StoreSkuSaleEvent, StoreSkuChangeEvent]
+# Pre-widened key for monkeypatch.setitem: pytest's invariant dict[K, V] cannot
+# infer K from a concrete model class against the type[BaseModel]-keyed registry.
+_SALE_EVENT_KEY: type[BaseModel] = StoreSkuSaleEvent
+
+MAPPING_FED_MODELS: list[type[BaseModel]] = [
+    StoreSkuCurrentPosition,
+    StoreSkuSaleEvent,
+    StoreSkuChangeEvent,
+]
 
 
 @pytest.mark.parametrize("model", MAPPING_FED_MODELS)
-def test_provenance_partitions_every_mapping_fed_model_exactly(model: type) -> None:
+def test_provenance_partitions_every_mapping_fed_model_exactly(model: type[BaseModel]) -> None:
     # Errors-not-skips: assert_no_drift raises on ANY mismatch; a clean pass means
     # the four sets partition model_fields exactly, both directions.
     assert_no_drift(model)
@@ -126,7 +135,7 @@ def test_guard_goes_red_when_a_model_column_is_unclassified(
     # SuiteDriftError naming it. It must NOT silently join any set.
     current = PROVENANCE[StoreSkuSaleEvent]
     mutated = replace(current, mapping_produced=current.mapping_produced - {"quantity"})
-    monkeypatch.setitem(PROVENANCE, StoreSkuSaleEvent, mutated)
+    monkeypatch.setitem(PROVENANCE, _SALE_EVENT_KEY, mutated)
     with pytest.raises(SuiteDriftError, match="not classified"):
         assert_no_drift(StoreSkuSaleEvent)
 
@@ -137,7 +146,7 @@ def test_guard_goes_red_when_the_registry_carries_a_stale_column(
     # Direction 2: a registry column the model no longer carries -> SuiteDriftError.
     current = PROVENANCE[StoreSkuSaleEvent]
     mutated = replace(current, mapping_produced=current.mapping_produced | {"dropped_column"})
-    monkeypatch.setitem(PROVENANCE, StoreSkuSaleEvent, mutated)
+    monkeypatch.setitem(PROVENANCE, _SALE_EVENT_KEY, mutated)
     with pytest.raises(SuiteDriftError, match="stale"):
         assert_no_drift(StoreSkuSaleEvent)
 
@@ -150,7 +159,7 @@ def test_guard_goes_red_on_double_classification(monkeypatch: pytest.MonkeyPatch
         compute_owned=current.compute_owned,
         mapping_produced=current.mapping_produced,
     )
-    monkeypatch.setitem(PROVENANCE, StoreSkuSaleEvent, mutated)
+    monkeypatch.setitem(PROVENANCE, _SALE_EVENT_KEY, mutated)
     with pytest.raises(SuiteDriftError, match="classified in both"):
         assert_no_drift(StoreSkuSaleEvent)
 
