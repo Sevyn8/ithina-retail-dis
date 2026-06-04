@@ -84,6 +84,10 @@ dev = [
   "dis-mapping",
   "dis-validation",
   "mirror-sync-consumer",
+
+  # Import-graph contracts (slice-05): forbidden imports between the pure
+  # pipeline libs and the I/O-bearing libs. Run via `make lint` (lint-imports).
+  "import-linter>=2.0",
 ]
 
 [build-system]
@@ -122,6 +126,51 @@ testpaths = ["tests", "libs", "services"]
 addopts = "--import-mode=importlib"
 markers = [
   "integration: requires the local docker-compose stack (Postgres + fakes + emulators)",
+]
+
+# Import-graph contracts (slice-05): the two pure pipeline libs must not import
+# each other, the I/O-bearing DIS libs, or any DB/GCP client. The import graph
+# alone cannot prove the absence of runtime I/O — that is additionally held by
+# the no-I/O contract test (tests/contract/) plus review.
+[tool.importlinter]
+root_packages = ["dis_mapping", "dis_validation"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "dis-mapping is pure: no sibling pipeline lib, no I/O-bearing lib, no DB/GCP client"
+type = "forbidden"
+source_modules = ["dis_mapping"]
+forbidden_modules = [
+  "dis_validation",
+  "dis_canonical",
+  "dis_rls",
+  "dis_pii",
+  "dis_storage",
+  "dis_audit",
+  "dis_testing",
+  "sqlalchemy",
+  "psycopg",
+  "google",
+  "httpx",
+  "redis",
+]
+
+[[tool.importlinter.contracts]]
+name = "dis-validation is pure: no sibling pipeline lib, no I/O-bearing lib, no DB/GCP client"
+type = "forbidden"
+source_modules = ["dis_validation"]
+forbidden_modules = [
+  "dis_mapping",
+  "dis_rls",
+  "dis_pii",
+  "dis_storage",
+  "dis_audit",
+  "dis_testing",
+  "sqlalchemy",
+  "psycopg",
+  "google",
+  "httpx",
+  "redis",
 ]
 
 [tool.uv]
