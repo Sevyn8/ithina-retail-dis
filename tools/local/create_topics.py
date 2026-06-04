@@ -1,6 +1,9 @@
-"""Create the DIS Pub/Sub topics on the local emulator.
+"""Create the DIS Pub/Sub topics and worker subscriptions on the local emulator.
 
-Idempotent: existing topics are skipped. Refuses to run against real GCP.
+Idempotent: existing topics/subscriptions are skipped. Refuses to run against real
+GCP. This is the ONE local provisioning place (Slice 9b): worker runtime code never
+creates its own subscription — an absent subscription is a loud startup error in
+the worker, not a silent auto-repair.
 """
 
 import os
@@ -19,6 +22,12 @@ TOPICS = [
     "pipeline.dlq",
 ]
 
+# subscription id -> topic. The csv-ingest-worker pulls csv.received from here
+# (slice-9b; the worker's config pins the same name as a frozen constant).
+SUBSCRIPTIONS = {
+    "csv-ingest-worker.csv.received": "csv.received",
+}
+
 
 def main() -> int:
     if not os.getenv("PUBSUB_EMULATOR_HOST"):
@@ -35,6 +44,16 @@ def main() -> int:
             print(f"created: {topic_name}")
         except AlreadyExists:
             print(f"exists:  {topic_name}")
+
+    subscriber = pubsub_v1.SubscriberClient()
+    for subscription_name, topic_name in SUBSCRIPTIONS.items():
+        sub_path = subscriber.subscription_path(project, subscription_name)
+        topic_path = publisher.topic_path(project, topic_name)
+        try:
+            subscriber.create_subscription(request={"name": sub_path, "topic": topic_path})
+            print(f"created: {subscription_name} -> {topic_name}")
+        except AlreadyExists:
+            print(f"exists:  {subscription_name} -> {topic_name}")
 
     return 0
 

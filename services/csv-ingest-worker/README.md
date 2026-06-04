@@ -1,110 +1,123 @@
-# `services/csv-ingest-worker/` — *v1.0*
+# `services/csv-ingest-worker/` — *v1.0 (Slice 9b)*
 
-The GCS-event-triggered worker for CSV upload (Phase 2 of the two-phase CSV ingress flow). Subscribed to bronze-bucket object-finalized notifications; runs preflight, tokenizes PII, persists bronze metadata, and hands off to the streaming consumer via Pub/Sub.
+The event-triggered worker for CSV upload (Phase 2 of the two-phase CSV ingress flow, D36).
+Triggered by the `csv.received` event dis-ui-server publishes once a tenant's signed-PUT
+upload is confirmed saved in GCS (D54 — **not** by a raw GCS object-finalize). Runs the
+DuckDB structural preflight, wires the dis-pii fail-loud gate, persists one metadata-only
+bronze row, and hands off to the streaming consumer via `ingress.ready`.
 
-Phase 1 of CSV upload (signed-URL issuance) lives in `services/dis-ui-server/` as the `upload_session` handler. See `decisions.md` D36 for the split rationale.
+Phase 1 of CSV upload (upload session, identity resolution to UUID + codes, `trace_id`
+minting, signed-URL issuance, tier-0 validation per D51) lives in `services/dis-ui-server/`
+as the `upload_session` handler (Slice 8). See `decisions.md` D36 for the split, D54 for the
+trigger model.
 
-**Purpose.** Do the post-upload work that should not run inside a UI request: structural preflight, identity resolution, PII tokenization, bronze metadata persistence, and pipeline handoff. Scales with data volume rather than UI concurrency.
+**Purpose.** Do the post-upload work that should not run inside a UI request: structural
+preflight, the PII gate, bronze metadata persistence, and pipeline handoff. Scales with data
+volume rather than UI concurrency.
 
 **Entry.**
-- Trigger: Pub/Sub message on the `bucket.objects.changed` topic, published by GCS when a CSV object the tenant uploaded (against a dis-ui-server-issued signed URL) is finalized.
-- Inputs: GCS object path, object metadata, byte count, content-type.
-- Preconditions: object path matches the canonical path scheme issued by dis-ui-server's `upload_session` handler (`tenant/{id}/source/{id}/yyyy=Y/.../{trace_id}.csv`). The path itself carries `tenant_id`, `source_id`, and `trace_id`; the upload session is recoverable via Identity Service `resolve_from_upload`.
+- Trigger: Pub/Sub `csv.received` (frozen contract, `contracts/pubsub/csv.received.schema.json`),
+  pulled from the `csv-ingest-worker.csv.received` subscription (provisioned locally by
+  `make topics-create`; the worker NEVER creates its own subscription — absence is a loud
+  startup error).
+- The event carries the **already-resolved internal identity** (UUID `tenant_id`/`store_id`),
+  the external codes, `trace_id`, the upload session id, and the GCS pointer. The worker
+  **trusts the event** (D54): it calls no Identity Service, performs no external-to-internal
+  translation, and mints no `trace_id`.
+- Preconditions: the object at `gcs_uri` is finalized; the path follows the canonical scheme
+  (UUID tenant segment, D53).
 
-**Process.**
-- Parse the GCS object-finalized event; extract `tenant_id`, `source_id`, `trace_id` from the path; validate path shape via `libs/dis-storage`.
-- Resolve identity by calling Identity Service `resolve_from_upload` with the upload session ID encoded in the path. Confirms the tenant + store are still active and the upload session is known.
-- Idempotency check: compute SHA-256 of the object; if the same SHA-256 + source_payload_id + tenant has been processed in the last 24h, log and ack — return the prior `trace_id`, do not re-process.
-- DuckDB-driven preflight: row count, header present, type sniff, null %. Baseline checks (size, MIME, header). Failures route to `quarantine` topic with `pre-mapping/structural` reason and do not write bronze.
-- Tokenize any PII columns flagged by `dis-pii` per source mapping config. v1.0 CSV launch has no PII columns flagged → tokenization is a no-op pass-through. If a column is flagged but no storage backend is configured, `dis-pii` raises at startup (loud failure, no plaintext PII reaches bronze).
-- Write bronze metadata row via `libs/dis-rls` (RLS-scoped to the tenant).
-- Publish `ingress.ready` for the streaming consumer.
-- Emit audit events for each stage: object-finalized received, preflight result, PII tokenize, bronze write, ingress publish.
+**Process (per event).**
+1. Parse the envelope (typed against the frozen contract; violations raise `EventContractError`).
+2. Cross-check the GCS path against the event: `split_object_uri` + `parse_object_path`
+   (dis-storage, hard rule 9) must agree with the event on bucket, tenant, source, trace, ext.
+   A mismatch is a malformed PRODUCER (`EventPathMismatchError`) — a consistency check, never
+   a re-resolution.
+3. Download the object (dis-storage) and compute its SHA-256.
+4. Idempotency: same `(tenant, upload_session_id, payload_sha256)` within 24h of the prior
+   row's `received_at` → return the prior `trace_id`. PUBLISHED or FAILED prior → full no-op.
+   Unpublished RECEIVED prior → **resume-and-mark** (D59): complete the lost publish under
+   the prior trace, stamp `published_at`, write no second row.
+5. DuckDB structural preflight (D13/D16, contained in `preflight.py` with canary tests):
+   parses-as-CSV, header present, ≥1 column, ≥1 data row, type sniff. Structural ONLY —
+   column-/mapping-aware checks are Slice 10's source-shape suite. Failure → bronze row with
+   `processing_status='FAILED'`, audit FAILURE, **no publish**, ack (terminal).
+6. PII gate (hard rule 2, D40): the sniffed header names pass through dis-pii's fail-loud
+   gate BEFORE the bronze write. No per-column PII flag exists in the live schema (D40
+   limitation 2) so only heuristic name detection can fire; v1.0 has no backend, so a
+   detected column always raises (`PiiBackendNotConfiguredError`).
+7. Bronze write: ONE metadata-only row via `dis-rls` under the event's tenant (hard rules
+   1 & 12; FORCE RLS + the `current_database()=='ithina_dis_db'` target guard).
+8. Publish the frozen `ingress.ready` envelope (hard rule 10) — **write-then-CONDITIONALLY-
+   publish** (D5): only after bronze lands, and only on preflight success — then stamp
+   `published_at`/`PUBLISHED`.
+9. Audit at each stage (RECEIVED / PII_TOKENIZED / BRONZE_WRITTEN / INGRESS_PUBLISHED;
+   idempotent no-op = RECEIVED + SKIPPED), fire-and-forget (hard rule 11, D43, D44).
 
 **Exit.**
-- Success: bronze metadata row persisted; `ingress.ready` published (consumed by §3.7 streaming-consumer); audit events emitted (read by dis-ui-server `audit` handler); Pub/Sub message acked. No HTTP response (event-driven).
+- Success: bronze row `PUBLISHED`; `ingress.ready` published (consumed by the streaming
+  consumer, Slice 10); audit rows in `audit.events`; message acked.
 - Failure modes:
-  - *Preflight failure:* route the row(s) to `quarantine` topic (consumed by §3.8 quarantine-drainer) with `pre-mapping/structural` reason. Ack the source message — preflight failure is a terminal outcome for the chunk, not a retry case.
-  - *Bronze write failure (transient):* retry with backoff; if persistent, DLQ the GCS path for ops replay. Do not ack.
-  - *Identity Service circuit open:* fall back to direct `identity_mirror` read; if also unavailable, nack and let Pub/Sub redeliver.
-- Edge cases:
-  - *Signed URL expired before tenant uploaded:* no object-finalized notification fires; this service never sees the case. No durable artifact in DIS.
-  - *Tenant uploaded outside the path scope of the signed URL:* GCS rejects the PUT; no notification.
-  - *GCS notification fires but object is empty (zero bytes):* preflight rejects; route to quarantine.
+  - *Terminal (contract/content):* malformed envelope, path mismatch, preflight failure,
+    detected PII with no backend. FAILURE audit emitted, message ACKed (a redelivery would
+    fail identically). Preflight failure leaves a durable `FAILED` bronze row; no quarantine
+    path exists at this stage (quarantine is Slice 10/11's, for semantic failures).
+  - *Transient (infrastructure):* DB/GCS/publish unreachable. Logged and NACKed; Pub/Sub
+    redelivers and the idempotency path converges (D59).
+
+**The two `received_ts` values (read this before consuming both events).**
+`csv.received.received_ts` is the PRODUCER's timestamp (when dis-ui-server confirmed the GCS
+save). `ingress.ready.received_ts` is when **DIS durably accepted** the chunk — the bronze
+row's `received_at`, stamped by this worker. They are NOT the same instant; a downstream
+reader of both must not assume they coincide. The dedup window is likewise measured against
+bronze `received_at`, never the producer's timestamp.
 
 ```
 services/csv-ingest-worker/
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml
-├── Dockerfile
-├── .dockerignore
 │
-├── src/
-│   └── csv_ingest_worker/
-│       ├── __init__.py
-│       ├── main.py             # Pub/Sub subscriber entrypoint
-│       ├── config.py
-│       │
-│       ├── notifications/      # GCS object-finalized event handler
-│       │   ├── __init__.py
-│       │   └── handler.py      # subscribed to bucket.objects.changed Pub/Sub
-│       │
-│       ├── enrichment/         # runs on notification, before bronze write
-│       │   ├── __init__.py
-│       │   ├── identity.py     # call Identity Service resolve_from_upload
-│       │   ├── trace.py        # read trace_id from GCS path; this service does NOT mint trace_ids
-│       │   └── pii.py          # tokenize PII before any persisted reference
-│       │
-│       ├── preflight/          # DuckDB-driven CSV pre-flight after upload completes
-│       │   ├── __init__.py
-│       │   ├── duckdb_check.py # row count, columns, null %, type sniff
-│       │   └── rules.py        # baseline checks (size, MIME, header present)
-│       │
-│       ├── sinks/
-│       │   ├── __init__.py
-│       │   ├── bronze.py       # write metadata row
-│       │   ├── pubsub.py       # publish ingress.ready
-│       │   └── quarantine.py   # publish to quarantine topic on preflight failure
-│       │
-│       └── clients/
-│           ├── __init__.py
-│           └── identity.py
+├── src/csv_ingest_worker/
+│   ├── __init__.py
+│   ├── main.py          # entrypoint: wire deps, require the subscription, run the loop
+│   ├── config.py        # required env (no silent defaults) + frozen contract constants
+│   ├── envelope.py      # csv.received typed model + drift guard vs the contract file
+│   ├── subscriber.py    # pull loop; terminal->ack, transient->nack
+│   ├── pipeline.py      # per-event orchestration (the stage order above)
+│   ├── preflight.py     # DuckDB containment (the ONLY module importing duckdb)
+│   ├── pii_gate.py      # dis-pii wired over the sniffed header (synthetic rename shape)
+│   ├── bronze.py        # dedup lookup, metadata-only INSERT, publish mark
+│   ├── publisher.py     # ingress.ready model + drift guard; emulator-guarded publisher
+│   └── audit.py         # per-stage fire-and-forget emission
 │
-├── tests/
-│   ├── unit/
-│   │   ├── test_preflight.py
-│   │   ├── test_enrichment.py
-│   │   ├── test_idempotency.py
-│   │   └── test_notification_handler.py
-│   ├── integration/
-│   │   ├── conftest.py
-│   │   ├── test_object_finalized_flow.py
-│   │   ├── test_csv_malformed.py
-│   │   ├── test_csv_too_large.py
-│   │   └── test_csv_empty.py
-│   └── fixtures/
-│       └── csvs/               # sample CSVs (good, malformed, edge cases)
-│
-├── scripts/
-│   └── run-local.sh
-│
-└── deploy/
-    ├── service.yaml
-    ├── configmap.yaml
-    └── README.md
+└── tests/
+    ├── unit/            # envelope/config/preflight+canary/pii/bronze/pipeline/subscriber
+    │                    # + trust-boundary proofs (no identity import, no trace mint)
+    ├── integration/     # live stack: e2e delivery, idempotency both ways, target safety
+    └── fixtures/csvs/   # well-formed / headerless / header-only samples
 ```
 
-**Why this is a worker, not a receiver.** The "receiver" pattern is for services that accept HTTP requests. This service is triggered by GCS, not by a user; it has no public HTTP surface. Calling it a worker matches its operational shape: queue consumer, scales with backlog, retries on failure.
+**Why this is a worker, not a receiver.** No HTTP surface, no caller to authenticate (D36):
+queue consumer, scales with backlog, retries via redelivery + idempotency.
 
-**Why this service does not generate `trace_id`.** Per D36, dis-ui-server's `upload_session` handler generates the `trace_id` and encodes it in the GCS object path. By the time this worker fires, `trace_id` is already pinned. This worker reads it; it does not mint.
+**Why this service does not generate `trace_id`.** dis-ui-server mints it at Phase 1 and
+carries it on `csv.received` (D54). This worker reads it; a test makes the minting function
+explode to prove nothing here calls it.
 
-**Why `notifications/` is the entry point.** No HTTP routes. The entry is a Pub/Sub subscriber on `bucket.objects.changed`. The `notifications/handler.py` is the single dispatch point.
+**Why there is no identity client here.** The event is the trust boundary (D54). dis-ui-server
+resolved identity at Phase 1; re-resolving would only re-derive what it already knew.
+Freshness (tenant deactivated between upload and processing) is the streaming consumer's
+validate, not this worker's. A test asserts `dis_core.identity` is never imported.
 
-**Why there is no `sinks/gcs.py` here.** This service does not write the CSV payload to GCS; the tenant does, via the signed URL issued by dis-ui-server. The GCS object path is constructed in dis-ui-server (`libs/dis-storage`) at signed-URL issuance time; this worker reads the path from the notification, not by computing it.
+**Concurrency note (D58).** The idempotency check is query-based (no UNIQUE constraint over
+the dedup key — a 24h window cannot be a plain unique index). Correct for a SINGLE worker
+instance; scaling to concurrent instances requires a constraint/upsert design first.
 
-**Why `identity.py` calls `resolve_from_upload` instead of `resolve_from_token`.** Identity is bound to the upload session created in dis-ui-server's `upload_session` handler, not to a request token. The upload session ID is encoded in the GCS object path; this worker calls `resolve_from_upload(upload_id)` to retrieve the tenant + store identity.
-
-**What's deliberately not here.** No HTTP routes (worker-only). No signed URL issuance (dis-ui-server's job). No mapping execution (streaming-consumer's job). No semantic validation suites (those run in the streaming consumer post-fetch). This worker does *structural* preflight, not *semantic* validation.
+**What's deliberately not here.** No identity resolution (Slice 13). No `csv.received`
+publishing (Slice 8). No mapping, Pandera suites, canonical writes, `mapping_version_id`,
+or quarantine routing (Slice 10/11). No PII tokenizer/key-vault/flag mechanism (D40's
+deadline). No cloud notification wiring (deferred infra). No batching/retry tuning beyond
+what the trigger contract requires.
 
 ---
