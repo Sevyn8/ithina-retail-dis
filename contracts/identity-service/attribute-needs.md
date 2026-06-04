@@ -22,6 +22,8 @@ identity-service is called by other DIS services (csv-upload, streaming-consumer
 
 When the DIS UI uploads a CSV (via csv-upload phase 1), csv-upload calls identity-service to resolve "who is this user, which tenant, which store." identity-service needs enough information to produce a complete `Identity` record.
 
+> **STALE (flagged, not rewritten):** the `^t_[a-z0-9]{12}$`/`^s_[a-z0-9]{12}$` identifier patterns below are the retired invented form (`decisions.md` D52); the DIS fakes now carry Customer Master's `display_code`/`store_code` as the claim values. This document is DIS's input to the unsigned CM contract, so its patterns are corrected at CM sign-off, not here — see `decisions.md` D56.
+
 | Attribute | What | Expected shape | Source | Notes |
 |---|---|---|---|---|
 | User identity proof | Something that proves the request comes from a logged-in DIS UI user | Customer Master JWT or upload session ID | | The user is already authenticated in DIS UI; this is the artifact that travels with the upload request. Could be the user's JWT itself or a short-lived upload session ID derived from it. |

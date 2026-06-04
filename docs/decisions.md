@@ -327,9 +327,13 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 
 ---
 
-### D37 External identity IDs (`t_*`/`s_*`) vs internal UUID keys — translation location undefined `OPEN`
+### D37 External identity IDs vs internal UUID keys: translation location `RESOLVED`
 
-**Status.** `OPEN`. This entry records an open decision; it does **not** resolve it. Raised during Slice 2 (see the Slice 2 plan §2 / R1). **Deadline re-pointed (Slice 7):** the original "before Slice 7" deadline assumed Slice 7 needed the external↔internal translation. It does not — Mirror Sync (DB-pull) replicates Customer Master's own UUID-keyed columns and needs no external-id resolution for FK integrity (the mirror's keys are the UUIDs; CM's external ids, `display_code`/`store_code`, are not replicated and not required). **New hard deadline: the first receiver or consumer that must resolve identity from an external identifier.** D37 stays OPEN; it is not Slice 7's to settle.
+**Status.** `RESOLVED` (during the Slice 9a identity-correction work). Resolution: **candidate 3**, the Identity Service owns the translation. Every `resolve_*` method returns the **internal UUID** for `tenant_id`/`store_id` (and carries the authoritative external codes alongside, per D55). The single point of external-to-internal translation is the Identity Service, consumed once by dis-ui-server at CSV-upload Phase 1; from there the internal UUID propagates on `csv.received` (D54) and `ingress.ready`, so no downstream DIS consumer resolves identity from an external identifier. The invented `t_*`/`s_*` identity form is removed from the DIS Pub/Sub contracts (D52). Candidate 2 (a reversible encoding) is rejected on sizing: a ~62-bit external string cannot encode a 128-bit UUID. Candidate 1 (an `external_id` column the worker looks up) is not needed for translation, since the Identity Service returns the UUID directly; the mirror still gains the authoritative external codes for readability (D55), not as a translation bridge.
+
+Original `OPEN` text retained below for the record. The deadline noted then (the first receiver or consumer that must resolve identity from an external identifier) was reached at CSV-upload Phase 2 design; it is settled here rather than at the worker, because the translation was lifted to Phase 1 / the Identity Service.
+
+**Status (original, OPEN).** This entry records an open decision; it does **not** resolve it. Raised during Slice 2 (see the Slice 2 plan §2 / R1). **Deadline re-pointed (Slice 7):** the original "before Slice 7" deadline assumed Slice 7 needed the external↔internal translation. It does not — Mirror Sync (DB-pull) replicates Customer Master's own UUID-keyed columns and needs no external-id resolution for FK integrity (the mirror's keys are the UUIDs; CM's external ids, `display_code`/`store_code`, are not replicated and not required). **New hard deadline: the first receiver or consumer that must resolve identity from an external identifier.** D37 stays OPEN; it is not Slice 7's to settle.
 
 **The gap.** The frozen identity-service OpenAPI and the `identity.changed` Pub/Sub schema expose tenants and stores as external string identifiers — `^t_[a-z0-9]{12}$` / `^s_[a-z0-9]{12}$`. The DIS schema (Slice 1) keys `identity_mirror.tenants`, `identity_mirror.stores`, and all `canonical.*` / `config.source_mappings.tenant_id` by 128-bit `UUID` (UUIDv7, "mirrors `platform_db.core.*.id`"). A 12-char base36 string (~62 bits) cannot encode a 128-bit UUID, so these are two distinct identifier spaces. No column, encoding, or layer maps one to the other anywhere in the schema, the contracts, or this register (D1–D36).
 
@@ -524,3 +528,90 @@ These are not consistent on whether tokenization is one-way (HMAC, no recovery) 
 **Status.** `OPEN`, forward-looking (registered at the Slice 5 commit gate; operator-directed).
 
 Tier-0 structural CSV validation (file present, non-empty, decodes, parses as CSV, min-rows floor) lives in dis-ui-server as a module within the upload endpoint, not in the frontend and not in the pure pipeline libs (dis-mapping/dis-validation operate on parsed frames, never bytes); it is structural-only, with column/mapping-aware checks remaining tier 1 (the source-shape suite). **Owner:** the slice building dis-ui-server's upload endpoint. **Promotion trigger:** promote to a shared lib only if a second upload entry path needs the same gate. **Naming note:** `dis-ui-server` is the live architecture's name for the BFF (D26, D36; build-guide Slice 8) — no divergence. **Cross-refs:** D4, D18, slice-05.
+
+---
+
+### D52 DIS Pub/Sub contracts: identity is the internal UUID; the invented `t_*`/`s_*` form is removed; external codes ride along, optional but producer-required `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 9a). Corrects a contract-vs-authority defect found while planning CSV ingest: every DIS Pub/Sub envelope keyed `tenant_id`/`store_id` to the pattern `^t_[a-z0-9]{12}$` / `^s_[a-z0-9]{12}$`, a form that matches neither the authoritative internal UUID (Customer Master `core.*.id`, mirrored verbatim) nor the authoritative external code (`display_code`/`store_code`). It was a DIS-invented identifier for entities DIS does not own.
+
+**Decision.** Across all DIS Pub/Sub contracts, the identity fields carry the **internal UUID** (`format: uuid`), load-bearing. The `t_*`/`s_*` form is removed. Where a readable code is wanted on the wire, contracts carry the authoritative Customer Master codes as separate fields, `tenant_display_code` (= `tenants.display_code`) and `store_code` (= `stores.store_code`): **optional in the schema, but producers MUST populate them when publishing** (enforced producer-side and in producer tests, not by the validator). Codes are readability only, never a substitute for the UUID.
+
+**Files corrected (edited in place; `schema_version` stays `const: 1`).** All live in `contracts/pubsub/`: `ingress.ready`, `ingress.resubmit`, `quarantine`, `pipeline.dlq`, `mapping.changed`, `identity.changed`, plus the new `csv.received` (D54). Each schema and its example updated. Because the change is breaking but **nothing consumes these in production** (local dev only, no staging), the version is not bumped; the schemas are treated as never-deployed drafts.
+
+**Per-contract specifics.**
+- `ingress.ready` / `ingress.resubmit`: `tenant_id`, `store_id` to UUID; add the two code fields; `gcs_uri` tenant segment to UUID (D53).
+- `quarantine`: same, `store_id` stays optional; `gcs_uri` to UUID (D53).
+- `pipeline.dlq`: `tenant_id` to UUID; add `tenant_display_code`; `batch.rows_ref` is unpatterned, example path updated to the UUID segment.
+- `mapping.changed`: `tenant_id` to UUID; add `tenant_display_code`. `changed_by` is a user-id vocabulary (`u_*`), out of scope.
+- `identity.changed`: `entity_id` and `tenant_id` to UUID; `payload.is_active` (boolean) replaced by `payload.status` (string) to match D46; `payload` gains `display_code`/`store_code` so Mirror Sync's Pub/Sub mode can populate the new mirror columns (D55).
+
+**Cross-refs.** D37 (translation resolved; this removes the invented form it described), D53 (GCS path UUID), D54 (`csv.received`), D55 (mirror external-code columns), D46 (`status` not `is_active`). **Scope.** Contracts + examples only; the Identity Service and producer code that must populate UUID + codes are D37 / D55 and the relevant slices.
+
+---
+
+### D53 GCS object-path tenant segment is the internal tenant UUID, not an external code `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 9a). Settles the path-form half of the identity correction (D52): the canonical GCS object path embedded a `t_*` tenant segment (`tenant/t_[a-z0-9]{12}/...`), the same invented external form, pinned both in hard rule 9 and in the `gcs_uri` regex of the frozen Pub/Sub contracts.
+
+**Decision.** The tenant segment of the canonical GCS object path is the **internal tenant UUID**. Path scheme: `tenant/{tenant_uuid}/source/{source_id}/yyyy=Y/mm=M/dd=D/{trace_id}.{ext}`. Chosen over the external `display_code` because the UUID is immutable and authoritative, whereas `display_code` is user-editable in Customer Master: keying object paths (and the dedup and lineage that read them) on a mutable code would break path stability on a tenant rename. The `gcs_uri` regex in every contract that carries it (`ingress.ready`, `ingress.resubmit`, `quarantine`) changes its tenant segment from `t_[a-z0-9]{12}` to the UUID form; `pipeline.dlq.batch.rows_ref` is unpatterned but its example path is updated likewise.
+
+**Implications.**
+- `libs/dis-storage`: `build_object_path` produces the UUID segment; the inverse `parse_object_path` (added by the consumer slice) parses it. Hard rule 9's path text in CLAUDE.md is corrected to the UUID form.
+- This resolves the §3.6 finding from the Slice 9 (now 9b) first plan: with identity carried as UUID and the path keyed by UUID, the worker writes the UUID to bronze and to the envelope with no external-form reconciliation. The external codes ride the envelope (D52) but are not in the path.
+- The exact UUID character-class in each regex is finalized in plan mode against what `dis-storage` actually emits; the contracts carry the standard 8-4-4-4-12 hex form as drafted.
+
+**Cross-refs.** D52 (identity-field correction), hard rule 9, D36 (the path that D36's "upload session id encoded in the path" wording referenced; that wording is corrected under D54). **Scope.** Contracts + `dis-storage` path scheme + hard rule 9 text; the path-producing code lands in the relevant slices (Phase 1 builds paths, the worker parses them).
+
+---
+
+### D54 CSV ingest is triggered by a `csv.received` event from dis-ui-server, not a raw GCS object-finalize; the worker trusts the event and resolves no identity `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 9a). Replaces the trigger model D36 implied for CSV-upload Phase 2. D36 left Phase 2 "event-triggered by GCS object-finalized notifications," which made the worker resolve identity itself (it received only a path) and assumed "the upload session id is encoded in the GCS object path", a carrier that does not exist in the live path scheme (D53 keys the path by UUID + trace_id, no session segment).
+
+**Decision.** dis-ui-server publishes a `csv.received` event once the tenant's signed-PUT upload is confirmed saved in GCS. The `csv-ingest-worker` is triggered by `csv.received` and **trusts it**: identity (`tenant_id`/`store_id` UUIDs, plus codes) is already on the message because dis-ui-server resolved it at Phase 1 against the Identity Service (D37). The worker therefore **does not call `resolve_from_upload` and holds no Identity Service dependency**. `trace_id` is carried on `csv.received` (minted at Phase 1), so the worker reads it rather than parsing it from the object path. `upload_session_id` rides the event as the `source_payload_id` idempotency component and lineage, not as a resolve key.
+
+**Why event-from-dis-ui-server, not GCS-finalize.** A raw GCS finalize carries no identity, forcing a re-resolve and a fragile path-parse; it also fires on every object in the bucket. A `csv.received` from dis-ui-server is a clean DIS envelope carrying resolved identity and the GCS pointer, and matches the trust model already used downstream (the streaming consumer trusts `ingress.ready` rather than re-resolving). The new event is a DIS Pub/Sub contract (`csv.received`, D52 field rules apply); it is distinct from `ingress.ready`, which the worker publishes only after bronze lands.
+
+**Trust-boundary tradeoff (named).** The worker trusting dis-ui-server's identity means a dis-ui-server identity bug would propagate; re-resolving is rejected because it would only re-derive what dis-ui-server already knew. Downstream freshness (tenant/store deactivated between upload and processing) is the streaming consumer's `validate()`, not the worker's, so nothing is lost by dropping the worker's resolve.
+
+**Open mechanic for the owning slices (not settled here).** How dis-ui-server learns the PUT completed (it issues the signed URL and is otherwise out of the loop): a client completion-callback to dis-ui-server, or dis-ui-server subscribing to GCS finalize itself and re-publishing `csv.received`. That is a Slice 9a / Slice 8 design point. Also confirm the upload-session-to-`trace_id` cardinality (whether one session can span more than one file/`trace_id`).
+
+**Cross-refs.** D36 (the Phase-1/Phase-2 split this refines; its "encoded in the object path" wording is corrected here), D37 (translation at Phase 1), D52/D53 (contract + path), D5 (bronze-first still holds: the worker writes bronze then publishes `ingress.ready`). **Scope.** Contract (`csv.received`) + the trigger model; the publish point in dis-ui-server and the worker's subscription land in Slice 8 / Slice 9b.
+
+---
+
+### D55 `identity_mirror` gains `display_code`/`store_code`, copied as-is from Customer Master; the invented `t_*`/`s_*` external form is retired `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 9a). Closes the external-code question that surfaced alongside D37. Confirmed by live introspection of Customer Master: `core.tenants` carries `display_code` (text, **nullable**; e.g. `buc-ees`, `zabka-group`) and `core.stores` carries `store_code` (text, nullable; e.g. `TX-102`). These are the **only** authoritative external codes in the Ithina system; the contract's `t_*`/`s_*` matched neither and was a DIS invention.
+
+**Correction (Slice 9a execution).** This entry originally recorded `display_code` as `NOT NULL` at source. Re-introspection of the live Customer Master (`information_schema.columns`, via the documented read-only access) shows **both** source columns are nullable (`is_nullable = YES`, no default). The mirror columns are nullable simply because the source columns are; the original "left nullable to avoid a copy-time constraint the source does not itself guarantee across history" justification is dropped as moot. The D48 test-CM harness models both columns nullable accordingly (a harness stricter than live would mask a real null path).
+
+**Decision.** Add `display_code` to `identity_mirror.tenants` and `store_code` to `identity_mirror.stores`, copied **as-is** by Mirror Sync, consistent with the mirror's "faithful copy" posture (the mirror copies Customer Master columns verbatim, D12). Both mirror columns are **nullable**, matching the source. These codes are the authoritative readable form used for the optional `tenant_display_code`/`store_code` fields on the Pub/Sub envelopes (D52). They are **not** a translation bridge: external-to-internal resolution is the Identity Service returning the UUID (D37), not a mirror lookup.
+
+**Why only these two columns.** Of everything in Customer Master's tenants/stores, only the external codes were both authoritative and missing from the mirror (the mirror already carries `name`, `status`, lifecycle timestamps). The codes are not load-bearing (the UUID is); they are added mainly to give the readable form an authoritative home and retire the invented `t_*`/`s_*` form for good. Other Customer Master columns are added later only if a consumer needs them (the evolve-in-step rule: the mirror grows when Customer Master grows and the column is relevant).
+
+**Implications.**
+- DDL: an Alembic migration adds the two columns (nullable). This reopens **Slice 7** (Mirror Sync, DB-pull) to select and upsert the new columns, with its tests; the change is additive.
+- `identity.changed` payload carries `display_code`/`store_code` (D52) so the deferred Pub/Sub sync mode can populate them too.
+- Identity Service returns the codes alongside the UUID (D37), so dis-ui-server can put them on `csv.received`.
+- Backfill of existing mirror rows is the normal Mirror Sync run (idempotent via the conditional `IS DISTINCT FROM` upsert); the migration itself adds the nullable columns and does no backfill.
+
+**Known gap (registered, out of 9a scope).** No `identity_mirror` drift guard exists — the both-directions live-introspection pattern covers `audit.events` and the canonical suites but not the mirror — so a future mirror column drift trips nothing; the de-facto reconciliation points are the Mirror Sync row models and upsert column lists.
+
+**Cross-refs.** D37 (UUID translation; codes are readability, not the bridge), D52 (envelope code fields), D54 (`csv.received` carries codes), D12 (mirror as faithful copy + real FK), D46 (`status`). **Scope.** `identity_mirror` DDL + Mirror Sync (Slice 7) + this entry; lands in Slice 9a.
+
+
+### D56 Two Customer Master contract shapes are DIS approximations pending CM sign-off: the JWT claim identifier values and the upload-session response `OPEN`
+
+**Status.** `OPEN` (registered by Slice 9a). **Deadline: the Customer Master contract sign-off** (a Phase 0 TODO). This entry is a tracked loose end, not a settled contract: nothing here reads as DIS having settled the CM contract.
+
+**Context.** Slice 9a retired the invented `t_*`/`s_*` identity form (D52) from the fixtures and the Slice 2 fakes. Two CM-owned artifact shapes had carried that form and needed a replacement now, before the real CM contract is signed. In both cases 9a uses the best available approximation — Customer Master's authoritative external codes (`display_code`/`store_code`, D55) — because the codes are real CM data while `t_*`/`s_*` never was, and because external-facing CM artifacts must not carry DIS-internal UUIDs.
+
+**The two registered divergences.**
+1. **JWT claim identifier values.** The test JWT claims (`tenant_id`/`store_id`, built by `dis_testing.fixtures.build_claims`) now carry `display_code`/`store_code` values. `contracts/identity-service/attribute-needs.md` §2 still pins the retired `^t_[a-z0-9]{12}$`/`^s_[a-z0-9]{12}$` patterns — that document is DIS's requirements input to the **unsigned** CM contract, so its patterns are CM vocabulary and are NOT rewritten by 9a; the file carries a one-line staleness flag pointing here. The real claim shape is CM's to define at sign-off.
+2. **Upload-session response identifier values.** The CM fake's `UploadSessionResponse.tenant_id`/`store_id` now carry the codes (`store_id` null for a code-less store). The real CM upload-session API shape has never been seen; this is an approximation of an unseen contract, flagged for the same sign-off.
+
+**Resolution path.** At CM contract sign-off: confirm (or replace) the claim identifier vocabulary and the upload-session response shape; update `attribute-needs.md`, `dis_testing.fixtures.build_claims`, and the CM fake to the signed shapes; close this entry. The Identity Service contract itself (UUID + codes out, D37) is NOT in question here — only the CM-artifact input shapes the fakes approximate.
+
+**Cross-refs.** D37 (Identity Service returns the UUID), D52 (invented form retired), D55 (the authoritative codes), D48 (the test-CM harness these fakes pair with). **Scope.** Register entry + the one-line flag in `attribute-needs.md`; fixture/fake approximations land in Slice 9a.
