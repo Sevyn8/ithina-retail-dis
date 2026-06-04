@@ -18,6 +18,12 @@ describe('Dashboard', () => {
     vi.restoreAllMocks()
   })
 
+  it('routes the Add source affordance to the connector picker (R7)', async () => {
+    renderWithProviders(<Dashboard />, { snapshot: tenant })
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    expect(screen.getByRole('link', { name: 'Add source' })).toHaveAttribute('href', '/connect')
+  })
+
   it('renders the metric cards and the per-source rollup', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()

@@ -54,7 +54,7 @@ export function SourcesIndex() {
             <h1 className="text-display">Manage sources</h1>
             <p className="text-caption text-muted-foreground">Your configured data sources.</p>
           </div>
-          <Link to="/sources/new" className={buttonVariants({ variant: 'default', size: 'sm' })}>
+          <Link to="/connect" className={buttonVariants({ variant: 'default', size: 'sm' })}>
             New source
           </Link>
         </header>
@@ -70,7 +70,7 @@ export function SourcesIndex() {
           <h1 className="text-display">Manage sources</h1>
           <p className="text-caption text-muted-foreground">Your configured data sources.</p>
         </div>
-        <Link to="/sources/new" className={buttonVariants({ variant: 'default', size: 'sm' })}>
+        <Link to="/connect" className={buttonVariants({ variant: 'default', size: 'sm' })}>
           New source
         </Link>
       </header>

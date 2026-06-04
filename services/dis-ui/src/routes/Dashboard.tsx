@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
+import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
@@ -75,9 +76,15 @@ export function Dashboard() {
 
   return (
     <section className="flex flex-col gap-6">
-      <header>
-        <h1 className="text-display">Dashboard</h1>
-        <p className="text-caption text-muted-foreground">Is your data flowing right now?</p>
+      <header className="flex items-baseline justify-between">
+        <div>
+          <h1 className="text-display">Dashboard</h1>
+          <p className="text-caption text-muted-foreground">Is your data flowing right now?</p>
+        </div>
+        {/* Add a source: the connector picker is the front door (R7). */}
+        <Link to="/connect" className={buttonVariants({ variant: 'default', size: 'sm' })}>
+          Add source
+        </Link>
       </header>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

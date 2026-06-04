@@ -72,7 +72,8 @@ describe('SourcesIndex', () => {
   it('offers Create and per-row Edit/Deprecate actions, and no hard-delete control', async () => {
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
     await screen.findByRole('heading', { name: 'Manage sources' })
-    expect(screen.getByRole('link', { name: 'New source' })).toHaveAttribute('href', '/sources/new')
+    // R7: the connector picker is the add-source front door
+    expect(screen.getByRole('link', { name: 'New source' })).toHaveAttribute('href', '/connect')
     expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute(
       'href',
       '/sources/manual_csv_upload/edit',
