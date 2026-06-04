@@ -27,20 +27,20 @@ describe('ConnectorPicker (R2, net-new)', () => {
     expect(screen.getByRole('link', { name: /upload a csv/i })).toHaveAttribute('href', '/upload')
   })
 
-  it('shows the POS connectors as honestly coming-soon (no faked connect)', () => {
+  it('shows the POS connectors as coming-soon and routes each to its thin connect step', () => {
     renderWithProviders(<ConnectorPicker />, { snapshot: tenant })
-    // a "Soon" marker for each POS connector
+    // a "Soon" marker for each POS connector (the honest coming-soon treatment)
     expect(screen.getAllByText('Soon')).toHaveLength(3)
-    // every Connect affordance is disabled, and none navigates anywhere
-    const connects = screen.getAllByRole('button', { name: 'Connect' })
-    expect(connects).toHaveLength(3)
-    for (const button of connects) {
-      expect(button).toBeDisabled()
-    }
-    // the only link on the screen is the CSV CTA; no POS/connect link exists
-    const links = screen.getAllByRole('link')
-    expect(links).toHaveLength(1)
-    expect(links[0]).toHaveAttribute('href', '/upload')
+    // each POS card routes to its connect step (the coming-soon, disabled shell lives there);
+    // there is no connect action on the picker itself
+    const setups = screen.getAllByRole('link', { name: 'Set up' })
+    expect(setups.map((l) => l.getAttribute('href'))).toEqual([
+      '/connect/shopify_pos',
+      '/connect/square',
+      '/connect/other',
+    ])
+    // the CSV hero still routes to the journey upload entry
+    expect(screen.getByRole('link', { name: /upload a csv/i })).toHaveAttribute('href', '/upload')
   })
 
   it('labels every connector from the single source-identity helper', () => {

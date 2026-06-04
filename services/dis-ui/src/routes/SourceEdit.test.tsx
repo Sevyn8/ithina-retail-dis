@@ -39,7 +39,7 @@ describe('SourceEdit', () => {
     await user.clear(nameInput)
     await user.type(nameInput, 'Renamed CSV')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
-    expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Manage sources' })).toBeInTheDocument()
     expect(screen.getByText('Renamed CSV')).toBeInTheDocument()
   })
 })

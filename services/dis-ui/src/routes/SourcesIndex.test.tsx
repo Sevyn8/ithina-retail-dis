@@ -32,7 +32,7 @@ describe('SourcesIndex', () => {
 
   it('lists the tenant fixture sources', async () => {
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
-    expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Manage sources' })).toBeInTheDocument()
     expect(screen.getByText('Manual CSV Upload')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Mappings' })).toHaveAttribute(
       'href',
@@ -42,7 +42,7 @@ describe('SourcesIndex', () => {
 
   it('renders the source-type identity per row (R1 identity helper)', async () => {
     const { container } = renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
-    await screen.findByRole('heading', { name: 'Sources' })
+    await screen.findByRole('heading', { name: 'Manage sources' })
     // the CSV source (type 'CSV') carries the csv identity, applied via the helper's literal
     // Tailwind classes (so this proves the single helper drives the row identity).
     expect(container.querySelector('.text-source-csv')).not.toBeNull()
@@ -71,7 +71,7 @@ describe('SourcesIndex', () => {
 
   it('offers Create and per-row Edit/Deprecate actions, and no hard-delete control', async () => {
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
-    await screen.findByRole('heading', { name: 'Sources' })
+    await screen.findByRole('heading', { name: 'Manage sources' })
     expect(screen.getByRole('link', { name: 'New source' })).toHaveAttribute('href', '/sources/new')
     expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute(
       'href',
@@ -86,7 +86,7 @@ describe('SourcesIndex', () => {
   it('deprecates a source via the confirm dialog (soft transition)', async () => {
     const user = userEvent.setup()
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
-    await screen.findByRole('heading', { name: 'Sources' })
+    await screen.findByRole('heading', { name: 'Manage sources' })
     await user.click(screen.getByRole('button', { name: 'Deprecate' }))
     await user.click(await screen.findByRole('button', { name: 'Confirm deprecate' }))
     expect(await screen.findByText('deprecated')).toBeInTheDocument()

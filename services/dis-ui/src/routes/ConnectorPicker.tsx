@@ -1,6 +1,6 @@
 import { Link } from 'react-router'
 
-import { Button, buttonVariants } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { HeroCard } from '@/components/ui/hero-card'
 import { StatusBadge } from '../components/StatusBadge'
@@ -71,10 +71,14 @@ export function ConnectorPicker() {
                     <StatusBadge tone="neutral">Soon</StatusBadge>
                   </div>
                   <div className="text-body-strong">{identity.label}</div>
-                  {/* Disabled, not faked: connecting is the R5 thin step. */}
-                  <Button type="button" variant="outline" size="sm" disabled>
-                    Connect
-                  </Button>
+                  {/* Routes to the thin, coming-soon connect step (R5); no connect happens
+                      here. The honesty (disabled shell) lives on the destination. */}
+                  <Link
+                    to={`/connect/${identity.key}`}
+                    className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                  >
+                    Set up
+                  </Link>
                 </CardContent>
               </Card>
             )

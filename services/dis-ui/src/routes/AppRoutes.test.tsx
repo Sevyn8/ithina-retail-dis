@@ -33,7 +33,7 @@ describe('AppRoutes', () => {
 
   it('still resolves /sources', async () => {
     renderAt('/sources')
-    expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Manage sources' })).toBeInTheDocument()
   })
 
   it('resolves /notifications', async () => {

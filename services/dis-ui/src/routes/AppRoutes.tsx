@@ -10,6 +10,7 @@ import { IndexRoute } from './IndexRoute'
 import { MappingReview } from './MappingReview'
 import { MappingVersions } from './MappingVersions'
 import { NotFound } from './NotFound'
+import { PosConnect } from './PosConnect'
 import { Notifications } from './Notifications'
 import { OpsFleet } from './OpsFleet'
 import { OpsQuery } from './OpsQuery'
@@ -39,6 +40,8 @@ export function AppRoutes() {
           {/* Connector picker (redesign R2): the "add a source" surface. Net-new; not in
               nav (the sidebar does not change). Entry points arrive in R4/R6. */}
           <Route path="/connect" element={<ConnectorPicker />} />
+          {/* Thin POS connect step (redesign R5): coming-soon, parameterized by POS type. */}
+          <Route path="/connect/:posType" element={<PosConnect />} />
           <Route path="/sources" element={<SourcesIndex />} />
           <Route path="/sources/new" element={<SourceCreate />} />
           <Route path="/sources/:sourceId/edit" element={<SourceEdit />} />

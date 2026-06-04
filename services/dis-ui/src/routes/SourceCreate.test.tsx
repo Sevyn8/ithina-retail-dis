@@ -49,7 +49,7 @@ describe('SourceCreate', () => {
     await user.type(screen.getByLabelText('Name'), 'Square POS')
     await user.click(screen.getByRole('button', { name: 'Create source' }))
     // navigates to the index, which shows the new source
-    expect(await screen.findByRole('heading', { name: 'Sources' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Manage sources' })).toBeInTheDocument()
     expect(screen.getByText('Square POS')).toBeInTheDocument()
   })
 })

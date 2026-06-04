@@ -51,7 +51,7 @@ export function SourcesIndex() {
       <section className="flex flex-col gap-6">
         <header className="flex items-baseline justify-between">
           <div>
-            <h1 className="text-display">Sources</h1>
+            <h1 className="text-display">Manage sources</h1>
             <p className="text-caption text-muted-foreground">Your configured data sources.</p>
           </div>
           <Link to="/sources/new" className={buttonVariants({ variant: 'default', size: 'sm' })}>
@@ -67,7 +67,7 @@ export function SourcesIndex() {
     <section className="flex flex-col gap-6">
       <header className="flex items-baseline justify-between">
         <div>
-          <h1 className="text-display">Sources</h1>
+          <h1 className="text-display">Manage sources</h1>
           <p className="text-caption text-muted-foreground">Your configured data sources.</p>
         </div>
         <Link to="/sources/new" className={buttonVariants({ variant: 'default', size: 'sm' })}>
