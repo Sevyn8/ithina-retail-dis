@@ -35,13 +35,13 @@
     },
     "entity_id": {
       "type": "string",
-      "pattern": "^(t|s)_[a-z0-9]{12}$",
-      "description": "The tenant_id (t_*) or store_id (s_*) of the affected row."
+      "format": "uuid",
+      "description": "Internal UUID of the affected row: the tenant_id (for entity=tenant) or store_id (for entity=store). Identical to Customer Master core.tenants.id / core.stores.id."
     },
     "tenant_id": {
       "type": "string",
-      "pattern": "^t_[a-z0-9]{12}$",
-      "description": "Owning tenant. For entity=tenant, same as entity_id. For entity=store, the parent tenant."
+      "format": "uuid",
+      "description": "Owning tenant UUID. For entity=tenant, same as entity_id. For entity=store, the parent tenant."
     },
     "source_ts": {
       "type": "string",
@@ -53,10 +53,22 @@
       "description": "The current state of the entity. Shape depends on entity type. The mirror-sync-consumer projects only the fields that identity_mirror tables care about.",
       "properties": {
         "name": { "type": "string" },
-        "is_active": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "description": "Lifecycle status replicated verbatim from Customer Master (tenants: e.g. ACTIVE/SUSPENDED/TERMINATED/ONBOARDING; stores: e.g. ACTIVE/INACTIVE/CLOSED). Replaces the prior is_active boolean; identity_mirror stores lifecycle as status, not is_active (decisions.md D46)."
+        },
+        "display_code": {
+          "type": "string",
+          "description": "For entity=tenant: Customer Master's authoritative external code (tenants.display_code). Projected into identity_mirror.tenants.display_code by the mirror-sync-consumer."
+        },
+        "store_code": {
+          "type": "string",
+          "description": "For entity=store: Customer Master's authoritative external code (stores.store_code). Projected into identity_mirror.stores.store_code by the mirror-sync-consumer. Nullable at source."
+        },
         "metadata": {
           "type": "object",
-          "description": "Free-form additional fields. Receiver-side resolve methods may use; mirror-sync-consumer ignores."
+          "description": "Free-form additional fields. Receiver-side resolve methods may use; mirror-sync-consumer ignores.",
+          "additionalProperties": true
         }
       },
       "additionalProperties": true

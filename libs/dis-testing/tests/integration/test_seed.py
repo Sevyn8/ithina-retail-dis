@@ -40,7 +40,7 @@ def test_seed_writes_default_set_and_is_idempotent(dis_engine: Engine) -> None:
 
 def test_default_mapping_version_seq_is_one(dis_engine: Engine) -> None:
     seed_default_fixtures(engine=dis_engine)
-    tenant_uuid = fx.tenant_uuid_for(str(fx.DEFAULT_SOURCE_MAPPING["tenant_external_id"]))
+    tenant_uuid = fx.tenant_uuid_for(str(fx.DEFAULT_SOURCE_MAPPING["tenant_display_code"]))
     with dis_engine.connect() as conn:
         seq = conn.execute(
             text(
@@ -55,7 +55,7 @@ def test_default_mapping_version_seq_is_one(dis_engine: Engine) -> None:
 def test_seeded_tenant_uuid_matches_fixture_bridge(dis_engine: Engine) -> None:
     # The bridge: a fixture external id maps to the exact UUID row the seeder wrote.
     seed_default_fixtures(engine=dis_engine)
-    primary_uuid = fx.tenant_uuid_for(fx.PRIMARY_TENANT.external_id)
+    primary_uuid = fx.tenant_uuid_for(fx.PRIMARY_TENANT.display_code)
     with dis_engine.connect() as conn:
         row = conn.execute(
             text("SELECT name, status FROM identity_mirror.tenants WHERE tenant_id = :tid"),

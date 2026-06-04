@@ -30,10 +30,13 @@ _READER_ROLE = "ithina_dis_user"
 
 _CORE_DDL = (
     "CREATE SCHEMA IF NOT EXISTS core",
+    # display_code / store_code are NULLABLE — matching live CM (introspected,
+    # D55 as corrected). A harness stricter than live would mask a real null path.
     """
     CREATE TABLE IF NOT EXISTS core.tenants (
         id            uuid PRIMARY KEY,
         name          text NOT NULL,
+        display_code  text,
         status        text NOT NULL,
         created_at    timestamptz NOT NULL,
         updated_at    timestamptz NOT NULL,
@@ -46,6 +49,7 @@ _CORE_DDL = (
         id            uuid PRIMARY KEY,
         tenant_id     uuid NOT NULL REFERENCES core.tenants (id),
         name          text NOT NULL,
+        store_code    text,
         status        text NOT NULL,
         country       text NOT NULL,
         timezone      text NOT NULL,
@@ -56,6 +60,10 @@ _CORE_DDL = (
         closed_at     timestamptz
     )
     """,
+    # Idempotent upgrade for a test CM provisioned before the code columns existed
+    # (CREATE TABLE IF NOT EXISTS does not evolve an existing table).
+    "ALTER TABLE core.tenants ADD COLUMN IF NOT EXISTS display_code text",
+    "ALTER TABLE core.stores ADD COLUMN IF NOT EXISTS store_code text",
     "ALTER TABLE core.tenants ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE core.tenants FORCE ROW LEVEL SECURITY",
     "ALTER TABLE core.stores ENABLE ROW LEVEL SECURITY",
@@ -82,22 +90,40 @@ _CORE_DDL = (
     f"GRANT SELECT ON core.stores TO {_READER_ROLE}",
 )
 
+# Seeds converge to fixture truth on conflict (not DO NOTHING): a test CM
+# provisioned before the code columns existed must still end up carrying the
+# fixture display_code/store_code values after a re-seed.
 _SEED_TENANT = text(
     """
-    INSERT INTO core.tenants (id, name, status, created_at, updated_at)
-    VALUES (:id, :name, :status, :created_at, :updated_at)
-    ON CONFLICT (id) DO NOTHING
+    INSERT INTO core.tenants (id, name, display_code, status, created_at, updated_at)
+    VALUES (:id, :name, :display_code, :status, :created_at, :updated_at)
+    ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        display_code = EXCLUDED.display_code,
+        status = EXCLUDED.status,
+        created_at = EXCLUDED.created_at,
+        updated_at = EXCLUDED.updated_at
     """
 )
 _SEED_STORE = text(
     """
     INSERT INTO core.stores
-        (id, tenant_id, name, status, country, timezone, currency, tax_treatment,
+        (id, tenant_id, name, store_code, status, country, timezone, currency, tax_treatment,
          created_at, updated_at)
     VALUES
-        (:id, :tenant_id, :name, :status, :country, :timezone, :currency, :tax_treatment,
+        (:id, :tenant_id, :name, :store_code, :status, :country, :timezone, :currency, :tax_treatment,
          :created_at, :updated_at)
-    ON CONFLICT (id) DO NOTHING
+    ON CONFLICT (id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        name = EXCLUDED.name,
+        store_code = EXCLUDED.store_code,
+        status = EXCLUDED.status,
+        country = EXCLUDED.country,
+        timezone = EXCLUDED.timezone,
+        currency = EXCLUDED.currency,
+        tax_treatment = EXCLUDED.tax_treatment,
+        created_at = EXCLUDED.created_at,
+        updated_at = EXCLUDED.updated_at
     """
 )
 
@@ -158,6 +184,7 @@ def seed_test_cm(engine: Engine) -> None:
                 {
                     "id": str(tenant.uuid),
                     "name": tenant.name,
+                    "display_code": tenant.display_code,
                     "status": tenant.status,
                     "created_at": tenant.pc_created_at,
                     "updated_at": tenant.pc_updated_at,
@@ -168,8 +195,9 @@ def seed_test_cm(engine: Engine) -> None:
                 _SEED_STORE,
                 {
                     "id": str(store.uuid),
-                    "tenant_id": str(fx.tenant_uuid_for(store.tenant_external_id)),
+                    "tenant_id": str(fx.tenant_uuid_for(store.tenant_display_code)),
                     "name": store.name,
+                    "store_code": store.store_code,  # None for the code-less store (D55)
                     "status": store.status,
                     "country": store.country,
                     "timezone": store.timezone,

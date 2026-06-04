@@ -19,7 +19,7 @@ class TestInfraError(DisError):
 
 
 class FixtureError(TestInfraError):
-    """A fixture-truth lookup failed (unknown external id, inconsistent set)."""
+    """A fixture-truth lookup failed (unknown code, inconsistent set)."""
 
 
 class SeedError(TestInfraError):

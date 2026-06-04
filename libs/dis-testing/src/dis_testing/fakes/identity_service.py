@@ -5,6 +5,14 @@ Answers the four contract methods (``resolve_from_token``, ``resolve_from_upload
 fixture-truth module, conforming to the authoritative OpenAPI
 (``contracts/identity-service/identity_service.openapi.yaml``).
 
+Identity model (D37 RESOLVED, Slice 9a): every resolve answer carries the
+**internal UUIDs** as ``tenant_id``/``store_id`` (the load-bearing identity a
+caller writes downstream) plus Customer Master's authoritative external codes
+(``display_code``/``store_code``, readability only, D55). Resolution keys coming
+*in* from external artifacts (JWT claims, canned sessions) are the codes; a store
+with ``store_code=None`` cannot be named by code (faithful to the source) and is
+reachable by UUID (``validate``) or as part of its tenant's store set.
+
 HARD BOUNDARIES (slice scope):
   * **No real identity resolution.** No Customer Master lookup, no cache, no
     circuit breaker, no stale-while-error. Canned answers only. That is Slice 13.
@@ -45,33 +53,35 @@ def _error_response(error_code: ErrorCode, message: str, status_code: int) -> JS
     return JSONResponse(status_code=status_code, content=err.model_dump())
 
 
-def _resolve_store(tenant: fx.TenantFixture, store_external_id: str | None) -> fx.StoreFixture:
-    if store_external_id:
-        store = fx.store_by_external_id(store_external_id)
-        if store.tenant_external_id != tenant.external_id:
-            raise _NotResolvedError(f"store {store_external_id} not under tenant {tenant.external_id}")
+def _resolve_store(tenant: fx.TenantFixture, store_code: str | None) -> fx.StoreFixture:
+    if store_code:
+        store = fx.store_by_store_code(store_code)
+        if store.tenant_display_code != tenant.display_code:
+            raise _NotResolvedError(f"store {store_code} not under tenant {tenant.display_code}")
         return store
-    stores = fx.stores_for_tenant(tenant.external_id)
+    stores = fx.stores_for_tenant(tenant.display_code)
     if not stores:
-        raise _NotResolvedError(f"tenant {tenant.external_id} has no store")
+        raise _NotResolvedError(f"tenant {tenant.display_code} has no store")
     return stores[0]
 
 
-def _identity_for(tenant_external_id: str | None, store_external_id: str | None) -> Identity:
-    if not tenant_external_id:
+def _identity_for(tenant_display_code: str | None, store_code: str | None) -> Identity:
+    if not tenant_display_code:
         raise _NotResolvedError("no tenant in artifact")
     try:
-        tenant = fx.tenant_by_external_id(tenant_external_id)
+        tenant = fx.tenant_by_display_code(tenant_display_code)
     except fx.FixtureError as exc:
         raise _NotResolvedError(str(exc)) from exc
     try:
-        store = _resolve_store(tenant, store_external_id)
+        store = _resolve_store(tenant, store_code)
     except fx.FixtureError as exc:
         raise _NotResolvedError(str(exc)) from exc
 
     return Identity(
-        tenant_id=tenant.external_id,
-        store_id=store.external_id,
+        tenant_id=tenant.uuid,
+        store_id=store.uuid,
+        display_code=tenant.display_code,
+        store_code=store.store_code,  # None when the source carries no code (D55)
         is_active=tenant.is_active and store.is_active,
         source="customer_master",
         metadata=dict(tenant.metadata),
@@ -103,23 +113,21 @@ def create_app() -> FastAPI:
     def resolve_from_upload(req: ResolveFromUploadRequest) -> JSONResponse:
         # Canned: an upload session resolves to the primary identity. (The fake does
         # not share the CM fake's session store; this is canned data, not resolution.)
-        return _resolve_or_error(fx.PRIMARY_TENANT.external_id, fx.PRIMARY_STORE.external_id)
+        return _resolve_or_error(fx.PRIMARY_TENANT.display_code, fx.PRIMARY_STORE.store_code)
 
     @app.post("/v1/resolve_from_endpoint")
     def resolve_from_endpoint(req: ResolveFromEndpointRequest) -> JSONResponse:
         # Canned: an endpoint config resolves to the primary identity.
-        return _resolve_or_error(fx.PRIMARY_TENANT.external_id, fx.PRIMARY_STORE.external_id)
+        return _resolve_or_error(fx.PRIMARY_TENANT.display_code, fx.PRIMARY_STORE.store_code)
 
     @app.post("/v1/validate")
     def validate(req: ValidateRequest) -> JSONResponse:
-        # validate returns exists:false as a normal answer (never 404).
-        try:
-            tenant = fx.tenant_by_external_id(req.tenant_id)
-            store = fx.store_by_external_id(req.store_id)
-            known = store.tenant_external_id == tenant.external_id
-        except fx.FixtureError:
-            known = False
-            tenant = store = None  # type: ignore[assignment]
+        # validate returns exists:false as a normal answer (never 404). Keyed by the
+        # internal UUIDs (the contract form, D37) — this is the path that reaches a
+        # store even when it carries no store_code.
+        tenant = next((t for t in fx.TENANTS if t.uuid == req.tenant_id), None)
+        store = next((s for s in fx.STORES if s.uuid == req.store_id), None)
+        known = tenant is not None and store is not None and store.tenant_display_code == tenant.display_code
 
         if not known or tenant is None or store is None:
             result = ValidateResponse(exists=False, is_active=False, source="identity_mirror_fallback")
@@ -131,12 +139,14 @@ def create_app() -> FastAPI:
             )
         return JSONResponse(status_code=200, content=result.model_dump())
 
-    def _resolve_or_error(tenant_external_id: str | None, store_external_id: str | None) -> JSONResponse:
+    def _resolve_or_error(tenant_display_code: str | None, store_code: str | None) -> JSONResponse:
         try:
-            identity = _identity_for(tenant_external_id, store_external_id)
+            identity = _identity_for(tenant_display_code, store_code)
         except _NotResolvedError as exc:
             return _error_response("identity_not_found", str(exc), 404)
-        return JSONResponse(status_code=200, content=identity.model_dump())
+        # exclude_none: optional fields are OMITTED when absent (the contract's
+        # "populate when present" posture, D55) — never serialised as null.
+        return JSONResponse(status_code=200, content=identity.model_dump(mode="json", exclude_none=True))
 
     return app
 

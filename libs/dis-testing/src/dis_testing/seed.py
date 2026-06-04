@@ -39,9 +39,9 @@ from dis_testing.errors import SeedError
 _INSERT_TENANT = text(
     """
     INSERT INTO identity_mirror.tenants
-        (tenant_id, name, status, pc_created_at, pc_updated_at)
+        (tenant_id, name, display_code, status, pc_created_at, pc_updated_at)
     VALUES
-        (:tenant_id, :name, :status, :pc_created_at, :pc_updated_at)
+        (:tenant_id, :name, :display_code, :status, :pc_created_at, :pc_updated_at)
     ON CONFLICT (tenant_id) DO NOTHING
     """
 )
@@ -49,10 +49,10 @@ _INSERT_TENANT = text(
 _INSERT_STORE = text(
     """
     INSERT INTO identity_mirror.stores
-        (store_id, tenant_id, name, status, country, timezone,
+        (store_id, tenant_id, name, store_code, status, country, timezone,
          currency, tax_treatment, pc_created_at, pc_updated_at)
     VALUES
-        (:store_id, :tenant_id, :name, :status, :country, :timezone,
+        (:store_id, :tenant_id, :name, :store_code, :status, :country, :timezone,
          :currency, :tax_treatment, :pc_created_at, :pc_updated_at)
     ON CONFLICT (tenant_id, store_id) DO NOTHING
     """
@@ -125,6 +125,7 @@ def _seed(conn: Connection) -> SeedSummary:
             {
                 "tenant_id": str(t.uuid),
                 "name": t.name,
+                "display_code": t.display_code,
                 "status": t.status,
                 "pc_created_at": t.pc_created_at,
                 "pc_updated_at": t.pc_updated_at,
@@ -138,8 +139,9 @@ def _seed(conn: Connection) -> SeedSummary:
             _INSERT_STORE,
             {
                 "store_id": str(s.uuid),
-                "tenant_id": str(fx.tenant_uuid_for(s.tenant_external_id)),
+                "tenant_id": str(fx.tenant_uuid_for(s.tenant_display_code)),
                 "name": s.name,
+                "store_code": s.store_code,  # None for the code-less store (D55)
                 "status": s.status,
                 "country": s.country,
                 "timezone": s.timezone,
@@ -153,7 +155,7 @@ def _seed(conn: Connection) -> SeedSummary:
 
     # 3. Default ACTIVE source mapping (existence-guarded; BIGSERIAL PK can't conflict).
     mapping = fx.DEFAULT_SOURCE_MAPPING
-    tenant_uuid = str(fx.tenant_uuid_for(str(mapping["tenant_external_id"])))
+    tenant_uuid = str(fx.tenant_uuid_for(str(mapping["tenant_display_code"])))
     exists = conn.execute(
         _SELECT_ACTIVE_MAPPING,
         {"tenant_id": tenant_uuid, "source_id": mapping["source_id"]},

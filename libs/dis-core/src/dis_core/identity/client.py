@@ -14,6 +14,7 @@ imported here and re-exported by ``dis_core.identity`` so existing imports
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 import httpx
 
@@ -55,7 +56,7 @@ class IdentityClient(Protocol):
 
     async def resolve_from_endpoint(self, endpoint_config_id: str) -> Identity: ...
 
-    async def validate(self, tenant_id: str, store_id: str) -> ValidateResponse: ...
+    async def validate(self, tenant_id: UUID, store_id: UUID) -> ValidateResponse: ...
 
 
 class HttpIdentityClient:
@@ -111,7 +112,7 @@ class HttpIdentityClient:
         )
         return Identity.model_validate(body)
 
-    async def validate(self, tenant_id: str, store_id: str) -> ValidateResponse:
+    async def validate(self, tenant_id: UUID, store_id: UUID) -> ValidateResponse:
         body = await self._post("/v1/validate", ValidateRequest(tenant_id=tenant_id, store_id=store_id))
         return ValidateResponse.model_validate(body)
 
@@ -154,10 +155,8 @@ class HttpIdentityClient:
 
 
 def _dump(payload: object) -> dict[str, object]:
-    # NOTE (flag for Slice 3 / whoever extends the request models): model_dump()
-    # without mode="json" is safe today because every request field is a plain str.
-    # If a request model later gains a UUID / datetime / enum field, switch to
-    # model_dump(mode="json") or the httpx json= encode will fail on the raw object.
+    # mode="json" because ValidateRequest carries UUID fields (Slice 9a, D37):
+    # the httpx json= encoder cannot serialise a raw uuid.UUID.
     if hasattr(payload, "model_dump"):
-        return payload.model_dump()  # type: ignore[no-any-return]
+        return payload.model_dump(mode="json")  # type: ignore[no-any-return]
     raise TypeError(f"unexpected payload type: {type(payload)!r}")

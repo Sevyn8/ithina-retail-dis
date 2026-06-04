@@ -82,9 +82,12 @@ enum IdentitySource {
 
 // The resolved identity record. Returned by all three Resolve* methods.
 //
-// Field constraints (regex enforced server-side, not in proto):
-//   tenant_id: ^t_[a-z0-9]{12}$
-//   store_id:  ^s_[a-z0-9]{12}$
+// Field constraints (validated server-side, not in proto):
+//   tenant_id: internal tenant UUID (lowercase 8-4-4-4-12), identical to
+//              Customer Master core.tenants.id (decisions.md D37/D52).
+//   store_id:  internal store UUID, identical to core.stores.id.
+// The invented t_*/s_* external form is retired; the authoritative external
+// codes ride alongside as display_code/store_code (D55), readability only.
 message Identity {
   string tenant_id = 1;
   string store_id = 2;
@@ -98,6 +101,16 @@ message Identity {
 
   // When this identity record was last refreshed against Customer Master.
   google.protobuf.Timestamp resolved_at = 6;
+
+  // Customer Master's authoritative external tenant code
+  // (core.tenants.display_code, e.g. "buc-ees"). Populated when present in
+  // Customer Master (nullable at source). Never a substitute for tenant_id.
+  string display_code = 7;
+
+  // Customer Master's authoritative external store code
+  // (core.stores.store_code, e.g. "TX-102"). Nullable at source; empty when
+  // absent. Never a substitute for store_id.
+  string store_code = 8;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,8 +137,8 @@ message ResolveFromEndpointRequest {
 }
 
 message ValidateRequest {
-  string tenant_id = 1;  // Pattern: ^t_[a-z0-9]{12}$
-  string store_id = 2;   // Pattern: ^s_[a-z0-9]{12}$
+  string tenant_id = 1;  // Internal tenant UUID (D37/D52).
+  string store_id = 2;   // Internal store UUID (D37/D52).
 }
 
 message ValidateResponse {

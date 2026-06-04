@@ -162,15 +162,22 @@ components:
   schemas:
     TenantId:
       type: string
-      pattern: "^t_[a-z0-9]{12}$"
-      example: "t_acme9k2l1mn4"
-      description: Tenant identifier. 't_' prefix + 12 lowercase alphanumerics.
+      format: uuid
+      example: "019e5e3c-b5d3-705f-9002-2451c4ca2626"
+      description: |
+        Internal tenant UUID, identical to Customer Master core.tenants.id and
+        identity_mirror.tenants.tenant_id (decisions.md D37/D52). The load-bearing
+        identity: callers write identity downstream from this field. The invented
+        't_*' external form is retired.
 
     StoreId:
       type: string
-      pattern: "^s_[a-z0-9]{12}$"
-      example: "s_acme0001a4b7"
-      description: Store identifier. 's_' prefix + 12 lowercase alphanumerics.
+      format: uuid
+      example: "019e5f10-2a3b-7c4d-8e5f-6a7b8c9d0e1f"
+      description: |
+        Internal store UUID, identical to Customer Master core.stores.id and
+        identity_mirror.stores.store_id (decisions.md D37/D52). The load-bearing
+        identity. The invented 's_*' external form is retired.
 
     Identity:
       type: object
@@ -178,6 +185,24 @@ components:
       properties:
         tenant_id: { $ref: "#/components/schemas/TenantId" }
         store_id: { $ref: "#/components/schemas/StoreId" }
+        display_code:
+          type: string
+          example: "buc-ees"
+          description: |
+            Customer Master's authoritative external code for the tenant
+            (core.tenants.display_code). Optional in the schema, but the service
+            MUST populate it when present in Customer Master (the source column is
+            nullable). Readability only — never a substitute for tenant_id
+            (decisions.md D55).
+        store_code:
+          type: string
+          nullable: true
+          example: "TX-102"
+          description: |
+            Customer Master's authoritative external code for the store
+            (core.stores.store_code). Optional/nullable: the source column is
+            nullable. Readability only — never a substitute for store_id
+            (decisions.md D55).
         is_active:
           type: boolean
           description: Whether the tenant and store are both currently active.

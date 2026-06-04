@@ -160,7 +160,7 @@ async def test_mirrored_rows_satisfy_composite_store_fk(run_env: None, dis_admin
     # fails the composite FK. The referenced identity comes from the sync run, not the seeder.
     assert await _run() == EXIT_OK
     store = fx.STORES[0]
-    tid = str(fx.tenant_uuid_for(store.tenant_external_id))
+    tid = str(fx.tenant_uuid_for(store.tenant_display_code))
     sid = str(store.uuid)
     row_id = str(new_uuid7())
     engine = create_rls_engine(os.environ["POSTGRES_URL"])

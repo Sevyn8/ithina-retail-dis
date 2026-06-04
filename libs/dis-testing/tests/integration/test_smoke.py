@@ -34,13 +34,15 @@ def _repo_root() -> Path:
 async def test_jwt_resolve_then_read_seeded_tenant(
     cm_jwt: str, identity_client: HttpIdentityClient, seeded_identity: Engine
 ) -> None:
-    # 1. Resolve the CM-issued JWT through the Identity Service fake.
+    # 1. Resolve the CM-issued JWT through the Identity Service fake. The answer
+    #    carries the internal UUIDs directly (D37) plus the authoritative codes.
     identity = await identity_client.resolve_from_token(cm_jwt)
-    assert identity.tenant_id == fx.PRIMARY_TENANT.external_id
-    assert identity.store_id == fx.PRIMARY_STORE.external_id
+    assert identity.tenant_id == fx.PRIMARY_TENANT.uuid
+    assert identity.store_id == fx.PRIMARY_STORE.uuid
+    assert identity.display_code == fx.PRIMARY_TENANT.display_code
 
-    # 2. Bridge external id -> internal UUID (INTERIM test-only bridge, Slice 2 R1).
-    tenant_uuid = fx.tenant_uuid_for(identity.tenant_id)
+    # 2. No external→internal bridge needed: the resolved UUID IS the DB key (D37).
+    tenant_uuid = identity.tenant_id
 
     # 3. Read the corresponding seeded tenant from identity_mirror.
     with seeded_identity.connect() as conn:
@@ -57,7 +59,7 @@ async def test_jwt_resolve_then_read_seeded_tenant(
 async def test_validate_against_seeded_pair(
     identity_client: HttpIdentityClient, seeded_identity: Engine
 ) -> None:
-    result = await identity_client.validate(fx.PRIMARY_TENANT.external_id, fx.PRIMARY_STORE.external_id)
+    result = await identity_client.validate(fx.PRIMARY_TENANT.uuid, fx.PRIMARY_STORE.uuid)
     assert result.exists is True
     assert result.is_active is True
 
@@ -84,7 +86,7 @@ def test_identity_changed_published_to_emulator(customer_master_url: str) -> Non
             f"{customer_master_url}/v1/changes",
             json={
                 "entity": "tenant",
-                "external_id": fx.PRIMARY_TENANT.external_id,
+                "code": fx.PRIMARY_TENANT.display_code,
                 "event_type": "updated",
             },
             timeout=5.0,
@@ -109,7 +111,7 @@ def test_identity_changed_published_to_emulator(customer_master_url: str) -> Non
             (_repo_root() / "contracts" / "pubsub" / "identity.changed.schema.json").read_text()
         )
         validator = Draft202012Validator(schema, format_checker=FormatChecker())
-        ours = [m for m in received if m["entity_id"] == fx.PRIMARY_TENANT.external_id]
+        ours = [m for m in received if m["entity_id"] == str(fx.PRIMARY_TENANT.uuid)]
         assert ours, "our published message was not among those delivered"
         for message in ours:
             validator.validate(message)

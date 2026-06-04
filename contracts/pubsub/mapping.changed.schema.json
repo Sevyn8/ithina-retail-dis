@@ -31,7 +31,12 @@
     },
     "tenant_id": {
       "type": "string",
-      "pattern": "^t_[a-z0-9]{12}$"
+      "format": "uuid",
+      "description": "Internal tenant UUID, identical to Customer Master core.tenants.id and identity_mirror.tenants.tenant_id. Load-bearing identity."
+    },
+    "tenant_display_code": {
+      "type": "string",
+      "description": "Customer Master's authoritative external code for the tenant (tenants.display_code). Optional in the schema, but producers MUST populate it when publishing. Readability only, never a substitute for tenant_id."
     },
     "source_id": {
       "type": "string",

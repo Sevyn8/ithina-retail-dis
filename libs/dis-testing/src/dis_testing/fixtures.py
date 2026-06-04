@@ -1,22 +1,29 @@
-"""Single source of fixture truth for Slice 2.
+"""Single source of fixture truth (Slice 2, identity-corrected in Slice 9a).
 
-This module owns the test identity set used by *all three* pieces of Slice 2:
+This module owns the test identity set used by *all* the fakes and seeders:
 
   * the **seeder** writes these rows (by their internal UUID) into
     ``identity_mirror`` and ``config.source_mappings``;
-  * the **Identity Service fake** answers with these external ids (``t_*`` / ``s_*``);
-  * the **Customer Master fake** issues JWTs and ``identity.changed`` events carrying
-    these external ids;
-  * **tests** bridge external id -> internal UUID via :func:`tenant_uuid_for` /
+  * the **Identity Service fake** resolves the external codes and answers with the
+    internal UUIDs plus the codes (decisions.md D37/D55);
+  * the **Customer Master fake** issues JWTs and ``identity.changed`` events
+    carrying the codes / UUIDs per the corrected contracts (D52);
+  * the **test Customer Master database** (D48 harness) is seeded from these rows;
+  * **tests** bridge code -> internal UUID via :func:`tenant_uuid_for` /
     :func:`store_uuid_for` to read the seeded rows.
 
-INTERIM BRIDGE (Slice 2 plan §2, R1): the contracts expose external string ids
-(``t_*`` / ``s_*``); the DB keys rows by UUID. There is no defined translation.
-This module pins a deterministic external<->UUID pairing as a **test-only** bridge
-so acceptance criterion 6 can be met at the fixture level. It is NOT the
-architecture. The real translation is a deferred decision with a hard Slice 7
-deadline (Slice 7 writes real Customer Master records into UUID-keyed
-``identity_mirror`` and cannot run on this bridge).
+Identity model (D37 RESOLVED, D52/D55): the **internal UUID** is the load-bearing
+identity end to end. Customer Master's authoritative external codes —
+``display_code`` (tenants, e.g. ``buc-ees``) and ``store_code`` (stores, e.g.
+``TX-102``) — are readability-only and ride alongside. Both code columns are
+nullable at source (D55 as corrected); exactly one fixture store carries
+``store_code=None`` so the nullable path is exercised end to end (mirror faithful
+copy, fake resolution, envelope omission). The invented ``t_*``/``s_*`` form is
+retired.
+
+Code uniqueness is load-bearing: the fakes resolve a claim code to exactly one
+entity, so the by-code indexes below raise loudly on a duplicate (a silent dict
+overwrite would make a fixture unreachable).
 
 The UUIDs below are frozen literal constants (minted once with ``uuid_utils.uuid7()``)
 — NOT minted at import. The seeder and the test suite run in separate processes and
@@ -25,11 +32,15 @@ must agree on the exact UUIDs, so they cannot be random per-process.
 PROVISIONAL JWT/JWKS config (R2): the Customer Master contract is not yet signed
 off. The signing algorithm, claim set, issuer, and audience below are built to the
 *example* values in ``contracts/identity-service/attribute-needs.md`` and must be
-revisited when the CM contract lands.
+revisited when the CM contract lands. The claim identifier values carry the
+display_code/store_code form (not internal UUIDs, not the retired t_*/s_*); the
+divergence from attribute-needs.md's stale patterns is registered in
+``decisions.md`` for the CM sign-off.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
@@ -97,10 +108,10 @@ cdjnoaqGC0FNwXdBB66tqK96UxOlmfcMWWzVjUT5R9r2eU//aYmdDddEJJA+Ic5w
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class TenantFixture:
-    """A test tenant in both representations plus its identity_mirror columns."""
+    """A test tenant: internal UUID + authoritative code + identity_mirror columns."""
 
-    external_id: str  # t_* — the contract form
-    uuid: UUID  # identity_mirror.tenants.tenant_id — the DB key
+    display_code: str  # Customer Master core.tenants.display_code (authoritative)
+    uuid: UUID  # identity_mirror.tenants.tenant_id — the load-bearing DB key
     name: str
     status: str  # identity_mirror.tenants vocab: ONBOARDING/TRIAL/ACTIVE/SUSPENDED/TERMINATED
     pc_created_at: datetime
@@ -114,11 +125,11 @@ class TenantFixture:
 
 @dataclass(frozen=True)
 class StoreFixture:
-    """A test store in both representations plus its identity_mirror columns."""
+    """A test store: internal UUID + authoritative code + identity_mirror columns."""
 
-    external_id: str  # s_*
-    uuid: UUID  # identity_mirror.stores.store_id
-    tenant_external_id: str
+    store_code: str | None  # Customer Master core.stores.store_code — nullable at source (D55)
+    uuid: UUID  # identity_mirror.stores.store_id — the load-bearing DB key
+    tenant_display_code: str  # parent tenant's authoritative code
     name: str
     status: str  # identity_mirror.stores vocab: OPENING/ACTIVE/INACTIVE/CLOSED
     country: str
@@ -139,12 +150,14 @@ _UPDATED = datetime(2026, 5, 1, 0, 0, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # The default fixture set: 2 tenants, 2 stores each (one ACTIVE, one INACTIVE).
-# The primary tenant/store use the OpenAPI example ids so canned answers line up
-# with the contract examples.
+# Codes follow the live Customer Master style (tenant display_code is a kebab
+# slug like 'buc-ees'; store_code a short uppercase code like 'TX-102').
+# Exactly one non-primary INACTIVE store carries store_code=None — the nullable
+# path must actually run, not just be permitted by the column definition.
 # ---------------------------------------------------------------------------
 TENANTS: tuple[TenantFixture, ...] = (
     TenantFixture(
-        external_id="t_acme9k2l1mn4",
+        display_code="acme-retail",
         uuid=UUID("019e89f9-dbd5-7703-8221-ae6b811599bb"),
         name="Acme Retail",
         status="ACTIVE",
@@ -153,7 +166,7 @@ TENANTS: tuple[TenantFixture, ...] = (
         metadata={"pii_policy_version": "v1", "region": "us-east"},
     ),
     TenantFixture(
-        external_id="t_globex8ts5wz",
+        display_code="globex-stores",
         uuid=UUID("019e89f9-dbd5-7703-8221-ae707db9b918"),
         name="Globex Stores",
         status="ACTIVE",
@@ -165,9 +178,9 @@ TENANTS: tuple[TenantFixture, ...] = (
 
 STORES: tuple[StoreFixture, ...] = (
     StoreFixture(
-        external_id="s_acme0001a4b7",
+        store_code="AC-001",
         uuid=UUID("019e89f9-dbd5-7703-8221-ae8bfa6528bf"),
-        tenant_external_id="t_acme9k2l1mn4",
+        tenant_display_code="acme-retail",
         name="Acme Downtown #1",
         status="ACTIVE",
         country="US",
@@ -178,9 +191,9 @@ STORES: tuple[StoreFixture, ...] = (
         pc_updated_at=_UPDATED,
     ),
     StoreFixture(
-        external_id="s_acme0002c5d8",
+        store_code="AC-002",
         uuid=UUID("019e89f9-dbd5-7703-8221-ae9c0f7f63ba"),
-        tenant_external_id="t_acme9k2l1mn4",
+        tenant_display_code="acme-retail",
         name="Acme Suburb #2 (closed)",
         status="INACTIVE",
         country="US",
@@ -191,9 +204,9 @@ STORES: tuple[StoreFixture, ...] = (
         pc_updated_at=_UPDATED,
     ),
     StoreFixture(
-        external_id="s_globex0001a1",
+        store_code="GX-001",
         uuid=UUID("019e89f9-dbd5-7703-8221-aea1bb97d53d"),
-        tenant_external_id="t_globex8ts5wz",
+        tenant_display_code="globex-stores",
         name="Globex Central #1",
         status="ACTIVE",
         country="GB",
@@ -204,9 +217,12 @@ STORES: tuple[StoreFixture, ...] = (
         pc_updated_at=_UPDATED,
     ),
     StoreFixture(
-        external_id="s_globex0002b2",
+        # The store_code=None store (D55: nullable at source, copied faithfully).
+        # Non-primary and INACTIVE so happy paths are unaffected; reachable via
+        # stores_for_tenant() and by UUID, never by code.
+        store_code=None,
         uuid=UUID("019e89f9-dbd5-7703-8221-aeb75beccb78"),
-        tenant_external_id="t_globex8ts5wz",
+        tenant_display_code="globex-stores",
         name="Globex North #2 (closed)",
         status="INACTIVE",
         country="GB",
@@ -218,7 +234,7 @@ STORES: tuple[StoreFixture, ...] = (
     ),
 )
 
-# Primary tenant/store — the ones the OpenAPI examples use; the default the fakes
+# Primary tenant/store — the ones the contract examples use; the default the fakes
 # resolve to when an artifact does not name a specific identity.
 PRIMARY_TENANT = TENANTS[0]
 PRIMARY_STORE = STORES[0]
@@ -229,7 +245,7 @@ PRIMARY_STORE = STORES[0]
 # ---------------------------------------------------------------------------
 DEFAULT_SOURCE_ID = "manual_csv_upload"
 DEFAULT_SOURCE_MAPPING: dict[str, object] = {
-    "tenant_external_id": PRIMARY_TENANT.external_id,
+    "tenant_display_code": PRIMARY_TENANT.display_code,
     "source_id": DEFAULT_SOURCE_ID,
     "status": "ACTIVE",
     "mapping_rules": {
@@ -241,39 +257,57 @@ DEFAULT_SOURCE_MAPPING: dict[str, object] = {
     },
 }
 
+
 # ---------------------------------------------------------------------------
-# Lookups + the external<->UUID bridge
+# Lookups: code -> fixture. Uniqueness is load-bearing (the fakes resolve a code
+# to exactly one entity), so duplicates raise at import — never a silent dict
+# overwrite that strands a fixture.
 # ---------------------------------------------------------------------------
-_TENANTS_BY_EXTERNAL = {t.external_id: t for t in TENANTS}
-_STORES_BY_EXTERNAL = {s.external_id: s for s in STORES}
+def _index_unique_codes[T](pairs: Iterable[tuple[str, T]], *, kind: str) -> dict[str, T]:
+    index: dict[str, T] = {}
+    for code, item in pairs:
+        if code in index:
+            raise FixtureError(f"duplicate fixture {kind} code: {code!r}")
+        index[code] = item
+    return index
 
 
-def tenant_by_external_id(external_id: str) -> TenantFixture:
+_TENANTS_BY_CODE: dict[str, TenantFixture] = _index_unique_codes(
+    ((t.display_code, t) for t in TENANTS), kind="tenant display"
+)
+# The None-coded store is intentionally absent here: it has no code to resolve by.
+_STORES_BY_CODE: dict[str, StoreFixture] = _index_unique_codes(
+    ((s.store_code, s) for s in STORES if s.store_code is not None), kind="store"
+)
+
+
+def tenant_by_display_code(display_code: str) -> TenantFixture:
     try:
-        return _TENANTS_BY_EXTERNAL[external_id]
+        return _TENANTS_BY_CODE[display_code]
     except KeyError as exc:
-        raise FixtureError(f"unknown fixture tenant external_id: {external_id!r}") from exc
+        raise FixtureError(f"unknown fixture tenant display_code: {display_code!r}") from exc
 
 
-def store_by_external_id(external_id: str) -> StoreFixture:
+def store_by_store_code(store_code: str) -> StoreFixture:
     try:
-        return _STORES_BY_EXTERNAL[external_id]
+        return _STORES_BY_CODE[store_code]
     except KeyError as exc:
-        raise FixtureError(f"unknown fixture store external_id: {external_id!r}") from exc
+        raise FixtureError(f"unknown fixture store store_code: {store_code!r}") from exc
 
 
-def tenant_uuid_for(external_id: str) -> UUID:
-    """Bridge: external tenant id (t_*) -> internal UUID the seeder wrote."""
-    return tenant_by_external_id(external_id).uuid
+def tenant_uuid_for(display_code: str) -> UUID:
+    """Bridge: tenant display_code -> internal UUID the seeder wrote."""
+    return tenant_by_display_code(display_code).uuid
 
 
-def store_uuid_for(external_id: str) -> UUID:
-    """Bridge: external store id (s_*) -> internal UUID the seeder wrote."""
-    return store_by_external_id(external_id).uuid
+def store_uuid_for(store_code: str) -> UUID:
+    """Bridge: store_code -> internal UUID the seeder wrote."""
+    return store_by_store_code(store_code).uuid
 
 
-def stores_for_tenant(tenant_external_id: str) -> tuple[StoreFixture, ...]:
-    return tuple(s for s in STORES if s.tenant_external_id == tenant_external_id)
+def stores_for_tenant(tenant_display_code: str) -> tuple[StoreFixture, ...]:
+    """Every store under the tenant — including any store_code=None store."""
+    return tuple(s for s in STORES if s.tenant_display_code == tenant_display_code)
 
 
 # ---------------------------------------------------------------------------
@@ -296,15 +330,19 @@ def build_claims(
     """Build the (provisional) Customer Master JWT claim set.
 
     Claims follow attribute-needs.md §2; ``iat``/``exp`` are passed in so the
-    caller controls the clock (no wall-clock here). External ids only — the JWT
-    never carries internal UUIDs.
+    caller controls the clock (no wall-clock here). Identifier claim values carry
+    the authoritative external codes (display_code/store_code) — the JWT is an
+    external-facing artifact and never carries internal UUIDs. A store with no
+    store_code yields a null store claim (same as a tenant-wide user). The real
+    CM claim shape is the unsigned CM contract's to define (registered in
+    decisions.md).
     """
     claims: dict[str, object] = {
         "iss": TEST_JWT_ISSUER,
         "aud": TEST_JWT_AUDIENCE,
         "sub": user_id,
-        "tenant_id": tenant.external_id,
-        "store_id": store.external_id if store else None,
+        "tenant_id": tenant.display_code,
+        "store_id": store.store_code if store else None,
         "roles": list(roles),
         "iat": issued_at,
         "exp": expires_at,

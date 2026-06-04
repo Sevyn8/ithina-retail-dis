@@ -37,8 +37,12 @@
     },
     "tenant_id": {
       "type": "string",
-      "pattern": "^t_[a-z0-9]{12}$",
-      "description": "Tenant whose batch was diverted. All rows in the batch belong to one tenant (batched by tenant_id)."
+      "format": "uuid",
+      "description": "Internal tenant UUID whose batch was diverted. All rows in the batch belong to one tenant (batched by tenant_id). Load-bearing identity."
+    },
+    "tenant_display_code": {
+      "type": "string",
+      "description": "Customer Master's authoritative external code for the tenant (tenants.display_code). Optional in the schema, but producers MUST populate it when publishing. Readability only, never a substitute for tenant_id."
     },
     "batch": {
       "type": "object",
@@ -56,7 +60,7 @@
         },
         "rows_ref": {
           "type": "string",
-          "description": "GCS URI of the serialized batch payload. The DLQ message does not carry rows inline (could be 500+ rows, 100s of KB each). The recovery process fetches from this URI when ready to retry."
+          "description": "GCS URI of the serialized batch payload. The DLQ message does not carry rows inline (could be 500+ rows, 100s of KB each). The recovery process fetches from this URI when ready to retry. The tenant path segment is the internal tenant UUID."
         },
         "mapping_version_ids": {
           "type": "array",

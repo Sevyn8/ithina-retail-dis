@@ -73,34 +73,46 @@ def issue_jwt(
 
 
 def build_identity_changed(req: ChangeRequest) -> dict[str, object]:
-    """Build an ``identity.changed`` message conforming to the frozen schema."""
-    if req.entity == "tenant":
-        tenant = fx.tenant_by_external_id(req.external_id)
-        owning_tenant = tenant.external_id
-        name = tenant.name
-        metadata: dict[str, object] = dict(tenant.metadata)
-        source_ts = tenant.pc_updated_at
-        is_active = tenant.is_active
-    else:
-        store = fx.store_by_external_id(req.external_id)
-        owning_tenant = store.tenant_external_id
-        name = store.name
-        metadata = {}
-        source_ts = store.pc_updated_at
-        is_active = store.is_active
+    """Build an ``identity.changed`` message conforming to the frozen schema.
 
-    if req.event_type == "deactivated":
-        is_active = False
+    Identity fields are the internal UUIDs (D52); the payload carries ``status``
+    replicated verbatim (D46 — never an ``is_active`` boolean) plus the
+    authoritative external code (``display_code`` for tenants, ``store_code`` for
+    stores, omitted when the source carries none — D55). A ``deactivated`` event
+    maps to the entity's inactive lifecycle status.
+    """
+    payload: dict[str, object]
+    if req.entity == "tenant":
+        tenant = fx.tenant_by_display_code(req.code)
+        entity_uuid = tenant.uuid
+        owning_tenant_uuid = tenant.uuid
+        source_ts = tenant.pc_updated_at
+        status = "SUSPENDED" if req.event_type == "deactivated" else tenant.status
+        payload = {
+            "name": tenant.name,
+            "status": status,
+            "display_code": tenant.display_code,
+            "metadata": dict(tenant.metadata),
+        }
+    else:
+        store = fx.store_by_store_code(req.code)
+        entity_uuid = store.uuid
+        owning_tenant_uuid = fx.tenant_by_display_code(store.tenant_display_code).uuid
+        source_ts = store.pc_updated_at
+        status = "CLOSED" if req.event_type == "deactivated" else store.status
+        payload = {"name": store.name, "status": status, "metadata": {}}
+        if store.store_code is not None:
+            payload["store_code"] = store.store_code
 
     return {
         "schema_version": IDENTITY_CHANGED_SCHEMA_VERSION,
         "event_id": str(uuid_utils.uuid7()),
         "event_type": req.event_type,
         "entity": req.entity,
-        "entity_id": req.external_id,
-        "tenant_id": owning_tenant,
+        "entity_id": str(entity_uuid),
+        "tenant_id": str(owning_tenant_uuid),
         "source_ts": source_ts.isoformat(),
-        "payload": {"name": name, "is_active": is_active, "metadata": metadata},
+        "payload": payload,
     }
 
 
@@ -108,8 +120,8 @@ def build_identity_changed(req: ChangeRequest) -> dict[str, object]:
 # Request / response models
 # ---------------------------------------------------------------------------
 class TokenRequest(BaseModel):
-    tenant_external_id: str | None = None
-    store_external_id: str | None = None
+    tenant_display_code: str | None = None
+    store_code: str | None = None
     user_id: str | None = None
     roles: list[str] | None = None
     expires_in: int = 3600
@@ -122,20 +134,24 @@ class TokenResponse(BaseModel):
 
 
 class UploadSessionRequest(BaseModel):
-    tenant_external_id: str | None = None
-    store_external_id: str | None = None
+    tenant_display_code: str | None = None
+    store_code: str | None = None
 
 
 class UploadSessionResponse(BaseModel):
+    # tenant_id/store_id carry the authoritative external codes (display_code /
+    # store_code) — a CM-facing artifact never exposes internal UUIDs. This is an
+    # approximation of the unseen real CM API shape, registered in decisions.md
+    # for the CM contract sign-off. store_id is None for a code-less store.
     upload_session_id: str
     tenant_id: str
-    store_id: str
+    store_id: str | None
     expires_at: int
 
 
 class ChangeRequest(BaseModel):
     entity: Literal["tenant", "store"]
-    external_id: str
+    code: str  # display_code (entity=tenant) or store_code (entity=store)
     event_type: Literal["created", "updated", "deactivated"] = "updated"
 
 
@@ -167,14 +183,14 @@ def create_app(publisher: Publisher | None = None) -> FastAPI:
         return app.state.publisher
 
     def _resolve_tenant_store(
-        tenant_external_id: str | None, store_external_id: str | None
+        tenant_display_code: str | None, store_code: str | None
     ) -> tuple[fx.TenantFixture, fx.StoreFixture | None]:
-        tenant = fx.tenant_by_external_id(tenant_external_id) if tenant_external_id else fx.PRIMARY_TENANT
-        if store_external_id:
-            return tenant, fx.store_by_external_id(store_external_id)
-        if tenant_external_id is None:
+        tenant = fx.tenant_by_display_code(tenant_display_code) if tenant_display_code else fx.PRIMARY_TENANT
+        if store_code:
+            return tenant, fx.store_by_store_code(store_code)
+        if tenant_display_code is None:
             return tenant, fx.PRIMARY_STORE
-        stores = fx.stores_for_tenant(tenant.external_id)
+        stores = fx.stores_for_tenant(tenant.display_code)
         return tenant, (stores[0] if stores else None)
 
     @app.get("/healthz")
@@ -187,7 +203,7 @@ def create_app(publisher: Publisher | None = None) -> FastAPI:
 
     @app.post("/v1/tokens", response_model=TokenResponse)
     def issue_token(req: TokenRequest) -> TokenResponse:
-        tenant, store = _resolve_tenant_store(req.tenant_external_id, req.store_external_id)
+        tenant, store = _resolve_tenant_store(req.tenant_display_code, req.store_code)
         token = issue_jwt(
             tenant=tenant,
             store=store,
@@ -199,15 +215,15 @@ def create_app(publisher: Publisher | None = None) -> FastAPI:
 
     @app.post("/v1/upload-sessions", response_model=UploadSessionResponse)
     def create_upload_session(req: UploadSessionRequest) -> UploadSessionResponse:
-        tenant, store = _resolve_tenant_store(req.tenant_external_id, req.store_external_id)
+        tenant, store = _resolve_tenant_store(req.tenant_display_code, req.store_code)
         if store is None:
             store = fx.PRIMARY_STORE
         session_id = "us_" + secrets.token_hex(6)  # 12 hex chars -> matches ^us_[a-z0-9]{12}$
         expires_at = int(time.time()) + 3600
         sessions[session_id] = {
             "upload_session_id": session_id,
-            "tenant_id": tenant.external_id,
-            "store_id": store.external_id,
+            "tenant_id": tenant.display_code,
+            "store_id": store.store_code,  # None for a code-less store (D55)
             "expires_at": expires_at,
         }
         return UploadSessionResponse(**sessions[session_id])  # type: ignore[arg-type]

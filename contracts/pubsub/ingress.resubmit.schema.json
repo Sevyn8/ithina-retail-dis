@@ -33,11 +33,21 @@
     },
     "tenant_id": {
       "type": "string",
-      "pattern": "^t_[a-z0-9]{12}$"
+      "format": "uuid",
+      "description": "Internal tenant UUID, identical to Customer Master core.tenants.id and identity_mirror.tenants.tenant_id. Load-bearing identity."
     },
     "store_id": {
       "type": "string",
-      "pattern": "^s_[a-z0-9]{12}$"
+      "format": "uuid",
+      "description": "Internal store UUID, identical to Customer Master core.stores.id and identity_mirror.stores.store_id. Load-bearing identity."
+    },
+    "tenant_display_code": {
+      "type": "string",
+      "description": "Customer Master's authoritative external code for the tenant (tenants.display_code). Optional in the schema, but producers MUST populate it when publishing. Readability only, never a substitute for tenant_id."
+    },
+    "store_code": {
+      "type": "string",
+      "description": "Customer Master's authoritative external code for the store (stores.store_code). Optional in the schema, but producers MUST populate it when present in Customer Master. Readability only, never a substitute for store_id."
     },
     "source_id": {
       "type": "string"
@@ -54,7 +64,8 @@
     },
     "gcs_uri": {
       "type": "string",
-      "pattern": "^gs://[a-z0-9-]+/tenant/t_[a-z0-9]{12}/source/[^/]+/yyyy=[0-9]{4}/mm=[0-9]{2}/dd=[0-9]{2}/[^/]+\\.(csv|json)$"
+      "pattern": "^gs://[a-z0-9-]+/tenant/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/source/[^/]+/yyyy=[0-9]{4}/mm=[0-9]{2}/dd=[0-9]{2}/[^/]+\\.(csv|json)$",
+      "description": "Full GCS URI of the payload. Path scheme enforced by libs/dis-storage; the tenant segment is the internal tenant UUID."
     },
     "received_ts": {
       "type": "string",

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ithina.dis.contracts.pubsub.csv.received.v1",
+  "title": "csv.received",
+  "description": "Published by dis-ui-server once a tenant's CSV upload is confirmed saved in GCS (the signed-PUT object has finalized). Consumed by the csv-ingest-worker to begin Phase 2 ingest (preflight, PII gate, bronze write, ingress.ready publish). This is the trigger boundary between the UI-facing Phase 1 (dis-ui-server upload-session endpoint, which mints trace_id and issues the signed URL) and the asynchronous Phase 2 worker. Distinct from ingress.ready: csv.received precedes the bronze write and carries no bronze_ref; ingress.ready is published by the worker after bronze lands.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trace_id",
+    "tenant_id",
+    "store_id",
+    "source_id",
+    "upload_session_id",
+    "gcs_uri",
+    "received_ts"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Incremented only on breaking changes."
+    },
+    "trace_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this ingress, minted by dis-ui-server's upload-session endpoint at Phase 1 (hard rule 4: trace_id is generated upstream and never minted mid-pipeline). The worker reads this value and propagates it; it does not mint a new one."
+    },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Internal tenant UUID, identical to Customer Master core.tenants.id and identity_mirror.tenants.tenant_id. Load-bearing identity: the worker writes bronze and sets RLS context with this. Used as the Pub/Sub ordering key."
+    },
+    "store_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Internal store UUID, identical to Customer Master core.stores.id and identity_mirror.stores.store_id. Load-bearing identity. An upload session is bound to exactly one store at session creation."
+    },
+    "tenant_display_code": {
+      "type": "string",
+      "description": "Customer Master's authoritative external code for the tenant (tenants.display_code, e.g. 'buc-ees'). Optional in the schema, but producers MUST populate it when publishing; it exists for human and ops readability, never as a substitute for tenant_id. Not the load-bearing identity."
+    },
+    "store_code": {
+      "type": "string",
+      "description": "Customer Master's authoritative external code for the store (stores.store_code). Optional in the schema, but producers MUST populate it when publishing (when present in Customer Master; the source column is nullable). Readability only, never a substitute for store_id."
+    },
+    "source_id": {
+      "type": "string",
+      "description": "Source registration identifier (POS type, ERP type, etc.) for the upload."
+    },
+    "upload_session_id": {
+      "type": "string",
+      "pattern": "^us_[a-z0-9]{12}$",
+      "description": "The upload session this CSV was uploaded under, created by dis-ui-server at Phase 1. The worker does NOT resolve identity from this (identity is carried on this message and trusted, since dis-ui-server resolved it at Phase 1). Its role is the source_payload_id component of the idempotency key and lineage back to the business upload event. Distinct from trace_id: trace_id traces this pipeline run, upload_session_id traces the tenant's upload action."
+    },
+    "gcs_uri": {
+      "type": "string",
+      "pattern": "^gs://[a-z0-9-]+/tenant/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/source/[^/]+/yyyy=[0-9]{4}/mm=[0-9]{2}/dd=[0-9]{2}/[^/]+\\.csv$",
+      "description": "Full GCS URI of the saved CSV payload. Path scheme enforced by libs/dis-storage; the tenant segment is the internal tenant UUID (not an external code), because the UUID is immutable while external codes are user-editable."
+    },
+    "received_ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the CSV save in GCS was confirmed and this event was published."
+    }
+  },
+  "additionalProperties": false
+}

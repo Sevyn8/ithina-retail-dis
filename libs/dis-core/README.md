@@ -23,8 +23,9 @@ libs/dis-core/
 
 `result.py` from the original sketch is intentionally not built — no current
 consumer needs a Result type (build to need; a later slice adds it if warranted).
-`TenantId`/`StoreId` here are UUID; the identity contract's same-named external
-`t_*`/`s_*` aliases live in `identity/models.py` (see CLAUDE.md, the D37 split).
+`TenantId`/`StoreId` here are UUID — and since Slice 9a so are the identity
+contract's `tenant_id`/`store_id` fields in `identity/models.py` (D37 resolved;
+the invented external `t_*`/`s_*` aliases are retired, D52).
 
 **Why this lib exists.** Every service needs trace_id generation, error types, structured logging. Without a shared lib, each service invents its own and the codebase fragments. With a shared lib, the conventions are enforced by import.
 

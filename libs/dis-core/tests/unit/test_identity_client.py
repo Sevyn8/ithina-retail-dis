@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from uuid import UUID
 
 import httpx
 import pytest
@@ -22,9 +23,14 @@ from dis_core.identity import (
     ValidateResponse,
 )
 
+_TENANT_UUID = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+_STORE_UUID = "019e89f9-dbd5-7703-8221-ae8bfa6528bf"
+
 IDENTITY_OK = {
-    "tenant_id": "t_acme9k2l1mn4",
-    "store_id": "s_acme0001a4b7",
+    "tenant_id": _TENANT_UUID,
+    "store_id": _STORE_UUID,
+    "display_code": "acme-retail",
+    "store_code": "AC-001",
     "is_active": True,
     "source": "customer_master",
     "metadata": {"pii_policy_version": "v1"},
@@ -51,8 +57,12 @@ async def test_resolve_from_token_returns_identity() -> None:
     await client.aclose()
 
     assert isinstance(identity, Identity)
-    assert identity.tenant_id == "t_acme9k2l1mn4"
-    assert identity.store_id == "s_acme0001a4b7"
+    # The load-bearing identity is the internal UUID, typed (D37/D52).
+    assert identity.tenant_id == UUID(_TENANT_UUID)
+    assert identity.store_id == UUID(_STORE_UUID)
+    # The authoritative external codes ride alongside (D55).
+    assert identity.display_code == "acme-retail"
+    assert identity.store_code == "AC-001"
     assert captured["url"].endswith("/v1/resolve_from_token")
     assert captured["body"] == {"jwt": "a.jwt.token"}
 
@@ -60,16 +70,17 @@ async def test_resolve_from_token_returns_identity() -> None:
 async def test_validate_returns_validate_response() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url).endswith("/v1/validate")
+        # UUID request fields serialise to canonical strings (model_dump mode="json").
         assert json.loads(request.content) == {
-            "tenant_id": "t_acme9k2l1mn4",
-            "store_id": "s_acme0001a4b7",
+            "tenant_id": _TENANT_UUID,
+            "store_id": _STORE_UUID,
         }
         return httpx.Response(
             200, json={"exists": True, "is_active": True, "source": "identity_mirror_fallback"}
         )
 
     client = _client(handler)
-    result = await client.validate("t_acme9k2l1mn4", "s_acme0001a4b7")
+    result = await client.validate(UUID(_TENANT_UUID), UUID(_STORE_UUID))
     await client.aclose()
 
     assert isinstance(result, ValidateResponse)
