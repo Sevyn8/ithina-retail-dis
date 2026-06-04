@@ -82,6 +82,7 @@ dev = [
   "dis-storage",
   "dis-audit",
   "dis-mapping",
+  "dis-validation",
   "mirror-sync-consumer",
 ]
 
@@ -139,6 +140,7 @@ members = [
   "libs/dis-storage",
   "libs/dis-audit",
   "libs/dis-mapping",
+  "libs/dis-validation",
   "services/mirror-sync-consumer",
 ]
 
@@ -154,4 +156,5 @@ dis-pii = { workspace = true }
 dis-storage = { workspace = true }
 dis-audit = { workspace = true }
 dis-mapping = { workspace = true }
+dis-validation = { workspace = true }
 mirror-sync-consumer = { workspace = true }
