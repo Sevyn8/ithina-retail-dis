@@ -1,4 +1,4 @@
-import { Bell, Database, FileSearch, LayoutDashboard, ShieldAlert, Upload } from 'lucide-react'
+import { Bell, Building2, Database, FileSearch, LayoutDashboard, ShieldAlert, Upload } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export type NavItem = {
@@ -13,7 +13,9 @@ export type NavItem = {
 }
 
 // Tenant navigation. Dashboard is the index (`/`); Mappings is intentionally NOT a
-// top-level item (reached via a source, /sources/:sourceId/mappings). No ops items.
+// top-level item (reached via a source, /sources/:sourceId/mappings). The ops-flagged
+// items render only for an ops persona (Sidebar filters on isOps); Ops Fleet (slice 24)
+// is the first such destination.
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard },
   { label: 'Sources', to: '/sources', icon: Database },
@@ -21,4 +23,5 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Quarantine', to: '/quarantine', icon: ShieldAlert },
   { label: 'Audit', to: '/audit', icon: FileSearch },
   { label: 'Notifications', to: '/notifications', icon: Bell },
+  { label: 'Ops Fleet', to: '/ops/fleet', icon: Building2, ops: true },
 ]

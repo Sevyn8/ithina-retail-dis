@@ -53,6 +53,14 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Sources' }).className).toContain('bg-sidebar-accent')
   })
 
+  it('shows the Ops Fleet nav item for ops and hides it for tenant (default NAV_ITEMS)', () => {
+    const tenantView = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    expect(screen.queryByRole('link', { name: 'Ops Fleet' })).not.toBeInTheDocument()
+    tenantView.unmount()
+    renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
+    expect(screen.getByRole('link', { name: 'Ops Fleet' })).toBeInTheDocument()
+  })
+
   it('collapses and expands', async () => {
     const user = userEvent.setup()
     renderWithProviders(<Sidebar items={ITEMS} />, { snapshot: tenantSnapshot })

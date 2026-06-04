@@ -10,9 +10,19 @@ const tenantSnapshot: AuthSnapshot = {
   storeId: 's_acme0001a4b7',
   roles: ['dis:upload', 'dis:read'],
 }
+const opsSnapshot: AuthSnapshot = {
+  userId: 'u_opsdev0001',
+  tenantId: null,
+  storeId: null,
+  roles: ['dis:ops', 'dis:read', 'dis:mapping_admin'],
+}
 
 function renderAt(path: string) {
   return renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: [path] })
+}
+
+function renderAtAs(snapshot: AuthSnapshot, path: string) {
+  return renderWithProviders(<AppRoutes />, { snapshot, initialEntries: [path] })
 }
 
 describe('AppRoutes', () => {
@@ -42,5 +52,21 @@ describe('AppRoutes', () => {
   it('renders the not-found state for an unknown route', async () => {
     renderAt('/no-such-page')
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+  })
+
+  it('redirects an ops persona from the index to Ops Fleet', async () => {
+    renderAtAs(opsSnapshot, '/')
+    expect(await screen.findByRole('heading', { name: 'Ops Fleet' })).toBeInTheDocument()
+  })
+
+  it('denies a non-ops persona on /ops/fleet', async () => {
+    renderAt('/ops/fleet')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
+    expect(screen.queryByRole('heading', { name: 'Ops Fleet' })).not.toBeInTheDocument()
+  })
+
+  it('denies a non-ops persona on any /ops/* path (layout guard covers the subtree)', async () => {
+    renderAt('/ops/something-else')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
   })
 })
