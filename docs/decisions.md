@@ -242,7 +242,7 @@ to filter to the current truth. dbt models in BigQuery `canonical_history.*` exp
 
 **Forward note.** Trace-level dedup at streaming-consumer entry (check audit for prior `CANONICAL_WRITTEN` on the same `trace_id` before reprocessing) is a future compute-saving optimisation, not correctness-critical. See `architecture.md` §9.2.
 
-**Schema gap (see D38, OPEN).** The dedup key named above (`source_id`, `source_event_id`) does **not** map to columns that exist in the applied canonical schema. This divergence is registered as D38 and must be resolved before Slice 10 builds the read-time dedup.
+**Schema gap (see D38, RESOLVED).** The dedup key named above (`source_id`, `source_event_id`) did not map to columns in the applied canonical schema when this entry was written. D38 resolved it (Slice 10 plan mode): migration `0003_canonical_dedup_event_time` (M-D38/D64) added both columns to both event tables; the read-time window's live ORDER BY is `source_sale_timestamp`/`source_event_timestamp DESC, last_updated_at DESC, id DESC`.
 
 
 ---
@@ -348,9 +348,9 @@ Original `OPEN` text retained below for the record. The deadline noted then (the
 
 ---
 
-### D38 Event-table dedup key names columns absent from the applied schema — `OPEN`
+### D38 Event-table dedup key names columns absent from the applied schema — `RESOLVED` (Slice 10 plan mode; migration 0003)
 
-**Status.** `OPEN`. This entry records a schema-vs-decision divergence; it does **not** resolve it. Surfaced during Slice 3 (dis-canonical models, by live-schema introspection of `ithina_dis_db`). **Hard deadline: before Slice 10 (streaming consumer happy path) begins.**
+**Status.** `RESOLVED`. Surfaced during Slice 3 (dis-canonical models, by live-schema introspection of `ithina_dis_db`); resolved in Slice 10 plan mode as candidate resolution 1 (migration), landed by `alembic/versions/0003_canonical_dedup_event_time.py` (the M-D38/D64 prerequisite gate) before any Slice 10 service code. The original gap record is preserved below; the resolution follows it.
 
 **The gap.** D33 and CLAUDE.md hard rule 7 define the event-table "same source event" dedup key, applied latest-wins at read time, as `(tenant_id, store_id, source_id, source_event_id)`. Introspection of the applied canonical schema shows **neither `source_id` nor `source_event_id` exists** on `canonical.store_sku_sale_events` or `canonical.store_sku_change_events` (nor on any canonical table). The only source-related columns present are `source_sale_timestamp` / `source_event_timestamp` (timestamps, not ids), `transaction_id` and `line_item_seq` (sale events only), and `related_sale_event_id`. The event tables carry no UNIQUE constraint (correctly, per D33's append-only posture), so nothing in the schema pins the key either. As written, the D33 / rule-7 `ROW_NUMBER() OVER (PARTITION BY tenant_id, store_id, source_id, source_event_id ...)` window cannot be computed from existing columns.
 
@@ -362,6 +362,8 @@ Original `OPEN` text retained below for the record. The deadline noted then (the
 3. Carry the source identifiers inside `ingest_metadata` (jsonb) and compute the key from there (weaker — not indexable, not a first-class column).
 
 **Why it must be settled by Slice 10.** Slice 10 builds the streaming consumer's atomic dual-write and the read-time latest-wins semantics depend on this key. Either the columns must exist (option 1) or the key must be redefined (option 2) before that code is written; otherwise the consumer cannot implement D33 as specified. Do not edit the DDL or the rule wording under Slice 3 — this entry only registers the gap. Cross-referenced from D33.
+
+**Resolution (Slice 10 plan mode, M-D38/D64).** Resolution 1, migration required. Option-2 stand-ins fail on the live schema: `transaction_id`/`line_item_seq` exist only on sale events and are nullable; change events carry no source event identifier at all; `dis_channel` is the ingress channel, not the source registration id (multiple sources share a channel, so it cannot partition D33's per-source numbering namespaces). Option 3 (`ingest_metadata` JSONB) rejected: a correctness-bearing key in untyped, unindexable JSONB (the same reasoning as D64). Migration `0003_canonical_dedup_event_time` added to BOTH event tables `source_id VARCHAR(128) COLLATE "C" NOT NULL` (type/length/collation matched to `config.source_mappings.source_id` and `bronze.data_ingress_events.source_id`, introspected) and `source_event_id VARCHAR(256) COLLATE "C" NOT NULL`, plus the window-supporting indexes `ix_ssse_dedup_key`/`ix_ssce_dedup_key` `(tenant_id, store_id, source_id, source_event_id, source_{sale|event}_timestamp DESC)`, and D64's `last_source_event_at` on the hot table. The NOT NULL adds were legal against introspected-empty event tables; the migration re-checks `COUNT(*) = 0` immediately before each add and aborts otherwise. The D33 window's live column mapping: `ROW_NUMBER() OVER (PARTITION BY tenant_id, store_id, source_id, source_event_id ORDER BY source_{sale|event}_timestamp DESC, last_updated_at DESC, id DESC) = 1` (`event_ts`/`received_ts` in D33's prose map to the source timestamp and `last_updated_at`; `id` is uuidv7, the deterministic final tie-break). Population (consumer-side, Slice 10): `source_id` from the `ingress.ready` envelope (cross-checked against the GCS path and bronze row); `source_event_id` = `transaction_id || ':' || line_item_seq` when the source supplies them, else the deterministic fallback `bronze_ref || ':' || chunk_row_index` — redelivery-stable but NOT correction-collapsing for id-less sources (registered as D65, Slice 10). **Cross-refs.** D33, D64, D65, Slice 10.
 
 ---
 
@@ -652,3 +654,45 @@ Tier-0 structural CSV validation (file present, non-empty, decodes, parses as CS
 ### D60 Pub/Sub ordering key described in contracts but not implemented `OPEN`
 
 **Status.** `OPEN` (registered at the Slice 9b commit gate, from the slice's adversarial self-validation). Both `csv.received` and `ingress.ready` describe `tenant_id` as the Pub/Sub ordering key, but no producer sets one (worker publisher, dis-testing publishers, test publishes). Ordering keys need a publisher attribute + ordering-enabled subscriptions, absent from the repo. Left in 9b because no consumer depends on ordering (Slice 10 unbuilt) and canonical correctness is event-time-based (D7, D33). **Resolution:** when the first ordering-sensitive consumer lands (Slice 10), implement the ordering-key convention end to end OR strike the description from both contracts. **Cross-refs.** D7, D33, D54.
+
+
+### D61 Named-custom-transform escape hatch deferred (declarative-only mapping stance) `DEFERRED`.
+
+The mapping engine stays declarative-only (the Slice 5 bounded vocabulary). A gap the vocabulary cannot express is an onboarding problem (fix the mapping or extend the shared vocabulary) or schema drift (detect and fail), not a per-source code path. No named-transform registry is built. Trigger: a concrete source that defeats both the declarative vocabulary and a vocabulary extension. Cross-ref: Slice 5, Slice 10.
+
+
+### D62 Proactive schema-drift monitoring deferred (reactive detection stands) — DEFERRED.
+
+Drift is caught reactively: structural drift by the pre-mapping source-shape suite, format drift by normalization, both routed to the failure disposition (Slice 10) and quarantine (Slice 11). No standalone watcher or pre-processing schema comparison is built. Trigger: reactive detection proves insufficient in pilot (a drift class slips past both suites), or a tenant SLA requires proactive drift alerting. Cross-ref: Slice 5, Slice 10.
+
+
+### D64 Event-time-wins comparison uses a typed hot-table column, not JSONB `SETTLED` (landed by migration 0003)
+
+**Decision.** Event-time-wins on `store_sku_current_position` (architecture 2.3.1: a
+late-arriving older event must not overwrite newer state) needs a stored reference
+event-time to compare against. The live hot table had only `last_updated_at` (write-time,
+DB-generated), no source event-time column. The comparison timestamp is stored as a
+first-class typed column `last_source_event_at TIMESTAMPTZ` on
+`store_sku_current_position`; the upsert is conditional
+(`DO UPDATE ... WHERE incoming source event ts >= stored ts`). This column landed on the
+same prerequisite migration that resolves D38's event-table dedup columns
+(`source_id`/`source_event_id`); it was a prerequisite for the Slice 10 build, not
+authored under Slice 10 service code.
+
+**Alternatives.** (1) Store the source event timestamp in the consumer-injected
+`ingest_metadata` JSONB (no DDL). Rejected: a load-bearing correctness value belongs in a
+typed column, not untyped JSONB; the no-DDL-in-slice rule means surface-and-register the
+schema gap (as with D38), not route around it through JSONB. (2) Last-write-wins for v1.0:
+unconditional update. Rejected: violates architecture 2.3.1.
+
+**Why.** Event-time-wins is a hard architectural invariant; typing the comparison value
+keeps it indexable and explicit and matches the project's typed-schema posture. The perf
+delta versus JSONB is negligible at beta scale, so correctness-typing decides, not
+performance.
+
+**Prerequisite (discharged).** The migration adding `last_source_event_at` (with the D38
+columns) — `alembic/versions/0003_canonical_dedup_event_time.py` (M-D38/D64) — landed and
+was verified before the Slice 10 dual-write and event-time-wins proofs. NULL means never
+event-written (e.g. pre-seeded catalogue rows); the column is nullable by design.
+
+**Cross-ref.** D38 (shared prerequisite migration), D30, D33, architecture 2.3.1, Slice 10.
