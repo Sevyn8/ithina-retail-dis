@@ -15,6 +15,10 @@ export type SourceHealth = 'healthy' | 'warning' | 'failing'
 export type DashboardSource = {
   source_id: string
   name: string
+  // The source-type identity key (csv | shopify_pos | square | other), used by the
+  // Dashboard "where your data comes from" breakdown to group sources by connector type
+  // and resolve each row's identity. Classification metadata, not a metric.
+  source_type: string
   health: SourceHealth
   rows_24h: number
   last_ok_at: string
@@ -43,6 +47,7 @@ const DASHBOARD_FIXTURES: Record<string, DashboardSummary> = {
       {
         source_id: 'manual_csv_upload',
         name: 'Manual CSV Upload',
+        source_type: 'csv',
         health: 'healthy',
         rows_24h: 1247,
         last_ok_at: '2026-06-03T09:12:00Z',
@@ -51,6 +56,7 @@ const DASHBOARD_FIXTURES: Record<string, DashboardSummary> = {
       {
         source_id: 'shopify_pos_v2',
         name: 'Shopify POS',
+        source_type: 'shopify_pos',
         health: 'warning',
         rows_24h: 832,
         last_ok_at: '2026-06-03T08:40:00Z',

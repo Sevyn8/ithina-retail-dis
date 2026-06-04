@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
 import * as dashboard from '../lib/dis-ui-server/dashboard'
@@ -18,18 +18,52 @@ describe('Dashboard', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders the per-source rollup and the latency snapshot', async () => {
+  it('renders the metric cards and the per-source rollup', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
-    // rollup
+    // metric cards, all from the rollup (R6): rows ingested (1247+832), active source types,
+    // P95 latency. (Selector update for the richer-dashboard layout; values from the rollup.)
+    expect(screen.getByText('Rows ingested (24h)')).toBeInTheDocument()
+    expect(screen.getByText('2,079')).toBeInTheDocument()
+    expect(screen.getByText('2 of 4 types')).toBeInTheDocument()
+    expect(screen.getByText('6800 ms')).toBeInTheDocument()
+    // health-by-source rollup (Manual CSV Upload is unique to the health table; Shopify POS
+    // also appears as the breakdown label, so it is non-unique now)
     expect(screen.getByText('Manual CSV Upload')).toBeInTheDocument()
-    expect(screen.getByText('Shopify POS')).toBeInTheDocument()
+    expect(screen.getAllByText('Shopify POS').length).toBeGreaterThan(0)
     expect(screen.getByText('warning')).toBeInTheDocument()
-    expect(screen.getByText(/1,?247/)).toBeInTheDocument() // rows_24h (locale-tolerant)
-    // latency now renders as metric stat cards (selector-only update for slice 23
-    // craft bar; the values are unchanged)
-    expect(screen.getByText('2100 ms')).toBeInTheDocument()
-    expect(screen.getByText('11200 ms')).toBeInTheDocument()
+  })
+
+  it('renders the source-type breakdown: connected types with volume, others dimmed', async () => {
+    renderWithProviders(<Dashboard />, { snapshot: tenant })
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    expect(screen.getByText('Where your data comes from')).toBeInTheDocument()
+    // connected types show their identity label + volume from the rollup
+    expect(screen.getByText('CSV upload')).toBeInTheDocument()
+    expect(screen.getByText('1,247 rows (24h)')).toBeInTheDocument()
+    expect(screen.getByText('832 rows (24h)')).toBeInTheDocument()
+    // not-connected types (square, other) are dimmed roadmap rows, no fabricated numbers
+    expect(screen.getByText('Square')).toBeInTheDocument()
+    expect(screen.getByText('Other POS/ERP')).toBeInTheDocument()
+    expect(screen.getAllByText('Not connected')).toHaveLength(2)
+  })
+
+  it('uses the R1 source-type identity (literal classes) in the breakdown and rows', async () => {
+    const { container } = renderWithProviders(<Dashboard />, { snapshot: tenant })
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    expect(container.querySelector('.text-source-csv')).not.toBeNull()
+    expect(container.querySelector('.text-source-shopify-pos')).not.toBeNull()
+  })
+
+  it('renders under the dark theme class (both modes)', async () => {
+    const { container } = renderWithProviders(
+      <div className="dark">
+        <Dashboard />
+      </div>,
+      { snapshot: tenant },
+    )
+    expect(await within(container).findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
+    expect(within(container).getByText('Where your data comes from')).toBeInTheDocument()
   })
 
   it('links each source name to its mappings and the open-quarantine count to the filtered console', async () => {
