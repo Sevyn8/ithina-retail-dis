@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import MutableMapping
+from dataclasses import dataclass
 from typing import Any
 
 try:  # python-json-logger >= 3 moved the formatter to a submodule.
@@ -27,6 +28,21 @@ except ImportError:  # 2.x compatibility
 
 # Context keys bound on every DIS log line.
 _CONTEXT_KEYS = ("service", "stage", "tenant_id", "trace_id")
+
+
+@dataclass(frozen=True)
+class LogContext:
+    """Optional caller-supplied log-binding context for pure libs (slice-05).
+
+    The pure pipeline libs (dis-mapping, dis-validation) take this to bind
+    ``tenant_id``/``trace_id`` on their log lines; it never enters their data
+    output. Shared here so the two libs (which may not import each other) carry
+    one definition instead of duplicating it.
+    """
+
+    tenant_id: str | None = None
+    trace_id: str | None = None
+
 
 _DEFAULT_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 

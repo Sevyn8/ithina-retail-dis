@@ -198,6 +198,105 @@ class AuditWriteError(DisError):
         self.failure_code = failure_code
 
 
+# -- Pipeline-mechanics errors (Slice 5) ----------------------------------------
+# Raised by dis-mapping and dis-validation. Both libs are pure (no I/O); these are
+# *config / contract* errors raised loudly at construction or materialization time
+# (code-quality rule 4) — they are NOT the per-cell / per-row data failures, which
+# are returned as typed result objects, never raised (slice-05, D18/D20). Each
+# carries the load-bearing identifiers (code-quality rule 5); NEVER a cell value.
+
+
+class MappingError(DisError):
+    """Base for dis-mapping failures.
+
+    Carries optional ``tenant_id`` / ``trace_id`` (when the caller supplied a log
+    context) and the load-bearing ``column`` where one applies. Never a cell value
+    (root CLAUDE.md: never log PII or raw payloads).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        column: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.column = column
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
+class MappingConfigError(MappingError):
+    """The mapping config (``mapping_rules``) is invalid — fail loud at construction.
+
+    Raised by ``SourceMapping`` validation: unknown op, missing/invalid op args
+    (including the mandatory ``parse_decimal``/``parse_integer`` separator
+    declarations — locale is asserted, never inferred), colliding rename targets,
+    normalize/cast keys that no rename produces, derive targets that collide with
+    renames, or a transform list whose composition is type-invalid. Never deferred
+    to runtime (code-quality rule 4).
+    """
+
+
+class MappingInputError(MappingError):
+    """The chunk handed to the engine violates the caller contract.
+
+    Raised when a column the mapping's rename declares is absent from the input
+    frame, or a column with declared normalize rules is not string-typed. This is
+    a caller-contract violation (the source-shape suite gates chunk shape before
+    mapping in the pipeline, D18), not a per-cell data failure — so it raises
+    rather than returning failures.
+    """
+
+
+class ValidationSuiteError(DisError):
+    """Base for dis-validation failures (suite definition / materialization layer).
+
+    NOT the per-row validation outcomes — those are returned as typed result
+    objects (``SourceShapeFailure`` / ``CanonicalShapeFailure``), never raised.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        column: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.model = model
+        self.column = column
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
+class SuiteDefinitionError(ValidationSuiteError):
+    """A suite definition is invalid or cannot be materialized into a Pandera schema.
+
+    E.g. an owned column the target model does not carry, an unsupported dtype in
+    the model-to-Pandera deriver, or a malformed expectation. Fail loud at
+    materialization, never at validation runtime.
+    """
+
+
+class SuiteDriftError(ValidationSuiteError):
+    """The canonical-shape suite and the canonical model have drifted apart.
+
+    Raised by the drift guard (``dis_validation.provenance``) when the provenance
+    classification does not partition the model's field set exactly (both
+    directions), when a suite's column set differs from its declared source-owned
+    set, or when a mapping-time suite is requested for a model that is not
+    mapping-produced (``store_sku_signal_history``, D22/D31/D32). This error is the
+    *proof mechanism* of slice-05 criterion 6: it errors rather than skips.
+    """
+
+
 # -- Mirror Sync errors (Slice 7) ----------------------------------------------
 # Raised by the mirror-sync-consumer service (DB-pull mode), which reads Customer
 # Master's Postgres under a platform read context and upserts into identity_mirror.

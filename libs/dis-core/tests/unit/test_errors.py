@@ -16,7 +16,13 @@ from dis_core.errors import (
     IdentityClientError,
     IdentityNotFoundError,
     IdentityServiceUnavailableError,
+    MappingConfigError,
+    MappingError,
+    MappingInputError,
     MirrorSyncError,
+    SuiteDefinitionError,
+    SuiteDriftError,
+    ValidationSuiteError,
 )
 
 
@@ -72,6 +78,35 @@ def test_customer_master_read_error_preserves_context() -> None:
     assert err.trace_id == "trace-1"
     # MirrorSyncError base carries trace_id/tenant_id.
     assert MirrorSyncError("x", trace_id="t", tenant_id="ten").tenant_id == "ten"
+
+
+def test_pipeline_mechanics_errors_root_at_dis_error() -> None:
+    # Slice 5: dis-mapping / dis-validation config-layer errors (per-cell and
+    # per-row data failures are typed result objects, never exceptions).
+    assert issubclass(MappingError, DisError)
+    assert issubclass(MappingConfigError, MappingError)
+    assert issubclass(MappingInputError, MappingError)
+    assert issubclass(ValidationSuiteError, DisError)
+    assert issubclass(SuiteDefinitionError, ValidationSuiteError)
+    assert issubclass(SuiteDriftError, ValidationSuiteError)
+
+
+def test_mapping_error_preserves_context() -> None:
+    err = MappingConfigError(
+        "parse_decimal requires decimal_separator", column="unit_cost", tenant_id="ten", trace_id="tr"
+    )
+    assert err.column == "unit_cost"
+    assert err.tenant_id == "ten"
+    assert err.trace_id == "tr"
+    assert err.message.startswith("parse_decimal")
+
+
+def test_validation_suite_error_preserves_context() -> None:
+    err = SuiteDriftError(
+        "unclassified columns", model="StoreSkuSaleEvent", column="new_col", tenant_id=None, trace_id=None
+    )
+    assert err.model == "StoreSkuSaleEvent"
+    assert err.column == "new_col"
 
 
 def test_errors_module_is_leaf_level() -> None:
