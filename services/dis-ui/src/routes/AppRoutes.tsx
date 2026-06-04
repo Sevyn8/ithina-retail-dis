@@ -4,6 +4,7 @@ import { AuthBoundary } from '../auth/AuthBoundary'
 import { OpsBoundary } from '../auth/OpsBoundary'
 import { AppLayout } from './AppLayout'
 import { AuditLookup } from './AuditLookup'
+import { ConnectorPicker } from './ConnectorPicker'
 import { DevLogin } from './DevLogin'
 import { IndexRoute } from './IndexRoute'
 import { MappingReview } from './MappingReview'
@@ -35,6 +36,9 @@ export function AppRoutes() {
       <Route element={<AuthBoundary />}>
         <Route element={<AppLayout />}>
           <Route index element={<IndexRoute />} />
+          {/* Connector picker (redesign R2): the "add a source" surface. Net-new; not in
+              nav (the sidebar does not change). Entry points arrive in R4/R6. */}
+          <Route path="/connect" element={<ConnectorPicker />} />
           <Route path="/sources" element={<SourcesIndex />} />
           <Route path="/sources/new" element={<SourceCreate />} />
           <Route path="/sources/:sourceId/edit" element={<SourceEdit />} />
