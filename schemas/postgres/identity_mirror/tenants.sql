@@ -36,6 +36,12 @@ CREATE TABLE identity_mirror.tenants (
         -- Mirrors platform_db.core.tenants.id. UUIDv7.
     name                VARCHAR(200)                        NOT NULL,
         -- Tenant display name. Mirrors CM.
+    display_code        TEXT COLLATE "C"                    NULL,
+        -- Customer Master's authoritative external code for the tenant
+        -- (core.tenants.display_code, e.g. 'buc-ees'). Copied as-is by
+        -- Mirror Sync; nullable because the source column is nullable
+        -- (decisions.md D55). Readability only — never a translation bridge;
+        -- the load-bearing identity is tenant_id (D37).
     status              TEXT COLLATE "C"                    NOT NULL,
         -- Tenant lifecycle status. Mirrors CM core.tenant_status_enum:
         -- ONBOARDING, TRIAL, ACTIVE, SUSPENDED, TERMINATED.
@@ -95,6 +101,9 @@ COMMENT ON COLUMN identity_mirror.tenants.tenant_id IS
 
 COMMENT ON COLUMN identity_mirror.tenants.name IS
 'Tenant display name. Mirrors CM. Up to 200 chars (matches CM length).';
+
+COMMENT ON COLUMN identity_mirror.tenants.display_code IS
+'Customer Master''s authoritative external tenant code (core.tenants.display_code, e.g. buc-ees). Copied as-is by Mirror Sync; nullable at source (D55). Readability only; the load-bearing identity is tenant_id (D37).';
 
 COMMENT ON COLUMN identity_mirror.tenants.status IS
 'Tenant lifecycle status. Mirrors CM core.tenant_status_enum: ONBOARDING, TRIAL, ACTIVE, SUSPENDED, TERMINATED. Stored as TEXT to decouple DIS from CM enum evolution. CHECK constrains the current vocabulary; updated via Alembic if CM adds states.';

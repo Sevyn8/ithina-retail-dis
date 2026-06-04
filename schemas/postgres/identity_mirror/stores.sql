@@ -47,6 +47,12 @@ CREATE TABLE identity_mirror.stores (
         -- The tenant this store belongs to. Mirrors CM.
     name                VARCHAR(200)                        NOT NULL,
         -- Store display name. Mirrors CM.
+    store_code          TEXT COLLATE "C"                    NULL,
+        -- Customer Master's authoritative external code for the store
+        -- (core.stores.store_code, e.g. 'TX-102'). Copied as-is by Mirror
+        -- Sync; nullable because the source column is nullable
+        -- (decisions.md D55). Readability only — never a translation bridge;
+        -- the load-bearing identity is store_id (D37).
     status              TEXT COLLATE "C"                    NOT NULL,
         -- Store lifecycle status. Mirrors CM core.store_status_enum:
         -- OPENING, ACTIVE, INACTIVE, CLOSED.
@@ -140,6 +146,9 @@ COMMENT ON COLUMN identity_mirror.stores.tenant_id IS
 
 COMMENT ON COLUMN identity_mirror.stores.name IS
 'Store display name. Mirrors CM. Up to 200 chars.';
+
+COMMENT ON COLUMN identity_mirror.stores.store_code IS
+'Customer Master''s authoritative external store code (core.stores.store_code, e.g. TX-102). Copied as-is by Mirror Sync; nullable at source (D55). Readability only; the load-bearing identity is store_id (D37).';
 
 COMMENT ON COLUMN identity_mirror.stores.status IS
 'Store lifecycle status. Mirrors CM core.store_status_enum: OPENING, ACTIVE, INACTIVE, CLOSED. Stored as TEXT.';
