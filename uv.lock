@@ -10,6 +10,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "csv-ingest-worker",
     "dis-audit",
     "dis-canonical",
     "dis-core",
@@ -399,6 +400,37 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/75/a2e55f99c16fcac7b5d6c1eb19ad8e00799854d6be5ca845f9259eae1681/cryptography-48.0.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a5da777e32ffed6f85a7b2b3f7c5cbc88c146bfcd0a1d7baf5fcc6c52ee35dd4", size = 4960575, upload-time = "2026-05-04T22:59:09.851Z" },
     { url = "https://files.pythonhosted.org/packages/b8/23/6e6f32143ab5d8b36ca848a502c4bcd477ae75b9e1677e3530d669062578/cryptography-48.0.0-cp39-abi3-win32.whl", hash = "sha256:77a2ccbbe917f6710e05ba9adaa25fb5075620bf3ea6fb751997875aff4ae4bd", size = 3279117, upload-time = "2026-05-04T22:59:12.019Z" },
     { url = "https://files.pythonhosted.org/packages/9d/9a/0fea98a70cf1749d41d738836f6349d97945f7c89433a259a6c2642eefeb/cryptography-48.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:16cd65b9330583e4619939b3a3843eec1e6e789744bb01e7c7e2e62e33c239c8", size = 3792100, upload-time = "2026-05-04T22:59:14.884Z" },
+]
+
+[[package]]
+name = "csv-ingest-worker"
+version = "0.0.0"
+source = { editable = "services/csv-ingest-worker" }
+dependencies = [
+    { name = "dis-audit" },
+    { name = "dis-core" },
+    { name = "dis-pii" },
+    { name = "dis-rls" },
+    { name = "dis-storage" },
+    { name = "duckdb" },
+    { name = "google-cloud-pubsub" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-audit", editable = "libs/dis-audit" },
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-pii", editable = "libs/dis-pii" },
+    { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "dis-storage", editable = "libs/dis-storage" },
+    { name = "duckdb", specifier = ">=1.0" },
+    { name = "google-cloud-pubsub", specifier = ">=2.23" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
 [[package]]
@@ -1588,6 +1620,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "csv-ingest-worker" },
     { name = "dis-audit" },
     { name = "dis-canonical" },
     { name = "dis-core" },
@@ -1644,6 +1677,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "csv-ingest-worker", editable = "services/csv-ingest-worker" },
     { name = "dis-audit", editable = "libs/dis-audit" },
     { name = "dis-canonical", editable = "libs/dis-canonical" },
     { name = "dis-core", editable = "libs/dis-core" },

@@ -85,6 +85,7 @@ dev = [
   "dis-mapping",
   "dis-validation",
   "mirror-sync-consumer",
+  "csv-ingest-worker",
 
   # Import-graph contracts (slice-05): forbidden imports between the pure
   # pipeline libs and the I/O-bearing libs. Run via `make lint` (lint-imports).
@@ -116,6 +117,7 @@ known-first-party = [
   "dis_storage",
   "dis_validation",
   "mirror_sync_consumer",
+  "csv_ingest_worker",
 ]
 
 [tool.mypy]
@@ -213,6 +215,7 @@ members = [
   "libs/dis-mapping",
   "libs/dis-validation",
   "services/mirror-sync-consumer",
+  "services/csv-ingest-worker",
 ]
 
 [tool.uv.sources]
@@ -229,3 +232,4 @@ dis-audit = { workspace = true }
 dis-mapping = { workspace = true }
 dis-validation = { workspace = true }
 mirror-sync-consumer = { workspace = true }
+csv-ingest-worker = { workspace = true }
