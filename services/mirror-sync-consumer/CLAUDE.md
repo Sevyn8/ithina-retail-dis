@@ -28,6 +28,11 @@ For the EPE blocks (one per mode), file structure, and operational detail, see `
   delete, never soft-delete.** Lifecycle is Customer Master's `status` replicated verbatim — there
   is **no `is_active` column** (the docs that name one are stale; see `decisions.md`). Conditional
   `DO UPDATE ... WHERE IS DISTINCT FROM EXCLUDED` keeps a no-change re-run a true no-op.
+- **External codes copied as-is (Slice 9a, D55).** `tenants.display_code` and `stores.store_code`
+  are replicated verbatim from Customer Master — both nullable (the source columns are), no
+  transformation, no defaulting. They are readability-only, never a translation bridge (D37: the
+  UUID is the identity). Backfill of pre-9a rows is the normal sync run, idempotent via the
+  DISTINCT clauses — there is no one-off backfill step.
 - **Audit is log-only this slice.** Run start/end + per-tenant counts are structured log lines; no
   `audit.events` rows, **no `dis-audit` dependency** (the audit vocabulary has no operational/
   non-ingress slot — registered gap, deferred; see `decisions.md`).

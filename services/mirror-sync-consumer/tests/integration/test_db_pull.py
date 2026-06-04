@@ -40,28 +40,37 @@ _BRONZE_INSERT = text(
 async def test_first_load_mirrors_every_cm_record(run_env: None, cm_admin: Engine, dis_admin: Engine) -> None:
     assert await _run() == EXIT_OK
 
-    cm_t = _by_id(cm_admin, "SELECT id, name, status FROM core.tenants", "id")
-    mir_t = _by_id(dis_admin, "SELECT tenant_id, name, status FROM identity_mirror.tenants", "tenant_id")
+    cm_t = _by_id(cm_admin, "SELECT id, name, display_code, status FROM core.tenants", "id")
+    mir_t = _by_id(
+        dis_admin,
+        "SELECT tenant_id, name, display_code, status FROM identity_mirror.tenants",
+        "tenant_id",
+    )
     assert set(cm_t) <= set(mir_t)
     for tid, row in cm_t.items():
-        assert (mir_t[tid].name, mir_t[tid].status) == (row.name, row.status)
+        assert (mir_t[tid].name, mir_t[tid].display_code, mir_t[tid].status) == (
+            row.name,
+            row.display_code,
+            row.status,
+        )
 
     cm_s = _by_id(
         cm_admin,
-        "SELECT id, name, status, country, timezone, currency, tax_treatment FROM core.stores",
+        "SELECT id, name, store_code, status, country, timezone, currency, tax_treatment FROM core.stores",
         "id",
     )
     mir_s = _by_id(
         dis_admin,
-        "SELECT store_id, name, status, country, timezone, currency, tax_treatment "
+        "SELECT store_id, name, store_code, status, country, timezone, currency, tax_treatment "
         "FROM identity_mirror.stores",
         "store_id",
     )
     assert set(cm_s) <= set(mir_s)
     for sid, row in cm_s.items():
         m = mir_s[sid]
-        assert (m.name, m.status, m.country, m.timezone, m.currency, m.tax_treatment) == (
+        assert (m.name, m.store_code, m.status, m.country, m.timezone, m.currency, m.tax_treatment) == (
             row.name,
+            row.store_code,
             row.status,
             row.country,
             row.timezone,
@@ -69,9 +78,68 @@ async def test_first_load_mirrors_every_cm_record(run_env: None, cm_admin: Engin
             row.tax_treatment,
         )
 
+    # D55 faithful copy, NULL case ASSERTED (never skipped): the fixture set carries
+    # exactly one store with store_code IS NULL; its mirror row must be NULL too.
+    uncoded = next(s for s in fx.STORES if s.store_code is None)
+    assert cm_s[uncoded.uuid].store_code is None, "fixture NULL store_code missing in test CM"
+    assert mir_s[uncoded.uuid].store_code is None
+
     # Count match on the CM-returned id set (independent re-read, not the sync's bookkeeping).
     assert sum(1 for t in mir_t if t in cm_t) == len(cm_t)
     assert sum(1 for s in mir_s if s in cm_s) == len(cm_s)
+
+
+async def test_existing_rows_without_codes_are_backfilled(
+    run_env: None, cm_admin: Engine, dis_admin: Engine
+) -> None:
+    """Backfill (Slice 9a): mirror rows that predate the code columns (NULL codes)
+    gain display_code/store_code on the next normal sync run — no one-off step —
+    and the run after that is a true no-op (idempotent by IS DISTINCT FROM)."""
+    await _run()  # ensure rows exist
+
+    tenant = fx.PRIMARY_TENANT
+    coded_store = fx.PRIMARY_STORE
+    # Simulate pre-9a rows: NULL the codes directly (independent admin write).
+    with dis_admin.begin() as conn:
+        conn.execute(
+            text("UPDATE identity_mirror.tenants SET display_code = NULL WHERE tenant_id = :id"),
+            {"id": str(tenant.uuid)},
+        )
+        conn.execute(
+            text("UPDATE identity_mirror.stores SET store_code = NULL WHERE store_id = :id"),
+            {"id": str(coded_store.uuid)},
+        )
+
+    assert await _run() == EXIT_OK
+
+    with dis_admin.connect() as conn:
+        backfilled_t = conn.execute(
+            text("SELECT display_code FROM identity_mirror.tenants WHERE tenant_id = :id"),
+            {"id": str(tenant.uuid)},
+        ).scalar_one()
+        backfilled_s = conn.execute(
+            text("SELECT store_code FROM identity_mirror.stores WHERE store_id = :id"),
+            {"id": str(coded_store.uuid)},
+        ).scalar_one()
+    assert backfilled_t == tenant.display_code
+    assert backfilled_s == coded_store.store_code
+
+    # Idempotence: the next run rewrites nothing (mirror_synced_at untouched).
+    def synced() -> tuple[object, object]:
+        with dis_admin.connect() as conn:
+            t = conn.execute(
+                text("SELECT mirror_synced_at FROM identity_mirror.tenants WHERE tenant_id = :id"),
+                {"id": str(tenant.uuid)},
+            ).scalar_one()
+            s = conn.execute(
+                text("SELECT mirror_synced_at FROM identity_mirror.stores WHERE store_id = :id"),
+                {"id": str(coded_store.uuid)},
+            ).scalar_one()
+        return t, s
+
+    before = synced()
+    assert await _run() == EXIT_OK
+    assert synced() == before
 
 
 async def test_rerun_without_change_is_a_noop(run_env: None, cm_admin: Engine, dis_admin: Engine) -> None:

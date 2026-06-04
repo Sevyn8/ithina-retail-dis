@@ -35,6 +35,7 @@ class CmTenant(BaseModel):
 
     tenant_id: UUID
     name: str
+    display_code: str | None = None  # nullable at source; copied as-is (D55)
     status: str
     pc_created_at: datetime
     pc_updated_at: datetime
@@ -46,6 +47,7 @@ class CmTenant(BaseModel):
         return cls(
             tenant_id=row["id"],
             name=row["name"],
+            display_code=row["display_code"],
             status=row["status"],
             pc_created_at=row["created_at"],
             pc_updated_at=row["updated_at"],
@@ -62,6 +64,7 @@ class CmStore(BaseModel):
     store_id: UUID
     tenant_id: UUID
     name: str
+    store_code: str | None = None  # nullable at source; copied as-is (D55)
     status: str
     country: str
     timezone: str
@@ -77,6 +80,7 @@ class CmStore(BaseModel):
             store_id=row["id"],
             tenant_id=row["tenant_id"],
             name=row["name"],
+            store_code=row["store_code"],
             status=row["status"],
             country=row["country"],
             timezone=row["timezone"],
@@ -91,14 +95,14 @@ class CmStore(BaseModel):
 # Enum columns cast to text so they match the mirror's TEXT + CHECK vocab exactly.
 _READ_TENANTS = text(
     """
-    SELECT id, name, status::text AS status,
+    SELECT id, name, display_code, status::text AS status,
            created_at, updated_at, suspended_at, terminated_at
     FROM core.tenants
     """
 )
 _READ_STORES = text(
     """
-    SELECT id, tenant_id, name, status::text AS status, country, timezone, currency,
+    SELECT id, tenant_id, name, store_code, status::text AS status, country, timezone, currency,
            tax_treatment::text AS tax_treatment, created_at, updated_at, closed_at
     FROM core.stores
     """

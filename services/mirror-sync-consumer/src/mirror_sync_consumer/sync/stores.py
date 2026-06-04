@@ -19,13 +19,14 @@ from mirror_sync_consumer.pull.reader import CmStore
 STORE_UPSERT = text(
     """
     INSERT INTO identity_mirror.stores
-        (store_id, tenant_id, name, status, country, timezone, currency, tax_treatment,
+        (store_id, tenant_id, name, store_code, status, country, timezone, currency, tax_treatment,
          pc_created_at, pc_updated_at, pc_closed_at, mirror_synced_at)
     VALUES
-        (:store_id, :tenant_id, :name, :status, :country, :timezone, :currency, :tax_treatment,
+        (:store_id, :tenant_id, :name, :store_code, :status, :country, :timezone, :currency, :tax_treatment,
          :pc_created_at, :pc_updated_at, :pc_closed_at, now())
     ON CONFLICT (tenant_id, store_id) DO UPDATE SET
         name          = EXCLUDED.name,
+        store_code    = EXCLUDED.store_code,
         status        = EXCLUDED.status,
         country       = EXCLUDED.country,
         timezone      = EXCLUDED.timezone,
@@ -37,6 +38,7 @@ STORE_UPSERT = text(
         mirror_synced_at = now()
     WHERE
         identity_mirror.stores.name           IS DISTINCT FROM EXCLUDED.name
+        OR identity_mirror.stores.store_code    IS DISTINCT FROM EXCLUDED.store_code
         OR identity_mirror.stores.status        IS DISTINCT FROM EXCLUDED.status
         OR identity_mirror.stores.country       IS DISTINCT FROM EXCLUDED.country
         OR identity_mirror.stores.timezone      IS DISTINCT FROM EXCLUDED.timezone
@@ -56,6 +58,7 @@ def store_params(store: CmStore) -> dict[str, Any]:
         "store_id": store.store_id,
         "tenant_id": store.tenant_id,
         "name": store.name,
+        "store_code": store.store_code,  # copied as-is; nullable at source (D55)
         "status": store.status,
         "country": store.country,
         "timezone": store.timezone,
