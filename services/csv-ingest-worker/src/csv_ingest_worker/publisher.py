@@ -1,0 +1,116 @@
+"""The ``ingress.ready`` envelope (frozen contract, hard rule 10) and the publisher seam.
+
+The envelope model is field-for-field the committed
+``contracts/pubsub/ingress.ready.schema.json``; the unit drift guard reconciles both
+directions. The worker POPULATES the contract, never changes its shape: identity is
+the event's UUIDs, the external codes ride as the optional fields (producer-required
+when present, D52 — the worker propagates them verbatim and never fabricates one),
+``bronze_ref`` is the bronze row id, and ``received_ts`` is when DIS durably
+accepted the chunk (the bronze row's ``received_at``) — deliberately DISTINCT from
+the producer's ``csv.received.received_ts`` (see the service README / D59 note).
+
+``Publisher`` is the seam tests inject against (``dis-testing``'s
+``InMemoryPublisher`` satisfies it structurally; production code does not import
+dis-testing). ``PubsubPublisher`` is the runtime implementation, emulator-guarded:
+cloud wiring is deferred infra, so it refuses to run without
+``PUBSUB_EMULATOR_HOST`` rather than silently publishing to real GCP.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime
+from typing import Literal, Protocol
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from csv_ingest_worker.envelope import CsvReceivedEvent
+from dis_core.errors import CsvIngestError
+from dis_core.timestamps import ensure_utc
+
+
+class Publisher(Protocol):
+    """Publish ``data`` to ``topic_name``; return the message id."""
+
+    def publish(self, topic_name: str, data: bytes) -> str: ...
+
+
+class IngressReadyEnvelope(BaseModel):
+    """One ``ingress.ready`` message — field-for-field the frozen contract."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    trace_id: UUID
+    tenant_id: UUID
+    store_id: UUID
+    source_id: str = Field(min_length=1)
+    bronze_ref: UUID
+    gcs_uri: str = Field(min_length=1)
+    received_ts: datetime
+    tenant_display_code: str | None = None
+    store_code: str | None = None
+    replay: bool = False
+    parent_trace_id: UUID | None = None
+
+    def to_bytes(self) -> bytes:
+        """Serialise for the wire; optional fields the worker cannot populate are
+        OMITTED (never null-filled — the contract types them as string/uuid)."""
+        payload = self.model_dump(mode="json", exclude_none=True)
+        return json.dumps(payload).encode()
+
+
+def build_ingress_ready(
+    event: CsvReceivedEvent,
+    *,
+    trace_id: UUID,
+    bronze_ref: UUID,
+    received_at: datetime,
+) -> IngressReadyEnvelope:
+    """Populate the frozen envelope from the event + the landed bronze row.
+
+    ``trace_id`` is passed explicitly (not read from ``event``) because the
+    resume-and-mark path (D59) publishes under the PRIOR ingest's ``trace_id``;
+    the fresh path passes the event's. Either way it is a READ trace_id — the
+    worker mints none (hard rule 4, D54).
+    """
+    return IngressReadyEnvelope(
+        trace_id=trace_id,
+        tenant_id=event.tenant_id,
+        store_id=event.store_id,
+        source_id=event.source_id,
+        bronze_ref=bronze_ref,
+        gcs_uri=event.gcs_uri,
+        received_ts=ensure_utc(received_at),
+        tenant_display_code=event.tenant_display_code,
+        store_code=event.store_code,
+        replay=False,
+        parent_trace_id=None,
+    )
+
+
+class PubsubPublisher:
+    """Runtime publisher against the local Pub/Sub emulator.
+
+    Refuses to construct without ``PUBSUB_EMULATOR_HOST`` (cloud publish wiring is
+    deferred infra; silently reaching real GCP would be a silent fallback).
+    """
+
+    def __init__(self, *, project_id: str) -> None:
+        if not os.environ.get("PUBSUB_EMULATOR_HOST"):
+            raise CsvIngestError(
+                "PUBSUB_EMULATOR_HOST is not set; refusing to publish to real Pub/Sub "
+                "(cloud wiring is deferred infra)"
+            )
+        from google.cloud import pubsub_v1  # lazy: only the runtime path needs it
+
+        self._project_id = project_id
+        self._client = pubsub_v1.PublisherClient()
+
+    def publish(self, topic_name: str, data: bytes) -> str:
+        topic_path = self._client.topic_path(self._project_id, topic_name)
+        future = self._client.publish(topic_path, data)
+        message_id: str = future.result()
+        return message_id
