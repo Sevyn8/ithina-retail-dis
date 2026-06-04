@@ -46,7 +46,23 @@ check:
 test:
 	uv run pytest
 
-lint:
+# mypy --strict gate (slice-9d): ENFORCING and growing. A package is added to
+# MYPY_PACKAGES in the SAME commit that clears it; the list only ever grows.
+# Per-package invocation because identically-named test modules across libs
+# cannot share one mypy run (test dirs have no __init__.py, by design — pytest
+# importlib mode). Config (strict, pydantic plugin, dis-ui exclude) lives in
+# pyproject [tool.mypy].
+MYPY_PACKAGES = \
+	libs/dis-pii \
+	tools
+
+mypy:
+	@for pkg in $(MYPY_PACKAGES); do \
+		echo "mypy $$pkg"; \
+		uv run mypy $$pkg || exit 1; \
+	done
+
+lint: mypy
 	uv run ruff check .
 	uv run lint-imports
 

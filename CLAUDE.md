@@ -125,7 +125,7 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 ### Type hints
 
 - Every function has full type annotations. `from __future__ import annotations` for clean forward references.
-- `mypy --strict` should pass on all code (CI will enforce when there's enough code).
+- `mypy --strict` is the typing standard, ENFORCED by `make lint` (the Makefile `MYPY_PACKAGES` per-package gate, slice-9d). The enforced list only grows: a package joins in the same commit that clears it.
 
 ### Errors
 

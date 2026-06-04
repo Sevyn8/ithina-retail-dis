@@ -65,10 +65,11 @@ dev = [
   "pytest-asyncio>=0.24",
   "pytest-cov>=5",
   "ruff==0.15.15",
-  "mypy>=1.13",
+  "mypy==1.19.1",  # pinned EXACT: gate version; if a mypy pre-commit hook is ever added, pin it identically and bump both together (the ruff-skew lesson)
   "faker>=30",
   "pyyaml>=6.0",
   "types-pyyaml",
+  "types-jsonschema",  # jsonschema stubs for the mypy gate (slice-9d)
   "jsonschema>=4.23",
 
   # Workspace members. The root is a virtual project (package = false), so members
@@ -116,6 +117,27 @@ known-first-party = [
   "dis_validation",
   "mirror_sync_consumer",
 ]
+
+[tool.mypy]
+# mypy --strict gate (slice-9d): ENFORCING from day one over the Makefile's
+# MYPY_PACKAGES list, which only ever grows — a package is added in the same
+# commit that clears it. Invocation is per-package (`make mypy`) because
+# identically-named test modules across libs (test dirs have no __init__.py,
+# by design — see pytest importlib mode below) cannot share one mypy run; the
+# Makefile list IS the explicit files list.
+# The exclude is the structural boundary: services/dis-ui is TypeScript and
+# separately owned; a stray .py there must never be collected by this gate.
+# mypy itself is pinned EXACT in [dependency-groups] (the ruff-skew lesson).
+strict = true
+plugins = ["pydantic.mypy"]
+python_version = "3.12"
+exclude = "^services/dis-ui/"
+
+[[tool.mypy.overrides]]
+# The google-cloud namespace packages (pubsub, storage) ship no py.typed mypy
+# can use; standard resolution, scoped to the namespace — not a blanket ignore.
+module = "google.cloud.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
