@@ -10,6 +10,7 @@ from google.api_core.exceptions import AlreadyExists
 from google.cloud import pubsub_v1
 
 TOPICS = [
+    "csv.received",
     "ingress.ready",
     "ingress.resubmit",
     "identity.changed",
