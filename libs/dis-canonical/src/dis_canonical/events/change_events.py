@@ -60,6 +60,10 @@ class StoreSkuChangeEvent(CanonicalModel):
     reason_note: Str256 | None = None
     change_context: dict[str, Any] | None = None  # jsonb
 
+    # Source event identity (D33 dedup key; D38 resolution, migration 0003)
+    source_id: Str128  # varchar(128) COLLATE "C" NOT NULL (matches config.source_mappings.source_id)
+    source_event_id: Str256  # varchar(256) COLLATE "C" NOT NULL (no native id on change events: D65 fallback)
+
     # Provenance
     mapping_version_id: MappingVersionId  # bigint NOT NULL (D22)
     trace_id: TraceId  # uuid NOT NULL

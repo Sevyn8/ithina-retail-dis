@@ -74,6 +74,10 @@ PROVENANCE: dict[type[BaseModel], ColumnProvenance] = {
                 # at write time. (Reclassified from mapping-produced during the
                 # slice-05 adversarial pass, from this comment evidence.)
                 "tax_treatment",
+                # Live comment: "Comparison reference for the event-time-wins
+                # conditional upsert ... Consumer-injected by the streaming
+                # consumer." (D64, migration 0003.)
+                "last_source_event_at",
             }
         ),
         db_generated=_COMMON_DB_GENERATED,
@@ -141,6 +145,13 @@ PROVENANCE: dict[type[BaseModel], ColumnProvenance] = {
         consumer_injected=_COMMON_CONSUMER_INJECTED
         | frozenset(
             {
+                # D33 dedup key (D38 resolution, migration 0003). Live comments:
+                # "Consumer-injected from the ingress.ready envelope" /
+                # "Consumer-injected (D38 resolution)" — populated by the
+                # consumer (envelope source_id; transaction_id:line_item_seq or
+                # the D65 bronze_ref:row_index fallback), never by the engine.
+                "source_id",
+                "source_event_id",
                 # Live comment: "Soft cross-reference ... at write time" — a DB row
                 # id the engine cannot know.
                 "store_sku_current_position_id",
@@ -197,6 +208,11 @@ PROVENANCE: dict[type[BaseModel], ColumnProvenance] = {
         consumer_injected=_COMMON_CONSUMER_INJECTED
         | frozenset(
             {
+                # D33 dedup key (D38 resolution, migration 0003); same evidence
+                # as the sale model. Change events have no native source event
+                # id, so the D65 fallback always applies — still consumer-known.
+                "source_id",
+                "source_event_id",
                 "store_sku_current_position_id",
                 # Live comment: "Typed shortcut for numeric attributes ... Populated
                 # by the streaming consumer for INVENTORY, PRICE, and COST changes

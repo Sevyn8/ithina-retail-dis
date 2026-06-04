@@ -137,6 +137,21 @@ CREATE TABLE canonical.store_sku_sale_events (
         -- (no FK, because cross-partition FK on partitioned tables is
         -- awkward in Postgres 15). NULL for SALE rows.
 
+    -- ---------- Source event identity (D33 dedup key; D38 resolution) ----------
+    source_id                   VARCHAR(128) COLLATE "C"            NOT NULL,
+        -- Source registration identifier of the originating source. Matches
+        -- config.source_mappings.source_id and bronze.data_ingress_events
+        -- .source_id (varchar(128) COLLATE "C"). Component of the D33
+        -- read-time dedup key (tenant_id, store_id, source_id,
+        -- source_event_id). Consumer-injected from the ingress.ready
+        -- envelope, cross-checked against the GCS path and the bronze row.
+    source_event_id             VARCHAR(256) COLLATE "C"            NOT NULL,
+        -- Per-source event identifier completing the D33 dedup key. Sale
+        -- events use transaction_id || ':' || line_item_seq when the source
+        -- supplies them; otherwise the deterministic fallback
+        -- bronze_ref || ':' || chunk_row_index (redelivery-stable, NOT
+        -- correction-collapsing; D65). Consumer-injected.
+
     -- ---------- DIS metadata (load-bearing) ----------
     mapping_version_id          BIGINT                              NOT NULL,
     trace_id                    UUID                                NOT NULL,
@@ -145,8 +160,9 @@ CREATE TABLE canonical.store_sku_sale_events (
 
     -- ---------- DIS metadata (diagnostic, lineage) ----------
     ingest_metadata             JSONB                               NULL,
-        -- JSONB: source_name, source_event_id, source_event_timestamp,
+        -- JSONB: source_name, source_event_timestamp,
         -- dis_received_timestamp, dis_published_timestamp, csv_row_num.
+        -- (source_event_id moved to a first-class column, D38/0003.)
 
     -- ---------- Primary key ----------
     CONSTRAINT pk_ssse
@@ -243,6 +259,13 @@ CREATE INDEX ix_ssse_source_sale_timestamp
 CREATE INDEX ix_ssse_transaction_id
     ON canonical.store_sku_sale_events (transaction_id)
     WHERE transaction_id IS NOT NULL;
+
+-- D33 read-time latest-wins dedup window (D38/0003): partition prefix +
+-- event-time ordering for ROW_NUMBER() OVER (PARTITION BY tenant_id,
+-- store_id, source_id, source_event_id ORDER BY source_sale_timestamp DESC, ...).
+CREATE INDEX ix_ssse_dedup_key
+    ON canonical.store_sku_sale_events
+    (tenant_id, store_id, source_id, source_event_id, source_sale_timestamp DESC);
 
 -- Audit lookups.
 CREATE INDEX ix_ssse_trace_id
@@ -393,4 +416,10 @@ COMMENT ON COLUMN canonical.store_sku_sale_events.last_updated_at IS
 'When this row was last touched in DIS Postgres. DB-generated. Sale events are conceptually append-only; updates are rare. Trigger refreshes this on any UPDATE.';
 
 COMMENT ON COLUMN canonical.store_sku_sale_events.ingest_metadata IS
-'JSONB: source_name, source_event_id, source_event_timestamp, dis_received_timestamp, dis_published_timestamp, csv_row_num. Designed to evolve.';
+'JSONB diagnostic and lineage detail: source_name, source_event_timestamp, dis_received_timestamp, dis_published_timestamp, csv_row_num. Designed to evolve. (source_event_id moved to a first-class column, D38/0003.)';
+
+COMMENT ON COLUMN canonical.store_sku_sale_events.source_id IS
+'Source registration identifier of the originating source. Matches config.source_mappings.source_id and bronze.data_ingress_events.source_id (varchar(128) COLLATE C, introspected). Component of the D33 read-time dedup key (tenant_id, store_id, source_id, source_event_id). Consumer-injected from the ingress.ready envelope, cross-checked against the GCS path and the bronze row (D38 resolution).';
+
+COMMENT ON COLUMN canonical.store_sku_sale_events.source_event_id IS
+'Per-source event identifier completing the D33 dedup key. Sale events use transaction_id || '':'' || line_item_seq when the source supplies them; otherwise the deterministic fallback bronze_ref || '':'' || chunk_row_index (redelivery-stable, NOT correction-collapsing; D65). Consumer-injected (D38 resolution).';

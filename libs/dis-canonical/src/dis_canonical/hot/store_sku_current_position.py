@@ -92,6 +92,9 @@ class StoreSkuCurrentPosition(CanonicalModel):
     unit_cost_trend_30day: Numeric12_4 | None = None
     attribute_staleness_map: dict[str, Any] | None = None  # jsonb
 
+    # Event-time-wins reference (D64, migration 0003)
+    last_source_event_at: datetime | None = None  # timestamptz NULL: NULL = never event-written
+
     # Provenance
     mapping_version_id: MappingVersionId  # bigint NOT NULL (D22)
     trace_id: TraceId  # uuid NOT NULL

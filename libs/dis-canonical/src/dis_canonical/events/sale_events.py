@@ -27,6 +27,7 @@ from dis_canonical.shared import (
     Str32,
     Str64,
     Str128,
+    Str256,
     TaxTreatment,
     TenantId,
     TraceId,
@@ -64,6 +65,10 @@ class StoreSkuSaleEvent(CanonicalModel):
 
     store_sku_current_position_id: UUID | None = None
     related_sale_event_id: UUID | None = None
+
+    # Source event identity (D33 dedup key; D38 resolution, migration 0003)
+    source_id: Str128  # varchar(128) COLLATE "C" NOT NULL (matches config.source_mappings.source_id)
+    source_event_id: Str256  # varchar(256) COLLATE "C" NOT NULL (txn_id:line_item_seq or D65 fallback)
 
     # Provenance
     mapping_version_id: MappingVersionId  # bigint NOT NULL (D22)

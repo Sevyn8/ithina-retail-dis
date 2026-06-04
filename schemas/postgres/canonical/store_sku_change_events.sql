@@ -190,6 +190,21 @@ CREATE TABLE canonical.store_sku_change_events (
         --   COST: supplier_id, po_id, etc.
         -- Shape per category documented in streaming consumer; not DB-enforced.
 
+    -- ---------- Source event identity (D33 dedup key; D38 resolution) ----------
+    source_id                       VARCHAR(128) COLLATE "C"        NOT NULL,
+        -- Source registration identifier of the originating source. Matches
+        -- config.source_mappings.source_id and bronze.data_ingress_events
+        -- .source_id (varchar(128) COLLATE "C"). Component of the D33
+        -- read-time dedup key (tenant_id, store_id, source_id,
+        -- source_event_id). Consumer-injected from the ingress.ready
+        -- envelope, cross-checked against the GCS path and the bronze row.
+    source_event_id                 VARCHAR(256) COLLATE "C"        NOT NULL,
+        -- Per-source event identifier completing the D33 dedup key. Change
+        -- events carry no native source event-id column, so the deterministic
+        -- fallback bronze_ref || ':' || chunk_row_index applies
+        -- (redelivery-stable, NOT correction-collapsing; D65).
+        -- Consumer-injected.
+
     -- ---------- DIS metadata (load-bearing) ----------
     mapping_version_id              BIGINT                          NOT NULL,
     trace_id                        UUID                            NOT NULL,
@@ -198,8 +213,9 @@ CREATE TABLE canonical.store_sku_change_events (
 
     -- ---------- DIS metadata (diagnostic, lineage) ----------
     ingest_metadata                 JSONB                           NULL,
-        -- JSONB: source_name, source_event_id, source_event_timestamp,
+        -- JSONB: source_name, source_event_timestamp,
         -- dis_received_timestamp, dis_published_timestamp, csv_row_num.
+        -- (source_event_id moved to a first-class column, D38/0003.)
 
     -- ---------- Primary key ----------
     CONSTRAINT pk_ssce
@@ -274,6 +290,13 @@ CREATE INDEX ix_ssce_tenant_store_category_time
 -- Cross-tenant time-range queries (ops, BQ export filtering).
 CREATE INDEX ix_ssce_source_event_timestamp
     ON canonical.store_sku_change_events (source_event_timestamp);
+
+-- D33 read-time latest-wins dedup window (D38/0003): partition prefix +
+-- event-time ordering for ROW_NUMBER() OVER (PARTITION BY tenant_id,
+-- store_id, source_id, source_event_id ORDER BY source_event_timestamp DESC, ...).
+CREATE INDEX ix_ssce_dedup_key
+    ON canonical.store_sku_change_events
+    (tenant_id, store_id, source_id, source_event_id, source_event_timestamp DESC);
 
 -- Navigate from current_position row to its change history.
 CREATE INDEX ix_ssce_current_position
@@ -404,4 +427,10 @@ COMMENT ON COLUMN canonical.store_sku_change_events.last_updated_at IS
 'When this row was last touched in DIS Postgres. DB-generated. Change events are conceptually append-only; trigger refreshes this on any UPDATE if one happens.';
 
 COMMENT ON COLUMN canonical.store_sku_change_events.ingest_metadata IS
-'JSONB diagnostic and lineage detail: source_name, source_event_id, source_event_timestamp, dis_received_timestamp, dis_published_timestamp, csv_row_num. Designed to evolve.';
+'JSONB diagnostic and lineage detail: source_name, source_event_timestamp, dis_received_timestamp, dis_published_timestamp, csv_row_num. Designed to evolve. (source_event_id moved to a first-class column, D38/0003.)';
+
+COMMENT ON COLUMN canonical.store_sku_change_events.source_id IS
+'Source registration identifier of the originating source. Matches config.source_mappings.source_id and bronze.data_ingress_events.source_id (varchar(128) COLLATE C, introspected). Component of the D33 read-time dedup key (tenant_id, store_id, source_id, source_event_id). Consumer-injected from the ingress.ready envelope, cross-checked against the GCS path and the bronze row (D38 resolution).';
+
+COMMENT ON COLUMN canonical.store_sku_change_events.source_event_id IS
+'Per-source event identifier completing the D33 dedup key. Change events carry no native source event-id column, so the deterministic fallback bronze_ref || '':'' || chunk_row_index applies (redelivery-stable, NOT correction-collapsing; D65). Consumer-injected (D38 resolution).';

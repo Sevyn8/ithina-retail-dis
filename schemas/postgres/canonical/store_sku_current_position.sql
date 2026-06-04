@@ -120,6 +120,14 @@ CREATE TABLE canonical.store_sku_current_position (
     -- ---------- Staleness ----------
     attribute_staleness_map     JSONB                               NULL,
 
+    -- ---------- Event-time-wins reference (D64/0003) ----------
+    last_source_event_at        TIMESTAMPTZ                         NULL,
+        -- Source event timestamp of the last event-table row merged into this
+        -- hot row. Comparison reference for the event-time-wins conditional
+        -- upsert (architecture 2.3.1, D64). NULL = never event-written
+        -- (e.g. pre-seeded catalogue rows). Consumer-injected by the
+        -- streaming consumer.
+
     -- ---------- DIS metadata (load-bearing) ----------
     mapping_version_id          BIGINT                              NOT NULL,
     trace_id                    UUID                                NOT NULL,
@@ -326,3 +334,6 @@ COMMENT ON COLUMN canonical.store_sku_current_position.last_updated_at IS
 
 COMMENT ON COLUMN canonical.store_sku_current_position.ingest_metadata IS
 'Diagnostic and lineage detail. JSONB object. Keys: source_name, source_event_id, source_event_timestamp, dis_received_timestamp, dis_published_timestamp, event_type, csv_row_num. Designed to evolve; new diagnostic fields land here without schema migration.';
+
+COMMENT ON COLUMN canonical.store_sku_current_position.last_source_event_at IS
+'Source event timestamp of the last event-table row merged into this hot row. Comparison reference for the event-time-wins conditional upsert (architecture 2.3.1, D64). NULL = never event-written (e.g. pre-seeded catalogue rows). Consumer-injected by the streaming consumer.';
