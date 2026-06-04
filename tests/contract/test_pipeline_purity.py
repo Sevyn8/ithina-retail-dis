@@ -52,8 +52,8 @@ def _no_io() -> Iterator[None]:
     original_create_connection = socket.create_connection
     original_open = builtins.open
     socket.socket = _blocked  # type: ignore[misc,assignment]
-    socket.create_connection = _blocked  # type: ignore[assignment]
-    builtins.open = _blocked  # type: ignore[assignment]
+    socket.create_connection = _blocked
+    builtins.open = _blocked
     try:
         yield
     finally:

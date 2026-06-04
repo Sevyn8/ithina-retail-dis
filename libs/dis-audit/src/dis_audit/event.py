@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -89,9 +89,8 @@ class AuditEvent(BaseModel):
     @classmethod
     def _timestamp_must_be_utc(cls, value: datetime) -> datetime:
         # Raises NaiveDatetimeError for a naive datetime; normalises any aware zone to UTC.
-        # cast: ensure_utc is typed datetime in dis_core, but its py.typed marker is absent,
-        # so mypy sees Any here; the cast is honest, not a suppression.
-        return cast(datetime, ensure_utc(value))
+        # (dis-core ships py.typed, so ensure_utc's datetime return is seen directly.)
+        return ensure_utc(value)
 
     @model_validator(mode="after")
     def _derive_event_date(self) -> AuditEvent:

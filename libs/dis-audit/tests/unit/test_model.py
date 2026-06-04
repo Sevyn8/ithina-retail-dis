@@ -24,7 +24,7 @@ def _event(**overrides: object) -> AuditEvent:
         "outcome": Outcome.SUCCESS,
     }
     base.update(overrides)
-    return AuditEvent(**base)  # type: ignore[arg-type]
+    return AuditEvent(**base)
 
 
 def test_event_date_is_derived_utc_date() -> None:
