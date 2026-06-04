@@ -123,3 +123,45 @@ Carried forward:
 - A reusable external-Postgres test harness, once built, is reused by the next
   external-reading slice, not rebuilt.
 - CI-fails-on-uncollected folds into the owed guardrails work.
+
+---
+
+## Slice 9a: Identity correction (UUID load-bearing, codes readable)
+
+Outcome: 8/8 criteria; nine scoped commits; two plan cycles. First cross-cutting
+correction slice (not a vertical feature); first live read of Customer Master in
+plan mode.
+
+Lessons:
+- The register can carry a wrong fact. D55 recorded a source column NOT NULL; live
+  re-introspection showed it nullable. Verify-against-live applies to recorded
+  decisions, not only code; re-introspect a shape a slice depends on rather than
+  citing the D-number.
+- An undocumented access reads as a prohibition. CC inferred "Customer Master is
+  off-limits" because CLAUDE.md never stated the granted read access. Document
+  granted accesses positively, with their traps (here the RLS-GUC zero-rows-silently
+  gotcha), or the agent works around a capability it has.
+- A format/lint diff that resists explanation is usually tooling-version skew, not a
+  real change. A phantom "extra reformatted file" was the pre-commit ruff pin
+  disagreeing with the workspace ruff; it vanished at the commit gate. Check the pin
+  before treating a format diff as a finding.
+- The report/self-validate/gate separation is load-bearing. CC revised its own claim
+  about that phantom file three times across the three stages, each catching what the
+  prior asserted. A single "looks done" pass would have shipped a confident-wrong
+  claim.
+- Cross-cutting shape changes resist per-file commit splits. A field rename fanned
+  across ~10 files and the schema had to land with the fake that emits it (mutually
+  red apart). The atomic commit is the honest unit; state the deviation from a
+  proposed split with its reason.
+- Additive migrations have two paths, and the fresh one is unexercised. The
+  existing-DB delta runs in every test; the fresh-bootstrap path (manifest creates
+  the column, the migration no-ops) never had. Rehearse it on a scratch DB, the more
+  so before a cloud-first provisioning where it is the only path.
+
+Carried forward:
+- Provenance-labelled completion reports (contract / live / hand / same-pass) are the
+  standard; self-validation re-derives the same-pass pairs from an independent anchor
+  or states the risk is unanchorable and bounded.
+- Tooling debt owed (parked): wire mypy --strict as a gate and clear the backlog
+  across all code except dis-ui; align the pre-commit ruff pin with the workspace ruff
+  so files stop flip-flopping on format.
