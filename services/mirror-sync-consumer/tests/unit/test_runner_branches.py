@@ -9,6 +9,7 @@ import pytest
 
 from mirror_sync_consumer.config import MirrorSyncConfig
 from mirror_sync_consumer.pull import runner
+from mirror_sync_consumer.pull.reader import CmStore, CmTenant
 
 _CM = "postgresql+psycopg://u:p@localhost:5432/ithina_platform_db"
 _DIS = "postgresql+psycopg://u:p@localhost:5433/ithina_dis_db"
@@ -48,7 +49,9 @@ async def test_empty_customer_master_exits_clean_without_writing(
     monkeypatch.setattr(runner, "create_cm_engine", lambda url: _DummyEngine())
     monkeypatch.setattr(runner, "create_rls_engine", lambda url: _DummyEngine())
 
-    async def _empty(engine: Any, config: MirrorSyncConfig, *, trace_id: UUID) -> tuple[list, list]:
+    async def _empty(
+        engine: Any, config: MirrorSyncConfig, *, trace_id: UUID
+    ) -> tuple[list[CmTenant], list[CmStore]]:
         return [], []
 
     async def _must_not_run(*args: Any, **kwargs: Any) -> None:

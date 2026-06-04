@@ -42,7 +42,9 @@ async def test_run_start_is_logged(monkeypatch: pytest.MonkeyPatch, caplog: pyte
     monkeypatch.setattr(runner, "create_cm_engine", lambda url: _DummyEngine())
     monkeypatch.setattr(runner, "create_rls_engine", lambda url: _DummyEngine())
 
-    async def _empty(engine: Any, config: MirrorSyncConfig, *, trace_id: UUID) -> tuple[list, list]:
+    async def _empty(
+        engine: Any, config: MirrorSyncConfig, *, trace_id: UUID
+    ) -> tuple[list[CmTenant], list[CmStore]]:
         return [], []
 
     monkeypatch.setattr(runner, "read_customer_master", _empty)

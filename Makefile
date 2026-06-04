@@ -54,10 +54,14 @@ test:
 # pyproject [tool.mypy].
 MYPY_PACKAGES = \
 	libs/dis-audit \
+	libs/dis-canonical \
 	libs/dis-core \
+	libs/dis-mapping \
 	libs/dis-pii \
+	libs/dis-rls \
 	libs/dis-storage \
 	libs/dis-testing \
+	services/mirror-sync-consumer \
 	tests \
 	tools
 

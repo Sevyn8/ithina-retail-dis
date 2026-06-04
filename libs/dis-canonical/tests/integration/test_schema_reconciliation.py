@@ -17,6 +17,7 @@ bare ``uv run pytest`` stays green).
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import Engine, text
 
 from dis_canonical import (
@@ -51,7 +52,7 @@ def _live_columns(engine: Engine, table: str) -> set[str]:
 
 
 @pytest.mark.parametrize("table,model", list(MODELS_BY_TABLE.items()))
-def test_model_matches_live_columns_exactly(table: str, model: type, dis_engine: Engine) -> None:
+def test_model_matches_live_columns_exactly(table: str, model: type[BaseModel], dis_engine: Engine) -> None:
     db_cols = _live_columns(dis_engine, table)
     assert db_cols, f"no columns found for canonical.{table} — wrong DB or unmigrated?"
 

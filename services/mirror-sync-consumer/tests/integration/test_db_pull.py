@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from sqlalchemy import Engine, Row, text
@@ -22,7 +23,7 @@ from mirror_sync_consumer.pull.runner import EXIT_OK, _run
 pytestmark = pytest.mark.integration
 
 
-def _by_id(engine: Engine, sql: str, key: str) -> Mapping[object, Row[object]]:
+def _by_id(engine: Engine, sql: str, key: str) -> Mapping[object, Row[Any]]:
     with engine.connect() as conn:
         return {getattr(r, key): r for r in conn.execute(text(sql)).all()}
 
