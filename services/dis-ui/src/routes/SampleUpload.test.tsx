@@ -13,6 +13,13 @@ const tenantSnapshot: AuthSnapshot = {
 }
 
 describe('SampleUpload', () => {
+  it('renders the demo-data banner on the upload step (R8)', async () => {
+    renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
+    await screen.findByRole('heading', { name: 'Upload a CSV' })
+    expect(screen.getByText(/Demo data\./)).toBeInTheDocument()
+    expect(screen.getByText(/not parsed yet/)).toBeInTheDocument()
+  })
+
   it('creates a sample and advances to Review mapping on ready', async () => {
     const user = userEvent.setup()
     // Rendered via the full route tree so the upload -> review navigation is real.

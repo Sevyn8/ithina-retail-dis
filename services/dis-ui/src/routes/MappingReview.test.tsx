@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
@@ -71,5 +71,49 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
   it('shows an error for an unknown sample id', async () => {
     renderReview('smp_unknown')
     expect(await screen.findByRole('alert')).toHaveTextContent(/could not load the sample analysis/i)
+  })
+
+  // R8: the LLM-shaped suggestion fields (reasoning + alternatives), presented as the
+  // assistant's view, optional and never fabricated.
+  it('shows the assistant reasoning on low-confidence columns', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    expect(screen.getByText(/Assistant:.*terminal identifiers/)).toBeInTheDocument()
+    expect(screen.getByText(/Assistant:.*day-month-year/)).toBeInTheDocument()
+  })
+
+  it('offers the assistant alternatives as quick-picks in the canonical dropdown', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    const select = screen.getByLabelText('Canonical for pos_terminal')
+    // the alternative target is offered (assistant's alternatives group), e.g. transaction_id at 30%
+    expect(within(select).getByRole('group', { name: "Assistant's alternatives" })).toBeInTheDocument()
+    expect(within(select).getByRole('option', { name: /transaction_id \(30%\)/ })).toBeInTheDocument()
+  })
+
+  it('degrades gracefully for a column with no reasoning/alternatives', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    // item_code (high confidence) has neither: it renders, with no assistant reasoning and a
+    // plain canonical select (no alternatives optgroup)
+    expect(screen.getByText('item_code')).toBeInTheDocument()
+    const select = screen.getByLabelText('Canonical for item_code')
+    expect(within(select).queryByRole('group', { name: "Assistant's alternatives" })).not.toBeInTheDocument()
+  })
+
+  it('selecting an alternative reuses the override path (draft updates)', async () => {
+    const user = userEvent.setup()
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    const select = screen.getByLabelText('Canonical for pos_terminal')
+    await user.selectOptions(select, 'transaction_id')
+    expect((select as HTMLSelectElement).value).toBe('transaction_id')
+  })
+
+  it('renders the demo-data banner', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    expect(screen.getByText(/Demo data\./)).toBeInTheDocument()
+    expect(screen.getByText(/not parsed yet/)).toBeInTheDocument()
   })
 })

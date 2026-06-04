@@ -11,6 +11,10 @@ export type SampleStatus = 'received' | 'analyzing' | 'ready' | 'failed'
 
 export type SampleTransform = { type: string; value: string }
 
+// One alternative canonical target the assistant also considered (besides the suggested
+// one), per the LLM mapping-suggestion contract (docs/slices/llm-mapping-suggestion-contract.md).
+export type SuggestionAlternative = { target: string; confidence: number }
+
 export type SampleColumn = {
   source_col: string
   inferred_type: string
@@ -19,6 +23,13 @@ export type SampleColumn = {
   proposed_canonical: string
   confidence: number
   transforms: SampleTransform[]
+  // OPTIONAL, shaped to the LLM mapping-suggestion contract. `reasoning` is the assistant's
+  // plain-language explanation; `alternatives` are other canonical targets it considered.
+  // Both are assist/readability only and may be absent (a mechanical inference carries
+  // neither); the UI degrades gracefully and never fabricates them. They do NOT change the
+  // approved mapping: selecting an alternative is the same override path as any canonical pick.
+  reasoning?: string | null
+  alternatives?: SuggestionAlternative[]
 }
 
 export type SampleAnalysis = {
@@ -108,6 +119,9 @@ const SAMPLE_FIXTURES: Record<string, SampleAnalysis> = {
         proposed_canonical: 'source_sale_timestamp',
         confidence: 0.62,
         transforms: [{ type: 'date_format', value: 'DD-MM-YY' }],
+        reasoning:
+          'Values look like dates in day-month-year order, so this maps to the sale timestamp. Confirm the date format in the locale step.',
+        alternatives: [{ target: 'transaction_id', confidence: 0.2 }],
       },
       {
         source_col: 'pos_terminal',
@@ -117,6 +131,9 @@ const SAMPLE_FIXTURES: Record<string, SampleAnalysis> = {
         proposed_canonical: 'store_id',
         confidence: 0.41,
         transforms: [],
+        reasoning:
+          'Values look like terminal identifiers (e.g. T-2A), likely a store or register code.',
+        alternatives: [{ target: 'transaction_id', confidence: 0.3 }],
       },
     ],
   },

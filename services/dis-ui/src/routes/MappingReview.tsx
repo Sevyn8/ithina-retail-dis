@@ -8,6 +8,7 @@ import { ProgressRail } from '@/components/ui/progress-rail'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
+import { DemoDataBanner } from '../components/DemoDataBanner'
 import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -123,6 +124,13 @@ export function MappingReview() {
           <div className="text-caption font-normal text-muted-foreground">
             sample: {column.sample_values.join(', ')}
           </div>
+          {/* The assistant's explanation, when provided. Optional and never fabricated: a
+              column without reasoning shows nothing here (graceful). */}
+          {column.reasoning != null && column.reasoning.length > 0 ? (
+            <div className="text-caption font-normal text-muted-foreground italic">
+              Assistant: {column.reasoning}
+            </div>
+          ) : null}
         </TableCell>
         <TableCell>{column.inferred_type}</TableCell>
         <TableCell>{Math.round(column.null_pct * 100)}%</TableCell>
@@ -133,11 +141,33 @@ export function MappingReview() {
             onChange={(e) => setOverride(column.source_col, { ...ov, proposed_canonical: e.target.value })}
             className="h-7 w-auto"
           >
-            {CANONICAL_COLUMNS.map((canonical) => (
-              <option key={canonical} value={canonical}>
-                {canonical}
-              </option>
-            ))}
+            {/* The assistant's other candidates as quick-picks, above the full list. Optional:
+                absent -> just the full canonical list (today's behavior). Selecting either
+                calls the same setOverride (the existing override path). */}
+            {column.alternatives && column.alternatives.length > 0 ? (
+              <optgroup label="Assistant's alternatives">
+                {column.alternatives.map((alt) => (
+                  <option key={`alt-${alt.target}`} value={alt.target}>
+                    {alt.target} ({Math.round(alt.confidence * 100)}%)
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            {column.alternatives && column.alternatives.length > 0 ? (
+              <optgroup label="All canonical columns">
+                {CANONICAL_COLUMNS.map((canonical) => (
+                  <option key={canonical} value={canonical}>
+                    {canonical}
+                  </option>
+                ))}
+              </optgroup>
+            ) : (
+              CANONICAL_COLUMNS.map((canonical) => (
+                <option key={canonical} value={canonical}>
+                  {canonical}
+                </option>
+              ))
+            )}
           </Select>
         </TableCell>
         <TableCell>
@@ -197,6 +227,8 @@ export function MappingReview() {
       </header>
 
       <ProgressRail steps={[...CSV_JOURNEY_STEPS]} current={currentIndex} />
+
+      <DemoDataBanner />
 
       {actionError !== null ? (
         <p role="alert" className="text-sm text-danger">

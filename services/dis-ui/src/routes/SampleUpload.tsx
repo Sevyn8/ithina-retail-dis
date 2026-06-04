@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { DemoDataBanner } from '../components/DemoDataBanner'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { ProgressRail } from '@/components/ui/progress-rail'
@@ -87,6 +88,10 @@ export function SampleUpload() {
 
       <div className="mb-6">
         <ProgressRail steps={[...CSV_JOURNEY_STEPS]} current={CSV_JOURNEY_STEP_INDEX.upload} />
+      </div>
+
+      <div className="mb-4">
+        <DemoDataBanner />
       </div>
 
       <div className="flex flex-col gap-4">
