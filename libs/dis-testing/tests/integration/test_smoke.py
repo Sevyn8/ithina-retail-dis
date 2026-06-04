@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
@@ -93,7 +94,7 @@ def test_identity_changed_published_to_emulator(customer_master_url: str) -> Non
         )
         resp.raise_for_status()
 
-        received: list[dict] = []
+        received: list[dict[str, Any]] = []
         for _ in range(10):
             try:
                 pull = subscriber.pull(request={"subscription": sub_path, "max_messages": 10}, timeout=5)

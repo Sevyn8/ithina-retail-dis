@@ -180,7 +180,8 @@ def create_app(publisher: Publisher | None = None) -> FastAPI:
     def _publisher() -> Publisher:
         if app.state.publisher is None:
             app.state.publisher = EmulatorPublisher()
-        return app.state.publisher
+        publisher_instance: Publisher = app.state.publisher  # Starlette state is untyped
+        return publisher_instance
 
     def _resolve_tenant_store(
         tenant_display_code: str | None, store_code: str | None
@@ -226,14 +227,14 @@ def create_app(publisher: Publisher | None = None) -> FastAPI:
             "store_id": store.store_code,  # None for a code-less store (D55)
             "expires_at": expires_at,
         }
-        return UploadSessionResponse(**sessions[session_id])  # type: ignore[arg-type]
+        return UploadSessionResponse(**sessions[session_id])
 
     @app.get("/v1/upload-sessions/{session_id}", response_model=UploadSessionResponse)
     def get_upload_session(session_id: str) -> UploadSessionResponse:
         session = sessions.get(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="upload session not found")
-        return UploadSessionResponse(**session)  # type: ignore[arg-type]
+        return UploadSessionResponse(**session)
 
     @app.post("/v1/changes", response_model=ChangeResponse)
     def emit_change(req: ChangeRequest) -> ChangeResponse:

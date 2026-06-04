@@ -42,6 +42,7 @@ from dis_core.identity.models import (
     ValidateResponse,
 )
 from dis_testing import fixtures as fx
+from dis_testing.errors import FixtureError
 
 
 class _NotResolvedError(Exception):
@@ -70,11 +71,11 @@ def _identity_for(tenant_display_code: str | None, store_code: str | None) -> Id
         raise _NotResolvedError("no tenant in artifact")
     try:
         tenant = fx.tenant_by_display_code(tenant_display_code)
-    except fx.FixtureError as exc:
+    except FixtureError as exc:
         raise _NotResolvedError(str(exc)) from exc
     try:
         store = _resolve_store(tenant, store_code)
-    except fx.FixtureError as exc:
+    except FixtureError as exc:
         raise _NotResolvedError(str(exc)) from exc
 
     return Identity(

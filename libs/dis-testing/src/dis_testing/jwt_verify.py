@@ -35,17 +35,18 @@ def verify_cm_jwt(
     jwk = _select_key(jwks, kid)
     # from_jwk returns RSAPrivateKey | RSAPublicKey; a JWKS entry is always public.
     key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
-    return jwt.decode(
+    claims: dict[str, Any] = jwt.decode(
         token,
         key=key,  # type: ignore[arg-type]
         algorithms=[jwk.get("alg", "RS256")],
         audience=audience,
         issuer=issuer,
     )
+    return claims
 
 
 def _select_key(jwks: dict[str, Any], kid: str | None) -> dict[str, Any]:
-    keys = jwks.get("keys", [])
+    keys: list[dict[str, Any]] = jwks.get("keys", [])
     if kid is not None:
         for jwk in keys:
             if jwk.get("kid") == kid:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
 
 from dis_testing import fixtures as fx
@@ -96,6 +97,10 @@ def test_default_source_mapping_targets_primary_tenant() -> None:
 def test_committed_test_keypair_is_a_valid_matching_pair() -> None:
     priv = load_pem_private_key(fx.TEST_RSA_PRIVATE_KEY_PEM.encode(), password=None)
     pub = load_pem_public_key(fx.TEST_RSA_PUBLIC_KEY_PEM.encode())
+    # Narrow the broad load_pem_* unions: the committed pair is RSA by construction,
+    # and asserting it here is itself part of the test's claim.
+    assert isinstance(priv, RSAPrivateKey)
+    assert isinstance(pub, RSAPublicKey)
     # Public numbers must match — confirms the committed pair is internally consistent.
     assert priv.public_key().public_numbers() == pub.public_numbers()
 

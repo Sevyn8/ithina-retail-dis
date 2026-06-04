@@ -52,7 +52,8 @@ class EmulatorPublisher:
                 "PUBSUB_EMULATOR_HOST not set; EmulatorPublisher refuses to run against real Pub/Sub"
             )
         # Imported lazily so unit tests that use InMemoryPublisher need no GCP import.
-        from google.cloud import pubsub_v1  # type: ignore[attr-defined,import-untyped]
+        # (Typing: covered by the google.cloud.* ignore_missing_imports override.)
+        from google.cloud import pubsub_v1
 
         self._project_id = project_id or os.environ.get("PUBSUB_PROJECT_ID", DEFAULT_PROJECT_ID)
         self._client = pubsub_v1.PublisherClient()
@@ -60,4 +61,5 @@ class EmulatorPublisher:
     def publish(self, topic_name: str, data: bytes) -> str:
         topic_path = self._client.topic_path(self._project_id, topic_name)
         future = self._client.publish(topic_path, data)
-        return future.result(timeout=10)
+        message_id: str = future.result(timeout=10)  # untyped client boundary -> declared str
+        return message_id

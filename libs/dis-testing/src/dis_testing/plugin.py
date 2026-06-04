@@ -102,7 +102,8 @@ def cm_jwt(customer_master_url: str) -> str:
     _ensure_reachable(f"{customer_master_url}/healthz")
     resp = httpx.post(f"{customer_master_url}/v1/tokens", json={}, timeout=5.0)
     resp.raise_for_status()
-    return resp.json()["jwt"]
+    token: str = resp.json()["jwt"]  # JSON boundary -> declared str
+    return token
 
 
 def _ensure_reachable(health_url: str) -> None:
