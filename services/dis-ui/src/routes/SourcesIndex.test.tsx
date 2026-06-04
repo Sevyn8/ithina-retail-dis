@@ -40,6 +40,14 @@ describe('SourcesIndex', () => {
     )
   })
 
+  it('renders the source-type identity per row (R1 identity helper)', async () => {
+    const { container } = renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
+    await screen.findByRole('heading', { name: 'Sources' })
+    // the CSV source (type 'CSV') carries the csv identity, applied via the helper's literal
+    // Tailwind classes (so this proves the single helper drives the row identity).
+    expect(container.querySelector('.text-source-csv')).not.toBeNull()
+  })
+
   it('shows the empty state for a tenant with no sources', async () => {
     renderWithProviders(<SourcesIndex />, { snapshot: otherTenantSnapshot })
     expect(await screen.findByRole('heading', { name: 'No sources' })).toBeInTheDocument()

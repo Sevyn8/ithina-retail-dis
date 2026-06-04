@@ -11,8 +11,10 @@ import { LoadingState } from '../components/states/LoadingState'
 import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { sourceIdentity } from '../components/source-identity'
 import { useDeprecateSource, useSources } from '../lib/dis-ui-server/sources'
 import type { SourceStatus } from '../lib/dis-ui-server/sources'
+import { cn } from '@/lib/utils'
 
 function statusTone(status: SourceStatus): StatusTone {
   if (status === 'active') {
@@ -87,9 +89,28 @@ export function SourcesIndex() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.map((source) => (
+              {data.map((source) => {
+                // Source-type identity (R1 helper, single mapping): the feed type keys the
+                // identity (CSV -> the csv identity; others fall back to Other).
+                const identity = sourceIdentity(source.type.toLowerCase())
+                const Icon = identity.icon
+                return (
                 <TableRow key={source.source_id}>
-                  <TableCell className="font-medium text-foreground">{source.name}</TableCell>
+                  <TableCell className="font-medium text-foreground">
+                    <span className="flex items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          'flex size-6 items-center justify-center rounded-md',
+                          identity.bgSoftClass,
+                          identity.textClass,
+                        )}
+                      >
+                        <Icon className="size-3.5" />
+                      </span>
+                      {source.name}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{source.type}</TableCell>
                   <TableCell className="text-muted-foreground">{source.store}</TableCell>
                   <TableCell>
@@ -123,7 +144,8 @@ export function SourcesIndex() {
                     </span>
                   </TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         </CardContent>
