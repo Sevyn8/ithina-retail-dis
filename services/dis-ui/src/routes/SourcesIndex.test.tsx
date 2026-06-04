@@ -1,7 +1,9 @@
 import { screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
 import * as sources from '../lib/dis-ui-server/sources'
+import { __resetSourcesFixture } from '../lib/dis-ui-server/sources'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { SourcesIndex } from './SourcesIndex'
 
@@ -21,6 +23,9 @@ const otherTenantSnapshot: AuthSnapshot = {
 }
 
 describe('SourcesIndex', () => {
+  beforeEach(() => {
+    __resetSourcesFixture()
+  })
   afterEach(() => {
     vi.restoreAllMocks()
   })
@@ -54,5 +59,28 @@ describe('SourcesIndex', () => {
     } as unknown as ReturnType<typeof sources.useSources>)
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
     expect(screen.getByRole('alert')).toHaveTextContent(/could not load sources/i)
+  })
+
+  it('offers Create and per-row Edit/Deprecate actions, and no hard-delete control', async () => {
+    renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
+    await screen.findByRole('heading', { name: 'Sources' })
+    expect(screen.getByRole('link', { name: 'New source' })).toHaveAttribute('href', '/sources/new')
+    expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute(
+      'href',
+      '/sources/manual_csv_upload/edit',
+    )
+    expect(screen.getByRole('button', { name: 'Deprecate' })).toBeInTheDocument()
+    // FM1: there is no hard-delete control anywhere
+    expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /delete/i })).not.toBeInTheDocument()
+  })
+
+  it('deprecates a source via the confirm dialog (soft transition)', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
+    await screen.findByRole('heading', { name: 'Sources' })
+    await user.click(screen.getByRole('button', { name: 'Deprecate' }))
+    await user.click(await screen.findByRole('button', { name: 'Confirm deprecate' }))
+    expect(await screen.findByText('deprecated')).toBeInTheDocument()
   })
 })

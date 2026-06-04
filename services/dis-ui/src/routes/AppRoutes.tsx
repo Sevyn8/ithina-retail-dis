@@ -15,6 +15,8 @@ import { OpsQuery } from './OpsQuery'
 import { QuarantineConsole } from './QuarantineConsole'
 import { SampleUpload } from './SampleUpload'
 import { Shadow } from './Shadow'
+import { SourceCreate } from './SourceCreate'
+import { SourceEdit } from './SourceEdit'
 import { SourcesIndex } from './SourcesIndex'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
@@ -30,6 +32,8 @@ export function AppRoutes() {
         <Route element={<AppLayout />}>
           <Route index element={<IndexRoute />} />
           <Route path="/sources" element={<SourcesIndex />} />
+          <Route path="/sources/new" element={<SourceCreate />} />
+          <Route path="/sources/:sourceId/edit" element={<SourceEdit />} />
           <Route path="/sources/:sourceId/mappings" element={<MappingVersions />} />
           <Route path="/sources/:sourceId/shadow" element={<Shadow />} />
           <Route path="/upload" element={<SampleUpload />} />

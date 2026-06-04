@@ -33,6 +33,26 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   } as unknown as typeof ResizeObserver
 }
 
+// jsdom's Range has no layout, so CodeMirror's coordsAt measurement logs a harmless
+// TypeError to stderr (the tests pass regardless). Stub the Range geometry methods to
+// return empty rects to quiet that noise (slice 27); setup-only, no behavior asserted.
+if (typeof Range !== 'undefined') {
+  const emptyRect = {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+    toJSON: () => ({}),
+  } as DOMRect
+  Range.prototype.getBoundingClientRect = () => emptyRect
+  Range.prototype.getClientRects = () =>
+    ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as unknown as DOMRectList
+}
+
 // jsdom omits window.matchMedia, which next-themes reads to detect the system color
 // scheme. Provide a minimal stub (defaults to light) so the ThemeProvider mounts
 // without throwing under tests.

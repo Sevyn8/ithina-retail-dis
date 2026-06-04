@@ -12,7 +12,7 @@ import { LoadingState } from '../components/states/LoadingState'
 import { OnboardingStepper } from '../components/OnboardingStepper'
 import { cn } from '@/lib/utils'
 import { createSample, useSample } from '../lib/dis-ui-server/onboarding'
-import { useSources } from '../lib/dis-ui-server/sources'
+import { deriveSourceId, makeSourceDraft, useSources } from '../lib/dis-ui-server/sources'
 
 // Sample Upload (surface map screen 3, onboarding step 1), on the design-system craft
 // bar. Accepts a CSV sample and metadata, calls the 2.1 fixture to create a sample,
@@ -34,6 +34,17 @@ export function SampleUpload() {
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const sample = useSample(sampleId)
+
+  // The new source this attach-to-new flow declares, built via the SHARED SourceDraft
+  // builder so onboarding and the Sources CRUD create define a source identically (slice
+  // 27, FM2). The 2.1 sample-create wire call is unchanged; this only surfaces the
+  // kind-style source_id the flow will mint.
+  const newSourceDraft = makeSourceDraft({
+    source_id: deriveSourceId(label),
+    name: label,
+    type: sourceKind,
+    store: '',
+  })
 
   useEffect(() => {
     if (sampleId !== null && sample.data?.status === 'ready') {
@@ -154,6 +165,11 @@ export function SampleUpload() {
               <span className="block text-caption text-muted-foreground">Attach to a source.</span>
             </button>
           </div>
+          {attachTo === 'new' && newSourceDraft.source_id.length > 0 ? (
+            <p className="mt-2 text-caption text-muted-foreground">
+              New source id: <span className="font-mono">{newSourceDraft.source_id}</span>
+            </p>
+          ) : null}
           {attachTo === 'existing' ? (
             <Select
               aria-label="Existing source"
