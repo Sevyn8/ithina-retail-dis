@@ -1,3 +1,5 @@
+import { Link } from 'react-router'
+
 import { useAuth } from '../auth/useAuth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState } from '../components/states/EmptyState'
@@ -69,12 +71,33 @@ export function Dashboard() {
             <TableBody>
               {sources.map((source) => (
                 <TableRow key={source.source_id}>
-                  <TableCell className="font-medium text-foreground">{source.name}</TableCell>
+                  <TableCell className="font-medium text-foreground">
+                    {/* Source name links to this source's mappings, keyed by source_id. */}
+                    <Link
+                      to={`/sources/${source.source_id}/mappings`}
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      {source.name}
+                    </Link>
+                  </TableCell>
                   <TableCell>
                     <StatusBadge tone={healthTone(source.health)}>{source.health}</StatusBadge>
                   </TableCell>
                   <TableCell>{source.rows_24h.toLocaleString()}</TableCell>
-                  <TableCell>{source.quarantined_open}</TableCell>
+                  <TableCell>
+                    {/* Open-quarantine count links to the pre-filtered Quarantine console
+                        (by source_id) when there is anything open; plain text at 0 (FM4). */}
+                    {source.quarantined_open > 0 ? (
+                      <Link
+                        to={`/quarantine?source=${source.source_id}`}
+                        className="text-primary underline-offset-4 hover:underline"
+                      >
+                        {source.quarantined_open}
+                      </Link>
+                    ) : (
+                      source.quarantined_open
+                    )}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{source.last_ok_at}</TableCell>
                 </TableRow>
               ))}

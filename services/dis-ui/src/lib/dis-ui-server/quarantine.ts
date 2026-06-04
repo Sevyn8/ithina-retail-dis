@@ -11,11 +11,12 @@ import { SERVER_MODE } from './mode'
 export type FailureStage = 'source-shape' | 'canonical-shape' | 'fk' | 'normalization'
 export type QuarantineStatus = 'open' | 'resolved'
 
-// 4.1 list row. The row carries a `source` DISPLAY string, not a source_id (the
-// demand list's query param is source_id but the response is by display; the UI
-// filters on display). source identity is the (tenant_id, source_id) composite.
+// 4.1 list row. `source` is the DISPLAY string; `source_id` is the kind-style composite
+// key the UI keys the source filter on (and that the Dashboard ?source= link carries).
+// source identity is the (tenant_id, source_id) composite.
 export type QuarantineRow = {
   trace_id: string
+  source_id: string
   source: string
   store: string
   error_reason: string
@@ -111,6 +112,7 @@ const QUARANTINE_FIXTURES: Record<string, QuarantineRow[]> = {
   t_acme9k2l1mn4: [
     {
       trace_id: QUARANTINE_TRACE_IDS.acmeCanonical,
+      source_id: 'manual_csv_upload',
       source: 'Manual CSV Upload',
       store: 'Acme Downtown #1',
       error_reason: "price '12.5o' not a valid number",
@@ -121,6 +123,7 @@ const QUARANTINE_FIXTURES: Record<string, QuarantineRow[]> = {
     },
     {
       trace_id: QUARANTINE_TRACE_IDS.acmeNormalization,
+      source_id: 'manual_csv_upload',
       source: 'Manual CSV Upload',
       store: 'Acme Downtown #1',
       error_reason: 'bad date format in event_ts',
@@ -131,6 +134,7 @@ const QUARANTINE_FIXTURES: Record<string, QuarantineRow[]> = {
     },
     {
       trace_id: QUARANTINE_TRACE_IDS.shopifySourceShape,
+      source_id: 'shopify_pos_v2',
       source: 'Shopify POS',
       store: 'Acme Downtown #1',
       error_reason: 'missing required column sku',
@@ -141,6 +145,7 @@ const QUARANTINE_FIXTURES: Record<string, QuarantineRow[]> = {
     },
     {
       trace_id: QUARANTINE_TRACE_IDS.shopifyFk,
+      source_id: 'shopify_pos_v2',
       source: 'Shopify POS',
       store: 'Acme Downtown #1',
       error_reason: 'store_id not found in identity_mirror',
@@ -151,6 +156,7 @@ const QUARANTINE_FIXTURES: Record<string, QuarantineRow[]> = {
     },
     {
       trace_id: QUARANTINE_TRACE_IDS.acmeResolved,
+      source_id: 'manual_csv_upload',
       source: 'Manual CSV Upload',
       store: 'Acme Downtown #1',
       error_reason: "price '-' not a valid number",

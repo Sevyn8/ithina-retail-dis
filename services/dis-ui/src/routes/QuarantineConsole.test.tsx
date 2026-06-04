@@ -39,6 +39,20 @@ describe('QuarantineConsole (tenant slice)', () => {
     expect(screen.queryByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical })).not.toBeInTheDocument()
   })
 
+  it('pre-applies the source filter from the ?source= param (Dashboard deep link)', async () => {
+    renderWithProviders(<QuarantineConsole />, {
+      snapshot: tenant,
+      initialEntries: ['/?source=shopify_pos_v2'],
+    })
+    // list is narrowed to shopify_pos_v2 on mount, no interaction needed
+    expect(
+      await screen.findByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.shopifySourceShape }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: quarantine.QUARANTINE_TRACE_IDS.acmeCanonical }),
+    ).not.toBeInTheDocument()
+  })
+
   it('narrows the list by status', async () => {
     const user = userEvent.setup()
     renderWithProviders(<QuarantineConsole />, { snapshot: tenant })

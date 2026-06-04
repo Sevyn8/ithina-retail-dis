@@ -32,6 +32,27 @@ describe('Dashboard', () => {
     expect(screen.getByText('11200 ms')).toBeInTheDocument()
   })
 
+  it('links each source name to its mappings and the open-quarantine count to the filtered console', async () => {
+    renderWithProviders(<Dashboard />, { snapshot: tenant })
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    // source name -> that source's mappings, keyed by source_id
+    expect(screen.getByRole('link', { name: 'Manual CSV Upload' })).toHaveAttribute(
+      'href',
+      '/sources/manual_csv_upload/mappings',
+    )
+    expect(screen.getByRole('link', { name: 'Shopify POS' })).toHaveAttribute(
+      'href',
+      '/sources/shopify_pos_v2/mappings',
+    )
+    // open count > 0 (shopify: 2) -> Quarantine pre-filtered by source_id
+    expect(screen.getByRole('link', { name: '2' })).toHaveAttribute(
+      'href',
+      '/quarantine?source=shopify_pos_v2',
+    )
+    // open count 0 (manual) is plain text, not a link (FM4)
+    expect(screen.queryByRole('link', { name: '0' })).not.toBeInTheDocument()
+  })
+
   it('shows the empty state for a tenant with no data', async () => {
     renderWithProviders(<Dashboard />, { snapshot: emptyTenant })
     expect(await screen.findByRole('heading', { name: 'No dashboard data' })).toBeInTheDocument()

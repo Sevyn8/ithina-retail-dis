@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router'
 
 import { isOps } from '../auth/AuthSnapshot'
 import { useAuth } from '../auth/useAuth'
@@ -69,7 +70,11 @@ export function QuarantineConsole() {
   const fleetList = useFleetQuarantine(ops)
   const list = ops ? fleetList : tenantList
 
-  const [source, setSource] = useState('all')
+  // The source filter keys on source_id (the Dashboard ?source= link carries source_id).
+  // In TENANT mode it is lazily pre-applied from the URL param; in OPS mode the param is
+  // ignored (FM3) so the fleet view is unchanged. No effect, so no set-state-in-effect.
+  const [searchParams] = useSearchParams()
+  const [source, setSource] = useState(() => (ops ? 'all' : (searchParams.get('source') ?? 'all')))
   const [stage, setStage] = useState<FailureStage | 'all'>('all')
   const [status, setStatus] = useState<QuarantineStatus | 'all'>('all')
   const [tenantFilter, setTenantFilter] = useState('all')
@@ -87,12 +92,20 @@ export function QuarantineConsole() {
   }
 
   const rows = useMemo<(QuarantineRow | FleetQuarantineRow)[]>(() => list.data ?? [], [list.data])
-  const sources = useMemo(() => [...new Set(rows.map((r) => r.source))], [rows])
+  // Unique (source_id -> display) pairs: the filter keys on source_id, the option shows the
+  // display string. A source_id maps to one display, so last-write is harmless.
+  const sources = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const r of rows) {
+      byId.set(r.source_id, r.source)
+    }
+    return [...byId.entries()]
+  }, [rows])
   const tenantNames = useMemo(() => [...new Set(rows.map(tenantNameOf).filter(Boolean))], [rows])
 
   const filtered = rows.filter(
     (r) =>
-      (source === 'all' || r.source === source) &&
+      (source === 'all' || r.source_id === source) &&
       (stage === 'all' || r.failure_stage === stage) &&
       (status === 'all' || r.status === status) &&
       (tenantFilter === 'all' || tenantNameOf(r) === tenantFilter) &&
@@ -155,9 +168,9 @@ export function QuarantineConsole() {
           Source
           <Select aria-label="Source filter" value={source} onChange={(e) => setSource(e.target.value)} className="h-7 w-auto">
             <option value="all">All sources</option>
-            {sources.map((s) => (
-              <option key={s} value={s}>
-                {s}
+            {sources.map(([id, display]) => (
+              <option key={id} value={id}>
+                {display}
               </option>
             ))}
           </Select>
