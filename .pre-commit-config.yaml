@@ -1,6 +1,9 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Pinned to the EXACT workspace ruff version (pyproject dev-deps, ruff==).
+    # A skewed pin makes files flip-flop between the hook's format and
+    # `make format`; bump both together.
+    rev: v0.15.15
     hooks:
       - id: ruff
         args: [--fix]

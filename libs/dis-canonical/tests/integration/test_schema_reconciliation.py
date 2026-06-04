@@ -59,11 +59,11 @@ def test_model_matches_live_columns_exactly(table: str, model: type, dis_engine:
     missing_from_model = db_cols - model_fields
     extra_in_model = model_fields - db_cols
 
-    assert (
-        not missing_from_model
-    ), f"{model.__name__} is missing columns present in canonical.{table}: {sorted(missing_from_model)}"
-    assert (
-        not extra_in_model
-    ), f"{model.__name__} has fields absent from canonical.{table}: {sorted(extra_in_model)}"
+    assert not missing_from_model, (
+        f"{model.__name__} is missing columns present in canonical.{table}: {sorted(missing_from_model)}"
+    )
+    assert not extra_in_model, (
+        f"{model.__name__} has fields absent from canonical.{table}: {sorted(extra_in_model)}"
+    )
     # Exact set match (count included).
     assert model_fields == db_cols
