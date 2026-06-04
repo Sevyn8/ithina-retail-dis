@@ -11,6 +11,7 @@ import { MappingVersions } from './MappingVersions'
 import { NotFound } from './NotFound'
 import { Notifications } from './Notifications'
 import { OpsFleet } from './OpsFleet'
+import { OpsQuery } from './OpsQuery'
 import { QuarantineConsole } from './QuarantineConsole'
 import { SampleUpload } from './SampleUpload'
 import { Shadow } from './Shadow'
@@ -42,6 +43,7 @@ export function AppRoutes() {
             {/* Same components in ops mode (isOps branch): fleet-wide + tenant column. */}
             <Route path="quarantine" element={<QuarantineConsole />} />
             <Route path="audit" element={<AuditLookup />} />
+            <Route path="query" element={<OpsQuery />} />
             <Route path="*" element={<NotFound />} />
           </Route>
           <Route path="*" element={<NotFound />} />

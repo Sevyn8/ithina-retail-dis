@@ -71,6 +71,14 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Fleet Audit' })).toBeInTheDocument()
   })
 
+  it('shows the Query ops item for ops only (default NAV_ITEMS)', () => {
+    const tenantView = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    expect(screen.queryByRole('link', { name: 'Query' })).not.toBeInTheDocument()
+    tenantView.unmount()
+    renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
+    expect(screen.getByRole('link', { name: 'Query' })).toBeInTheDocument()
+  })
+
   it('collapses and expands', async () => {
     const user = userEvent.setup()
     renderWithProviders(<Sidebar items={ITEMS} />, { snapshot: tenantSnapshot })

@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   ScanSearch,
   ShieldAlert,
+  Terminal,
   Upload,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -37,4 +38,5 @@ export const NAV_ITEMS: NavItem[] = [
   // groups) so accessible names stay unique. These are the cross-tenant (fleet) modes.
   { label: 'Fleet Quarantine', to: '/ops/quarantine', icon: ShieldAlert, ops: true },
   { label: 'Fleet Audit', to: '/ops/audit', icon: ScanSearch, ops: true },
+  { label: 'Query', to: '/ops/query', icon: Terminal, ops: true },
 ]

@@ -22,6 +22,17 @@ if (globalThis.crypto?.subtle === undefined) {
   Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
 }
 
+// jsdom omits ResizeObserver, which CodeMirror's EditorView instantiates to measure its
+// layout (slice 26). A no-op stub lets the editor mount under tests; layout measurement
+// is a browser concern, exercised at runtime, not in jsdom.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}
+
 // jsdom omits window.matchMedia, which next-themes reads to detect the system color
 // scheme. Provide a minimal stub (defaults to light) so the ThemeProvider mounts
 // without throwing under tests.

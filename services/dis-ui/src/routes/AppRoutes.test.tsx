@@ -79,4 +79,9 @@ describe('AppRoutes', () => {
     renderAt('/ops/audit')
     expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
   })
+
+  it('denies a non-ops persona on /ops/query', async () => {
+    renderAt('/ops/query')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
+  })
 })
