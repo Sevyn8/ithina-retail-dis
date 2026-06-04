@@ -29,7 +29,7 @@ def _build_client(project: str | None) -> storage.Client:
         # Anonymous creds + explicit endpoint: fake-gcs-server, no real GCP auth.
         return storage.Client(
             project=project or "dis-local",
-            credentials=AnonymousCredentials(),
+            credentials=AnonymousCredentials(),  # type: ignore[no-untyped-call]  # google.auth ships this ctor untyped
             client_options={"api_endpoint": emulator_host},
         )
     # Real GCS: application-default credentials (resolved lazily; no I/O here).
@@ -56,4 +56,5 @@ class StorageClient:
     def download_bytes(self, object_path: str) -> bytes:
         """Read and return the bytes at ``object_path`` in the bound bucket."""
         blob = self._client.bucket(self.bucket_name).blob(object_path)
-        return blob.download_as_bytes()
+        data: bytes = blob.download_as_bytes()  # untyped client boundary -> declared bytes
+        return data

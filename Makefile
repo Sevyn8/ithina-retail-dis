@@ -54,6 +54,7 @@ test:
 # pyproject [tool.mypy].
 MYPY_PACKAGES = \
 	libs/dis-pii \
+	libs/dis-storage \
 	libs/dis-testing \
 	tools
 

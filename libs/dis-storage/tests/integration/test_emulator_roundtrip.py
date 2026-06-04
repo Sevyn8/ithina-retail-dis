@@ -8,10 +8,14 @@ that is explicitly deferred to real GCS (see ``test_signed_url_roundtrip_deferre
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import pytest
 
 from dis_core.ids import new_uuid7
+
+if TYPE_CHECKING:  # runtime import stays lazy inside the fixture
+    from dis_storage.client import StorageClient
 
 pytestmark = pytest.mark.integration
 
@@ -25,7 +29,7 @@ class StackRequiredError(RuntimeError):
 
 
 @pytest.fixture
-def emulator_client():
+def emulator_client() -> StorageClient:
     host = os.environ.get("STORAGE_EMULATOR_HOST")
     if not host:
         raise StackRequiredError(
@@ -53,7 +57,7 @@ def emulator_client():
     return sc
 
 
-def test_wrapper_upload_download_roundtrip(emulator_client) -> None:
+def test_wrapper_upload_download_roundtrip(emulator_client: StorageClient) -> None:
     object_path = f"tenant/t-test/source/manual_csv_upload/yyyy=2026/mm=06/dd=03/{new_uuid7()}.csv"
     payload = b"sku,units_sold\nA1,5\n"
 

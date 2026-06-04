@@ -51,9 +51,10 @@ def generate_upload_url(
 
     client = storage.Client(project=project or "dis-local", credentials=credentials)
     blob = client.bucket(bucket).blob(object_path)
-    return blob.generate_signed_url(
+    url: str = blob.generate_signed_url(  # untyped client boundary -> declared str
         version="v4",
         expiration=timedelta(seconds=expires_seconds),
         method="PUT",
         content_type=content_type,
     )
+    return url

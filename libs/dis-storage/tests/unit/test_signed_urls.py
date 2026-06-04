@@ -7,6 +7,7 @@ a throwaway test service-account credential generated in-process; never a real S
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, unquote, urlparse
 
 import pytest
@@ -14,12 +15,15 @@ import pytest
 from dis_core.errors import StorageError
 from dis_storage.signed_urls import generate_upload_url
 
+if TYPE_CHECKING:  # runtime import stays lazy inside the fixture
+    from google.oauth2 import service_account
+
 _BUCKET = "ithina-bronze-raw"
 _OBJECT = "tenant/t-abc/source/manual_csv_upload/yyyy=2026/mm=06/dd=03/trace-xyz.csv"
 
 
 @pytest.fixture(scope="module")
-def throwaway_signer():
+def throwaway_signer() -> service_account.Credentials:
     """A throwaway service-account credential with a freshly generated RSA key.
 
     Local-only: it has a signer (private key) so V4 signing works offline, but the key
@@ -44,11 +48,12 @@ def throwaway_signer():
         "client_id": "0",
         "token_uri": "https://oauth2.googleapis.com/token",
     }
-    return service_account.Credentials.from_service_account_info(info)
+    creds: service_account.Credentials = service_account.Credentials.from_service_account_info(info)  # type: ignore[no-untyped-call]  # google.oauth2 ships this untyped
+    return creds
 
 
 def test_issues_well_formed_v4_url_with_correct_expiry(
-    throwaway_signer, monkeypatch: pytest.MonkeyPatch
+    throwaway_signer: service_account.Credentials, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Pin the real-GCS issuance shape: with STORAGE_EMULATOR_HOST set (local stack),
     # the client emits an http://emulator URL instead — correct, but here we assert the
@@ -71,11 +76,11 @@ def test_issues_well_formed_v4_url_with_correct_expiry(
 
 
 @pytest.mark.parametrize("bad", [0, -1, 7 * 24 * 60 * 60 + 1])
-def test_rejects_out_of_range_expiry(throwaway_signer, bad: int) -> None:
+def test_rejects_out_of_range_expiry(throwaway_signer: service_account.Credentials, bad: int) -> None:
     with pytest.raises(StorageError):
         generate_upload_url(_OBJECT, bucket=_BUCKET, expires_seconds=bad, credentials=throwaway_signer)
 
 
-def test_rejects_empty_object_path(throwaway_signer) -> None:
+def test_rejects_empty_object_path(throwaway_signer: service_account.Credentials) -> None:
     with pytest.raises(StorageError):
         generate_upload_url("", bucket=_BUCKET, expires_seconds=900, credentials=throwaway_signer)
