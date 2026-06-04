@@ -1,4 +1,13 @@
-import { Bell, Building2, Database, FileSearch, LayoutDashboard, ShieldAlert, Upload } from 'lucide-react'
+import {
+  Bell,
+  Building2,
+  Database,
+  FileSearch,
+  LayoutDashboard,
+  ScanSearch,
+  ShieldAlert,
+  Upload,
+} from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export type NavItem = {
@@ -24,4 +33,8 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Audit', to: '/audit', icon: FileSearch },
   { label: 'Notifications', to: '/notifications', icon: Bell },
   { label: 'Ops Fleet', to: '/ops/fleet', icon: Building2, ops: true },
+  // Distinct labels from the tenant Quarantine/Audit items (an ops persona sees both
+  // groups) so accessible names stay unique. These are the cross-tenant (fleet) modes.
+  { label: 'Fleet Quarantine', to: '/ops/quarantine', icon: ShieldAlert, ops: true },
+  { label: 'Fleet Audit', to: '/ops/audit', icon: ScanSearch, ops: true },
 ]

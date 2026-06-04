@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 
+import { isOps } from '../auth/AuthSnapshot'
 import { useAuth } from '../auth/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -22,7 +23,13 @@ import {
   useQuarantineRow,
   useResubmit,
 } from '../lib/dis-ui-server/quarantine'
-import type { FailureStage, QuarantineStatus, ResubmitType } from '../lib/dis-ui-server/quarantine'
+import type { FailureStage, QuarantineRow, QuarantineStatus, ResubmitType } from '../lib/dis-ui-server/quarantine'
+import {
+  useFleetQuarantine,
+  useFleetQuarantineRow,
+  useOpsResubmit,
+} from '../lib/dis-ui-server/ops-cross-tenant'
+import type { FleetQuarantineRow } from '../lib/dis-ui-server/ops-cross-tenant'
 
 type TimeWindow = 'all' | '24h' | '7d' | '30d'
 
@@ -39,25 +46,39 @@ function withinWindow(failedAt: string, window: TimeWindow): boolean {
   return Date.now() - new Date(failedAt).getTime() <= WINDOW_MS[window]
 }
 
-// Quarantine Console (surface map screen 7), TENANT slice only, on the design-system
-// craft bar. Failed-row list (demand list 4.1) with filters + a per-row detail (4.2).
-// The detail offers the Resubmit action (4.3) via a confirm Dialog with a resubmit_type
-// choice (replay / fixed_file); a row already at the chain-depth cap (arch 6.5) shows
-// the action disabled with the reason. No ops cross-tenant view, no tenant_id filter
-// (FM2); resolve / Ithina-side replay are omitted (ops only, scope P). Behavior is
-// unchanged; only the composition is rebuilt.
+function tenantNameOf(row: QuarantineRow | FleetQuarantineRow): string {
+  return 'tenant_name' in row ? row.tenant_name : ''
+}
+
+// Quarantine Console (surface map screen 7), on the design-system craft bar. Failed-row
+// list (demand list 4.1) with filters + a per-row detail (4.2) + the Resubmit action
+// (4.3, confirm Dialog with replay/fixed_file; depth-3 cap per arch 6.5). Tenant-aware
+// (slice 25): in TENANT mode it is the existing tenant-scoped path, UNCHANGED. In OPS
+// mode (isOps) it sources the fleet-wide list, adds a Tenant column + tenant filter, and
+// routes resubmit through the tenant-context mutation (carrying the row's tenant_id). The
+// confirm Dialog, the depth-3 cap, and all shared JSX behave identically in both modes;
+// cross-tenant read/resubmit authorization is Sanjeev's policy (open), not invented here.
 export function QuarantineConsole() {
   const { snapshot } = useAuth()
-  const list = useQuarantine(snapshot)
+  const ops = snapshot !== null && isOps(snapshot)
+
+  // Dual-hook gate: both data sources are called every render; only the active mode's is
+  // read (the inactive ops query is disabled, so it never fetches in tenant mode). This
+  // keeps the tenant path - and its useQuarantine / useResubmit test spies - byte-for-byte.
+  const tenantList = useQuarantine(snapshot)
+  const fleetList = useFleetQuarantine(ops)
+  const list = ops ? fleetList : tenantList
 
   const [source, setSource] = useState('all')
   const [stage, setStage] = useState<FailureStage | 'all'>('all')
   const [status, setStatus] = useState<QuarantineStatus | 'all'>('all')
+  const [tenantFilter, setTenantFilter] = useState('all')
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('all')
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [resubmitType, setResubmitType] = useState<ResubmitType>('replay')
   const resubmit = useResubmit()
+  const opsResubmit = useOpsResubmit()
 
   // Select a row's detail and reset any in-progress resubmit confirm.
   function selectTrace(traceId: string) {
@@ -65,18 +86,27 @@ export function QuarantineConsole() {
     setConfirming(false)
   }
 
-  const rows = useMemo(() => list.data ?? [], [list.data])
+  const rows = useMemo<(QuarantineRow | FleetQuarantineRow)[]>(() => list.data ?? [], [list.data])
   const sources = useMemo(() => [...new Set(rows.map((r) => r.source))], [rows])
+  const tenantNames = useMemo(() => [...new Set(rows.map(tenantNameOf).filter(Boolean))], [rows])
 
   const filtered = rows.filter(
     (r) =>
       (source === 'all' || r.source === source) &&
       (stage === 'all' || r.failure_stage === stage) &&
       (status === 'all' || r.status === status) &&
+      (tenantFilter === 'all' || tenantNameOf(r) === tenantFilter) &&
       withinWindow(r.failed_at, timeWindow),
   )
 
-  const detail = useQuarantineRow(selectedTraceId)
+  const tenantDetail = useQuarantineRow(ops ? null : selectedTraceId)
+  const fleetDetail = useFleetQuarantineRow(ops ? selectedTraceId : null)
+  const detail = ops ? fleetDetail : tenantDetail
+
+  // The selected fleet row's tenant_id, carried by the ops resubmit (ops mode only).
+  const selectedTenantId = ops
+    ? (fleetList.data ?? []).find((r) => r.trace_id === selectedTraceId)?.tenant_id
+    : undefined
 
   if (list.isPending) {
     return <LoadingState label="Loading quarantine..." />
@@ -95,12 +125,32 @@ export function QuarantineConsole() {
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-display">Quarantine</h1>
-          <p className="text-caption text-muted-foreground">Failed rows and why they failed.</p>
+          <p className="text-caption text-muted-foreground">
+            {ops ? 'Fleet-wide failed rows and why they failed.' : 'Failed rows and why they failed.'}
+          </p>
         </div>
         <span className="text-caption text-muted-foreground">{openCount} open</span>
       </header>
 
       <div className="flex flex-wrap gap-3 text-sm">
+        {ops ? (
+          <label className="flex items-center gap-1">
+            Tenant
+            <Select
+              aria-label="Tenant filter"
+              value={tenantFilter}
+              onChange={(e) => setTenantFilter(e.target.value)}
+              className="h-7 w-auto"
+            >
+              <option value="all">All tenants</option>
+              {tenantNames.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : null}
         <label className="flex items-center gap-1">
           Source
           <Select aria-label="Source filter" value={source} onChange={(e) => setSource(e.target.value)} className="h-7 w-auto">
@@ -165,6 +215,7 @@ export function QuarantineConsole() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Time</TableHead>
+                  {ops ? <TableHead>Tenant</TableHead> : null}
                   <TableHead>Source</TableHead>
                   <TableHead>Error</TableHead>
                   <TableHead>Stage</TableHead>
@@ -175,6 +226,7 @@ export function QuarantineConsole() {
                 {filtered.map((row) => (
                   <TableRow key={row.trace_id}>
                     <TableCell className="text-muted-foreground">{row.failed_at}</TableCell>
+                    {ops ? <TableCell className="font-medium text-foreground">{tenantNameOf(row)}</TableCell> : null}
                     <TableCell>{row.source}</TableCell>
                     <TableCell>{row.error_reason}</TableCell>
                     <TableCell>
@@ -278,13 +330,25 @@ export function QuarantineConsole() {
                         </Button>
                         <Button
                           type="button"
-                          disabled={resubmit.isPending}
-                          onClick={() =>
-                            resubmit.mutate(
-                              { resubmit_type: resubmitType, parent_trace_id: detail.data.trace_id },
-                              { onSuccess: () => setConfirming(false) },
-                            )
-                          }
+                          disabled={ops ? opsResubmit.isPending : resubmit.isPending}
+                          onClick={() => {
+                            const close = { onSuccess: () => setConfirming(false) }
+                            if (ops && selectedTenantId !== undefined) {
+                              opsResubmit.mutate(
+                                {
+                                  resubmit_type: resubmitType,
+                                  parent_trace_id: detail.data.trace_id,
+                                  tenant_id: selectedTenantId,
+                                },
+                                close,
+                              )
+                            } else {
+                              resubmit.mutate(
+                                { resubmit_type: resubmitType, parent_trace_id: detail.data.trace_id },
+                                close,
+                              )
+                            }
+                          }}
                         >
                           Confirm resubmit
                         </Button>

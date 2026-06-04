@@ -39,6 +39,9 @@ export function AppRoutes() {
           {/* Ops subtree: OpsBoundary gates ALL /ops/* (non-ops -> PermissionDenied). */}
           <Route path="/ops" element={<OpsBoundary />}>
             <Route path="fleet" element={<OpsFleet />} />
+            {/* Same components in ops mode (isOps branch): fleet-wide + tenant column. */}
+            <Route path="quarantine" element={<QuarantineConsole />} />
+            <Route path="audit" element={<AuditLookup />} />
             <Route path="*" element={<NotFound />} />
           </Route>
           <Route path="*" element={<NotFound />} />

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 
+import { isOps } from '../auth/AuthSnapshot'
 import { useAuth } from '../auth/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -13,18 +14,32 @@ import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { StatusBadge } from '../components/StatusBadge'
 import { useAuditTrace } from '../lib/dis-ui-server/audit'
+import type { AuditTrace } from '../lib/dis-ui-server/audit'
+import { useCrossTenantAuditTrace } from '../lib/dis-ui-server/ops-cross-tenant'
 
-// Audit and Trace Lookup (surface map screen 8), TENANT slice, on the design-system
-// craft bar. trace_id direct lookup only (demand list 5.1): enter a trace_id, render
-// its ordered per-stage lifecycle (carded table, outcome as a semantic badge); a
-// quarantined trace ends at a quarantined stage with an error_code. FM2: no
-// cross-tenant search (5.2), no filters, no result list. Own-tenant only.
+// Audit and Trace Lookup (surface map screen 8), on the design-system craft bar.
+// trace_id direct lookup (demand list 5.1): enter a trace_id, render its ordered
+// per-stage lifecycle. Tenant-aware (slice 25): in TENANT mode it is the existing
+// own-tenant lookup, UNCHANGED. In OPS mode (isOps) it does a cross-tenant lookup (5.2)
+// and adds a tenant field to the result. Default ops semantics = cross-tenant
+// lookup-by-trace with a tenant column; the richer 5.2 search (by source/stage/time) is
+// a flagged seam, not built. Cross-tenant read authorization is Sanjeev's policy (open).
 export function AuditLookup() {
   const { snapshot } = useAuth()
+  const ops = snapshot !== null && isOps(snapshot)
   const [input, setInput] = useState('')
   const [queried, setQueried] = useState<string | null>(null)
 
-  const trace = useAuditTrace(snapshot, queried)
+  // Dual-hook gate (see QuarantineConsole): both run; only the active mode's is read, so
+  // the tenant path stays byte-for-byte. Fields are read off the active query directly
+  // (not a unioned result type) to keep types clean; the tenant name comes from the
+  // cross-tenant query (ops only).
+  const tenantTrace = useAuditTrace(snapshot, ops ? null : queried)
+  const crossTrace = useCrossTenantAuditTrace(queried, ops)
+  const pending = ops ? crossTrace.isPending : tenantTrace.isPending
+  const errored = ops ? crossTrace.isError : tenantTrace.isError
+  const data: AuditTrace | null | undefined = ops ? crossTrace.data : tenantTrace.data
+  const tenant = ops && crossTrace.data ? crossTrace.data : null
 
   function submit(event: FormEvent): void {
     event.preventDefault()
@@ -36,7 +51,9 @@ export function AuditLookup() {
     <section className="flex flex-col gap-4">
       <header>
         <h1 className="text-display">Audit and Trace Lookup</h1>
-        <p className="text-caption text-muted-foreground">Trace a row through its lifecycle.</p>
+        <p className="text-caption text-muted-foreground">
+          {ops ? 'Trace a row across tenants through its lifecycle.' : 'Trace a row through its lifecycle.'}
+        </p>
       </header>
 
       <form onSubmit={submit} className="flex items-end gap-2">
@@ -61,21 +78,28 @@ export function AuditLookup() {
     if (queried === null) {
       return <p className="text-caption text-muted-foreground">Enter a trace id to look up its lifecycle.</p>
     }
-    if (trace.isPending) {
+    if (pending) {
       return <LoadingState label="Looking up trace..." />
     }
-    if (trace.isError) {
+    if (errored) {
       return <ErrorState message="Could not look up the trace." />
     }
-    if (trace.data === null) {
+    if (data === null || data === undefined) {
       return <EmptyState title="Trace not found" message={`No trace ${queried} for this tenant.`} />
     }
+    const result = data
     return (
       <Card>
         <CardContent>
+          {tenant !== null ? (
+            <p className="text-caption">
+              <span className="text-label text-muted-foreground">Tenant</span> {tenant.tenant_name} (
+              {tenant.tenant_id})
+            </p>
+          ) : null}
           <p className="flex items-center gap-1 font-mono text-caption text-muted-foreground">
-            {trace.data.trace_id} · {trace.data.source_id}
-            <CopyButton value={trace.data.trace_id} label="Copy trace id" />
+            {result.trace_id} · {result.source_id}
+            <CopyButton value={result.trace_id} label="Copy trace id" />
           </p>
           <Table className="mt-2">
             <TableHeader>
@@ -87,7 +111,7 @@ export function AuditLookup() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {trace.data.stages.map((stage) => (
+              {result.stages.map((stage) => (
                 <TableRow key={stage.stage}>
                   <TableCell>
                     <StatusBadge tone={stage.status === 'ok' ? 'success' : 'danger'}>
