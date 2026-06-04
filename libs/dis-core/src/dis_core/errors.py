@@ -349,3 +349,103 @@ class CustomerMasterReadError(MirrorSyncError):
         self.database = database
         self.role = role
         self.user_type = user_type
+
+
+# -- CSV ingest worker errors (Slice 9b) -----------------------------------------
+# Raised by services/csv-ingest-worker (the Phase-2 CSV worker, D36/D54). Each carries
+# tenant_id / trace_id where known and the load-bearing detail (code-quality rule 5);
+# never a payload, a cell value, or a PII value. The worker reads identity and
+# trace_id off the csv.received event (D54) — none of these errors is ever raised
+# with a worker-minted trace_id.
+
+
+class CsvIngestError(DisError):
+    """Base for csv-ingest-worker failures.
+
+    Carries the event's ``tenant_id`` / ``trace_id`` (both read from the
+    ``csv.received`` envelope, never minted by the worker, hard rule 4) so every
+    ingest failure is diagnosable end-to-end.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
+class EventContractError(CsvIngestError):
+    """An inbound event envelope violates its frozen contract (hard rule 10).
+
+    Raised when a required field is missing, empty, or malformed (e.g. a non-UUID
+    identity field, a bad ``upload_session_id``). Required values never fall back
+    silently (code-quality rule 4) — this includes the idempotency-key components.
+    ``field`` names the violating contract field. Terminal: a redelivery of the same
+    malformed envelope fails identically, so the consumer acks after raising.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message, tenant_id=tenant_id, trace_id=trace_id)
+        self.field = field
+
+
+class EventPathMismatchError(CsvIngestError):
+    """The event's identity and its GCS path's parsed components disagree.
+
+    The event is the trust boundary (D54) — the worker never re-resolves identity —
+    but the canonical object path embeds tenant/source/trace (D53), so a mismatch
+    means a malformed producer, not a resolution question. Raised loudly before any
+    read of the object. Carries which ``field`` diverged and both observed values
+    (identifiers only, never payload).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: str | None = None,
+        event_value: str | None = None,
+        path_value: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message, tenant_id=tenant_id, trace_id=trace_id)
+        self.field = field
+        self.event_value = event_value
+        self.path_value = path_value
+
+
+class PreflightFailedError(CsvIngestError):
+    """The DuckDB structural preflight rejected the object (D13/D16).
+
+    Structural only: does-not-parse-as-CSV, no header, implausible structure.
+    Column- and mapping-aware failures are the source-shape suite's (Slice 10) and
+    are never raised here. ``reason`` is a short machine-stable code; ``detail`` is
+    human context (column counts, row counts — never cell values or payload).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        detail: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message, tenant_id=tenant_id, trace_id=trace_id)
+        self.reason = reason
+        self.detail = detail

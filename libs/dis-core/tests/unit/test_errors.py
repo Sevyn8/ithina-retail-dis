@@ -11,8 +11,11 @@ import subprocess
 import sys
 
 from dis_core.errors import (
+    CsvIngestError,
     CustomerMasterReadError,
     DisError,
+    EventContractError,
+    EventPathMismatchError,
     IdentityClientError,
     IdentityNotFoundError,
     IdentityServiceUnavailableError,
@@ -20,6 +23,7 @@ from dis_core.errors import (
     MappingError,
     MappingInputError,
     MirrorSyncError,
+    PreflightFailedError,
     SuiteDefinitionError,
     SuiteDriftError,
     ValidationSuiteError,
@@ -107,6 +111,52 @@ def test_validation_suite_error_preserves_context() -> None:
     )
     assert err.model == "StoreSkuSaleEvent"
     assert err.column == "new_col"
+
+
+def test_csv_ingest_errors_root_at_dis_error() -> None:
+    # Slice 9b: the worker raises only DisError-rooted errors (code convention).
+    assert issubclass(CsvIngestError, DisError)
+    assert issubclass(EventContractError, CsvIngestError)
+    assert issubclass(EventPathMismatchError, CsvIngestError)
+    assert issubclass(PreflightFailedError, CsvIngestError)
+
+
+def test_event_contract_error_preserves_context() -> None:
+    err = EventContractError(
+        "upload_session_id missing", field="upload_session_id", tenant_id="ten", trace_id="tr"
+    )
+    assert err.field == "upload_session_id"
+    assert err.tenant_id == "ten"
+    assert err.trace_id == "tr"
+
+
+def test_event_path_mismatch_error_preserves_both_values() -> None:
+    # The cross-check error must carry both observed values (identifiers only) so a
+    # malformed producer is diagnosable from the error alone (code-quality rule 5).
+    err = EventPathMismatchError(
+        "tenant segment disagrees",
+        field="tenant_id",
+        event_value="019e5e3c-b5d3-705f-9002-2451c4ca2626",
+        path_value="019e89f9-dbd5-7703-8221-ae6b811599bb",
+        tenant_id="019e5e3c-b5d3-705f-9002-2451c4ca2626",
+        trace_id="tr",
+    )
+    assert err.field == "tenant_id"
+    assert err.event_value != err.path_value
+    assert err.trace_id == "tr"
+
+
+def test_preflight_failed_error_preserves_reason_and_detail() -> None:
+    err = PreflightFailedError(
+        "object does not parse as CSV",
+        reason="not_csv",
+        detail="duckdb sniff failed at byte 0",
+        tenant_id="ten",
+        trace_id="tr",
+    )
+    assert err.reason == "not_csv"
+    assert err.detail == "duckdb sniff failed at byte 0"
+    assert err.tenant_id == "ten"
 
 
 def test_errors_module_is_leaf_level() -> None:

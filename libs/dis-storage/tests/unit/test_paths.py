@@ -19,7 +19,12 @@ from uuid import UUID
 import pytest
 
 from dis_core.errors import DisError, StorageError
-from dis_storage.paths import ParsedObjectPath, build_object_path, parse_object_path
+from dis_storage.paths import (
+    ParsedObjectPath,
+    build_object_path,
+    parse_object_path,
+    split_object_uri,
+)
 
 _TENANT = "019e89f9-dbd5-7703-8221-ae6b811599bb"
 _TRACE = "019e8a00-0000-7000-8000-000000000abc"
@@ -239,3 +244,52 @@ def test_built_path_matches_each_contract_gcs_uri_regex(schema_name: str) -> Non
 def test_malformed_uris_fail_each_contract_gcs_uri_regex(schema_name: str, bad_uri: str) -> None:
     # Reverse direction: malformed paths must NOT pass.
     assert not _gcs_uri_pattern(schema_name).match(bad_uri)
+
+
+# ---------------------------------------------------------------------------
+# split_object_uri: gs://bucket/key -> (bucket, key) (Slice 9b, additive).
+# ---------------------------------------------------------------------------
+
+
+def test_split_object_uri_returns_bucket_and_key() -> None:
+    key = f"tenant/{_TENANT}/source/shopify_pos_v2/yyyy=2026/mm=06/dd=04/{_TRACE}.csv"
+    assert split_object_uri(f"gs://ithina-bronze-raw/{key}") == ("ithina-bronze-raw", key)
+
+
+def test_split_object_uri_round_trips_with_parse_object_path() -> None:
+    # The contract example URI splits, and the key parses to the canonical components —
+    # the exact split-then-parse sequence the csv-ingest-worker runs.
+    example = json.loads((_CONTRACTS / "csv.received.example.json").read_text())
+    bucket, key = split_object_uri(example["gcs_uri"])
+    parsed = parse_object_path(key)
+    assert bucket == "ithina-bronze-raw"
+    assert parsed.tenant_id == UUID(example["tenant_id"])
+    assert parsed.source_id == example["source_id"]
+    assert parsed.trace_id == example["trace_id"]
+    assert parsed.ext == "csv"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "https://storage.googleapis.com/bucket/key.csv",  # wrong scheme
+        "gs://",  # no bucket, no key
+        "gs://bucket-only",  # no key
+        "gs://bucket-only/",  # empty key
+        "gs://UPPER-Bucket/key.csv",  # bucket outside the contract char-class
+        f"tenant/{_TENANT}/source/s/yyyy=2026/mm=06/dd=04/tr.csv",  # bare key, no scheme
+    ],
+)
+def test_split_object_uri_rejects_malformed(bad: str) -> None:
+    with pytest.raises(StorageError):
+        split_object_uri(bad)
+
+
+def test_split_object_uri_key_is_verbatim_not_validated() -> None:
+    # Shape validation of the key is parse_object_path's job; the split is a pure
+    # scheme/bucket strip so the two failure modes stay separately diagnosable.
+    bucket, key = split_object_uri("gs://some-bucket/not/a/canonical/key.bin")
+    assert (bucket, key) == ("some-bucket", "not/a/canonical/key.bin")
+    with pytest.raises(StorageError):
+        parse_object_path(key)

@@ -35,6 +35,11 @@ _PATH_RE = re.compile(
     r"/(?P<filename>[^/]+)$"
 )
 
+# gs://{bucket}/{object key}. The bucket char-class matches the contract `gcs_uri`
+# regexes (`[a-z0-9-]+`); the key is everything after the first slash past the bucket
+# and is validated by parse_object_path, not here.
+_URI_RE = re.compile(r"^gs://(?P<bucket>[a-z0-9-]+)/(?P<key>.+)$")
+
 
 @dataclass(frozen=True)
 class ParsedObjectPath:
@@ -155,3 +160,23 @@ def parse_object_path(path: str) -> ParsedObjectPath:
         trace_id=trace,
         ext=extension,
     )
+
+
+def split_object_uri(uri: str) -> tuple[str, str]:
+    """Split a full ``gs://{bucket}/{object key}`` URI into ``(bucket, object_key)``.
+
+    The Pub/Sub contracts carry ``gcs_uri`` as a full URI, while
+    :func:`parse_object_path` (and :class:`~dis_storage.client.StorageClient`) take
+    the object key only — this is the sanctioned bridge between the two (hard rule 9:
+    paths are split and parsed only here, never hand-split in service code). The key
+    is returned verbatim; validating its canonical shape is :func:`parse_object_path`'s
+    job. Raises :class:`StorageError` on a non-``gs://`` scheme, a bucket outside the
+    contract char-class, or a missing key. Performs no I/O.
+    """
+    candidate = uri.strip()
+    match = _URI_RE.match(candidate)
+    if match is None:
+        raise StorageError(
+            f"cannot split object URI: not a gs://{{bucket}}/{{key}} form: {candidate!r}",
+        )
+    return match["bucket"], match["key"]
