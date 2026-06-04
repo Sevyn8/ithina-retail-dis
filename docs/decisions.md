@@ -615,3 +615,8 @@ Tier-0 structural CSV validation (file present, non-empty, decodes, parses as CS
 **Resolution path.** At CM contract sign-off: confirm (or replace) the claim identifier vocabulary and the upload-session response shape; update `attribute-needs.md`, `dis_testing.fixtures.build_claims`, and the CM fake to the signed shapes; close this entry. The Identity Service contract itself (UUID + codes out, D37) is NOT in question here — only the CM-artifact input shapes the fakes approximate.
 
 **Cross-refs.** D37 (Identity Service returns the UUID), D52 (invented form retired), D55 (the authoritative codes), D48 (the test-CM harness these fakes pair with). **Scope.** Register entry + the one-line flag in `attribute-needs.md`; fixture/fake approximations land in Slice 9a.
+
+
+### D57 mypy --strict gate: the predicted pandera per-module relaxation proved unnecessary `SETTLED`
+
+**Status.** `SETTLED` (Slice 9d). The 9d scoping report predicted dis-validation might need a narrow per-module mypy override where pandera's typing blocked strict mode; in execution every dis-validation error was our own annotation gap, so dis-validation is fully strict-enforced with **no override** — this entry documents that outcome and registers no relaxation.
