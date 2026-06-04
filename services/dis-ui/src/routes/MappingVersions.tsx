@@ -72,7 +72,7 @@ export function MappingVersions() {
                 <TableHead>Created</TableHead>
                 <TableHead>By</TableHead>
                 <TableHead>Fields</TableHead>
-                <TableHead>Transforms</TableHead>
+                <TableHead>Mapping rules</TableHead>
                 <TableHead>Suite</TableHead>
                 <TableHead>Active window</TableHead>
                 <TableHead />

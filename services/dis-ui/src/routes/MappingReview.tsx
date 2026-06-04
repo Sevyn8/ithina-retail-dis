@@ -108,7 +108,7 @@ export function MappingReview() {
                 <TableHead>Null %</TableHead>
                 <TableHead>Canonical</TableHead>
                 <TableHead>Confidence</TableHead>
-                <TableHead>Transforms</TableHead>
+                <TableHead>Mapping rules</TableHead>
                 <TableHead>Authoritative</TableHead>
               </TableRow>
             </TableHeader>
