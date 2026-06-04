@@ -23,8 +23,10 @@ from typing import Any
 
 try:  # python-json-logger >= 3 moved the formatter to a submodule.
     from pythonjsonlogger.json import JsonFormatter
-except ImportError:  # 2.x compatibility
-    from pythonjsonlogger.jsonlogger import JsonFormatter
+except ImportError:  # 2.x compatibility (dep floor is >=2.0, so this branch is live policy).
+    # The 3.x stubs don't re-export JsonFormatter from the legacy module; this import
+    # runs only on 2.x, where it exists.
+    from pythonjsonlogger.jsonlogger import JsonFormatter  # type: ignore[attr-defined]
 
 # Context keys bound on every DIS log line.
 _CONTEXT_KEYS = ("service", "stage", "tenant_id", "trace_id")
@@ -47,7 +49,7 @@ class LogContext:
 _DEFAULT_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
 
-class DisLoggerAdapter(logging.LoggerAdapter):
+class DisLoggerAdapter(logging.LoggerAdapter[logging.Logger]):
     """Logger adapter that merges bound context into each record's ``extra``."""
 
     def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> tuple[str, MutableMapping[str, Any]]:

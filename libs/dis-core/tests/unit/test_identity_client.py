@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -45,7 +46,7 @@ def _client(handler: Callable[[httpx.Request], httpx.Response]) -> HttpIdentityC
 
 
 async def test_resolve_from_token_returns_identity() -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["url"] = str(request.url)
