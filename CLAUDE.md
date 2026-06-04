@@ -12,6 +12,8 @@ DIS (Data Integration System) is a multi-tenant retail data ETL platform on GCP.
 
 Beta target: 5 tenants × ~25 stores × ~5000 SKUs (~150K events/day).
 
+Customer Master, the Ithina platform's tenant and store system of record, is the Postgres database `ithina_platform_db`; the docs use both names for it.
+
 ---
 
 ## Where to read more
@@ -146,7 +148,7 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 ## Local devbox
 
 **Facts:**
-- Postgres on **port 5433** (Customer Master holds 5432).
+- Postgres on **port 5433**; Customer Master holds 5432 (read-only access for Mirror Sync and schema verification, see Customer Master read access below).
 - Two Postgres roles: `ithina_dis_admin` (superuser, used by Alembic) and `ithina_dis_user` (NOSUPERUSER NOBYPASSRLS, used by service code).
 - Pub/Sub emulator on `localhost:8085`; GCS emulator on `localhost:4443`; Redis on `localhost:6379`.
 
@@ -157,6 +159,16 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 - `make test` / `make lint` / `make format` / `make db-migrate` — daily commands.
 
 **Rule:** if a tool call against the local stack fails (Postgres unreachable, topics missing, GCS down), the first response is `make check`. Don't improvise.
+
+---
+
+## Customer Master read access (read-only)
+
+"Customer Master" (the product name) and `ithina_platform_db` (the actual Postgres database name) are the same system; the docs use both names interchangeably. DIS has read-only access to it for Mirror Sync DB-pull and for plan-time schema verification. Connection comes from the `CM_DB_*` env vars (`CM_DB_URL`, role `dis_mirror_reader`, port 5432 local / Cloud SQL in cloud). The read-access contract is `docs/ithina_master_db_read_access.md`; the read-only role is created by `infra/customer-master/create-dis-mirror-reader.sql`.
+
+- Read-only. Never write to Customer Master (5432). All DIS writes go to `ithina_dis_db` (5433), and the `current_database()` target guards still apply. The CM read is a separate connection and role, not `libs/dis-rls`.
+- `core.*` tenant-scoped tables (`tenants`, `stores`, and others) are FORCE RLS and `dis_mirror_reader` is NOBYPASSRLS. To read ROWS you must set both GUCs in the transaction: `app.user_type='PLATFORM'` and `app.tenant_id=NULL` (PLATFORM sees all tenants). Without them, queries return ZERO ROWS silently, with no error. This is the most common mistake.
+- Reading column SHAPES via `information_schema` does not need the GUCs (metadata is not row-filtered); reading or counting rows does.
 
 ---
 
