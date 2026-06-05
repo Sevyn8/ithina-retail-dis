@@ -110,6 +110,11 @@ def test_default_is_the_dev_origin_and_never_a_wildcard(
 def test_env_override_displaces_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "http://a.example:1, http://b.example:2")
     monkeypatch.setenv("POSTGRES_URL", "postgresql+psycopg://u:p@127.0.0.1:9/ithina_dis_db")
+    # Slice 8 required config (lazy construction; nothing is reached in this test).
+    monkeypatch.setenv("GCS_BUCKET_BRONZE", "ithina-bronze-raw")
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "local-dis")
+    monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "127.0.0.1:9")
+    monkeypatch.setenv("STORAGE_EMULATOR_HOST", "http://127.0.0.1:9")
     assert cors_allowed_origins_from_env() == ("http://a.example:1", "http://b.example:2")
 
     with TestClient(create_app()) as overridden_client:

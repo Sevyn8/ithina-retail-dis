@@ -32,13 +32,19 @@ from fastapi.responses import JSONResponse
 from dis_core.errors import (
     AuthTokenError,
     DisError,
+    EventPublishError,
     MappingConfigError,
     MappingStateConflictError,
     MappingTemplateNameConflictError,
     OpsRoleRequiredError,
+    PayloadTooLargeError,
     ResourceNotFoundError,
     RlsContextError,
+    StorageError,
+    StoreStateConflictError,
     TenantScopeError,
+    UploadRequestError,
+    UploadStructureError,
 )
 from dis_core.logging import get_logger
 from dis_core.trace_id import TraceIdNotSetError, get_trace_id
@@ -57,8 +63,19 @@ _STATUS_BY_ERROR: dict[type[DisError], int] = {
     MappingConfigError: 400,  # rules fail the D49 shape or the semantic gate
     ResourceNotFoundError: 404,  # throw-style lookups (template detail / PATCH)
     MappingTemplateNameConflictError: 409,  # EXCLUDE ex_csm_template_name_per_source
-    MappingStateConflictError: 409,  # deprecated lineage / concurrent-edit race
+    MappingStateConflictError: 409,  # deprecated lineage / concurrent-edit race / non-ACTIVE upload target
     RlsContextError: 500,
+    # Slice 8 csv-uploads (contract §8).
+    UploadRequestError: 400,  # malformed multipart: missing/repeated part, bad template_id form
+    PayloadTooLargeError: 413,  # the mid-stream ceiling (and the Content-Length early check)
+    UploadStructureError: 422,  # tier-0 structural gate (D51): empty/not-utf8/not-csv/min-rows
+    StoreStateConflictError: 409,  # resolved-but-not-ACTIVE store (after the 404 resolve — no oracle)
+    # Retryable dependency failures: the request was valid; GCS or Pub/Sub was
+    # not reachable. 503 (the IdentityServiceUnavailableError precedent), never
+    # a misleading 4xx. Within this service StorageError surfaces only on the
+    # upload's GCS write path (path construction inputs are validated upstream).
+    StorageError: 503,
+    EventPublishError: 503,  # object already written: the accepted-orphan posture
 }
 
 _FALLBACK_STATUS = 500

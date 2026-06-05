@@ -73,6 +73,7 @@ CREATE TABLE bronze.data_ingress_events (
 
     -- ---------- Mapping context (informational) ----------
     mapping_version_id          BIGINT                              NULL,
+    template_id                 UUID                                NULL,
 
     -- ---------- Caller context ----------
     auth_principal              VARCHAR(256) COLLATE "C"            NULL,
@@ -230,6 +231,9 @@ COMMENT ON COLUMN bronze.data_ingress_events.source_payload_id IS
 
 COMMENT ON COLUMN bronze.data_ingress_events.mapping_version_id IS
 'The mapping_version_id active for (tenant_id, source_id) at the moment this event was received. Looked up by the receiver from config.source_mappings (or by the streaming consumer if the receiver does not resolve mapping). Informational here; the load-bearing copy lives on canonical rows produced from this event. No FK to source_mappings (intentional: bronze should not enforce on a config table).';
+
+COMMENT ON COLUMN bronze.data_ingress_events.template_id IS
+'The mapping template (config.source_mappings template lineage) this payload was uploaded against, carried on csv.received and persisted here for replay lineage (Slice 8 / D71). Informational, like mapping_version_id: no FK (template_id is not FK-addressable and bronze does not enforce on config tables). NULL only on pre-Slice-8 rows; the contract requires the field on every event since.';
 
 COMMENT ON COLUMN bronze.data_ingress_events.auth_principal IS
 'The authenticated identity that submitted this event. Format depends on channel: user:{user_id} for csv_upload; api_key:{key_fingerprint} for api channel; service_account:{name} for internal calls. Set by the receiver from the auth layer. Used for ops investigation, abuse detection, audit.';

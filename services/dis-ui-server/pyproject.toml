@@ -31,6 +31,21 @@ dependencies = [
   # Slice 14b: mapping_produced_columns — the drift-guarded provenance
   # partition shared by the catalog AND the create/edit semantic gate.
   "dis-validation",
+  # Slice 8: the canonical GCS object path (D53) + the object write for the
+  # synchronous CSV upload — the ONLY sanctioned GCS path (hard rule 9).
+  "dis-storage",
+  # Slice 8: fire-and-forget audit emission for the upload receiver (hard
+  # rule 11); the Postgres writer rides the same dis-rls engine.
+  "dis-audit",
+  # Slice 8: csv.received publish (emulator-guarded, the 9b publisher pattern).
+  "google-cloud-pubsub>=2.23",
+  # Slice 8: the streaming multipart push parser for the 10 MB mid-stream
+  # ceiling (upload_stream.py) — never Starlette's buffering request.form().
+  "python-multipart>=0.0.18",
+  # Slice 8: the blocking GCS/Pub/Sub clients run off the event loop via
+  # anyio.to_thread (root-CLAUDE.md async pattern). Declared explicitly —
+  # imported directly, never ridden transitively off starlette.
+  "anyio>=4",
 ]
 
 [build-system]

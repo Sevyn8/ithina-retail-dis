@@ -52,6 +52,7 @@ def test_populates_every_required_field_from_event_and_bronze() -> None:
     assert envelope.tenant_id == UUID(_CSV_EXAMPLE["tenant_id"])
     assert envelope.store_id == UUID(_CSV_EXAMPLE["store_id"])
     assert envelope.source_id == _CSV_EXAMPLE["source_id"]
+    assert envelope.template_id == UUID(_CSV_EXAMPLE["template_id"])  # verbatim pass-through (D71)
     assert envelope.bronze_ref == _BRONZE_ID
     assert envelope.gcs_uri == _CSV_EXAMPLE["gcs_uri"]
     # received_ts is when DIS durably accepted (bronze received_at), NOT the
@@ -89,6 +90,10 @@ def test_resume_path_publishes_under_the_passed_prior_trace() -> None:
         event, trace_id=prior_trace, bronze_ref=_BRONZE_ID, received_at=_RECEIVED_AT
     )
     assert envelope.trace_id == prior_trace
+    # template_id comes off the INCOMING event, never a bronze read — by
+    # construction the builder takes no bronze row, so a pre-Slice-8 prior row
+    # with a NULL template_id column cannot wedge the resume publish.
+    assert envelope.template_id == event.template_id
 
 
 # ---------------------------------------------------------------------------

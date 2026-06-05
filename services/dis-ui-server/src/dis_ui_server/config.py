@@ -9,6 +9,10 @@ three auth-seam errors; the streaming-consumer precedent applies):
   ``dis-rls`` ``create_rls_engine``, which positively asserts
   ``current_database()=='ithina_dis_db'`` and a NOSUPERUSER/NOBYPASSRLS role
   (DIS on 5433, never Customer Master).
+- ``GCS_BUCKET_BRONZE`` — the bronze bucket the CSV upload writes to (Slice 8;
+  the same env name the csv-ingest-worker cross-checks the published
+  ``gcs_uri`` against, so producer and consumer cannot drift).
+- ``PUBSUB_PROJECT_ID`` — the Pub/Sub project for the ``csv.received`` publish.
 
 Resolution happens inside the app lifespan, NOT at import time: a missing
 required value aborts startup loudly (crashloop is the correct signal for
@@ -31,8 +35,25 @@ from dis_core.errors import DisError
 
 _POSTGRES_URL = "POSTGRES_URL"
 _CORS_ALLOWED_ORIGINS = "CORS_ALLOWED_ORIGINS"
+_GCS_BUCKET_BRONZE = "GCS_BUCKET_BRONZE"
+_PUBSUB_PROJECT_ID = "PUBSUB_PROJECT_ID"
 
 SERVICE_NAME = "dis-ui-server"
+
+# Frozen contract name (hard rule 10): the CSV-upload Phase 1 publish target.
+# The topic is provisioned by tools/local/create_topics.py, never by runtime code.
+CSV_RECEIVED_TOPIC = "csv.received"
+
+# The Slice 8 upload ceiling (a decision value, not deployment config): the
+# synchronous-streaming-upload register entry's rationale is that 10 MB removes
+# the large-file case for direct-to-GCS. Enforced MID-STREAM in upload_stream.py
+# (the spoofable Content-Length early-reject is only the cheap first check).
+CSV_UPLOAD_MAX_FILE_BYTES = 10 * 1024 * 1024
+
+# The raw-body ceiling = the file limit + an allowance for multipart framing
+# (boundaries, part headers, the small template_id/store_code fields). Anything
+# past this is rejected mid-stream regardless of how the parts are arranged.
+CSV_UPLOAD_BODY_CEILING_BYTES = CSV_UPLOAD_MAX_FILE_BYTES + 64 * 1024
 
 # The browser-served dis-ui SPA's dev origin (Slice 14c, confirmed live: dis-ui
 # runs Vite with NO server.port override and its README pins
@@ -54,6 +75,8 @@ class UiServerConfig:
     """Resolved environment profile for one server process."""
 
     postgres_url: str
+    gcs_bucket_bronze: str
+    pubsub_project_id: str
 
     @classmethod
     def from_env(cls) -> UiServerConfig:
@@ -64,7 +87,22 @@ class UiServerConfig:
                 f"{_POSTGRES_URL} is not set; cannot reach the DIS database for the "
                 "tenant-scoped readiness probe or any later data endpoint"
             )
-        return cls(postgres_url=postgres_url)
+        gcs_bucket_bronze = os.environ.get(_GCS_BUCKET_BRONZE)
+        if not gcs_bucket_bronze:
+            raise DisError(
+                f"{_GCS_BUCKET_BRONZE} is not set; the CSV upload cannot build or "
+                "write the canonical bronze object path"
+            )
+        pubsub_project_id = os.environ.get(_PUBSUB_PROJECT_ID)
+        if not pubsub_project_id:
+            raise DisError(
+                f"{_PUBSUB_PROJECT_ID} is not set; the CSV upload cannot publish {CSV_RECEIVED_TOPIC!r}"
+            )
+        return cls(
+            postgres_url=postgres_url,
+            gcs_bucket_bronze=gcs_bucket_bronze,
+            pubsub_project_id=pubsub_project_id,
+        )
 
 
 def cors_allowed_origins_from_env() -> tuple[str, ...]:

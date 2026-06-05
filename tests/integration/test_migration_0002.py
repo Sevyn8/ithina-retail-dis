@@ -144,3 +144,23 @@ def test_migration_cycle_adds_and_removes_the_code_columns(admin_engine: Engine)
         ("tenants", "display_code"): "YES",
         ("stores", "store_code"): "YES",
     }
+
+    # The cycle restores the SHAPE, not the DATA: the downgrade dropped the code
+    # columns, so every seeded display_code/store_code is now NULL. Restore the
+    # fixture values — later-collected suites depend on them (Slice 8's
+    # csv-uploads resolves store_code), and leaving the repair to whenever the
+    # mirror-sync integration tests happen to re-sync is an ordering coupling,
+    # not hygiene. A test that mutates shared live state restores it.
+    from dis_testing import fixtures as fx
+
+    with admin_engine.begin() as conn:
+        for tenant in fx.TENANTS:
+            conn.execute(
+                text("UPDATE identity_mirror.tenants SET display_code = :code WHERE tenant_id = :id"),
+                {"code": tenant.display_code, "id": str(tenant.uuid)},
+            )
+        for store in fx.STORES:
+            conn.execute(
+                text("UPDATE identity_mirror.stores SET store_code = :code WHERE store_id = :id"),
+                {"code": store.store_code, "id": str(store.uuid)},
+            )

@@ -60,6 +60,19 @@ def test_no_raw_runtime_or_value_errors_raised() -> None:
     assert offenders == []
 
 
+def test_mapping_lookup_stays_template_unaware_until_slice_8a() -> None:
+    # Slice 8 / D71 hard limit: the carry is ENVELOPE-ONLY. The active-mapping
+    # lookup keys on (tenant, source) with NO template_id predicate until
+    # Slice 8a deliberately amends it (which updates this pin). The gate this
+    # guards: a second ACTIVE template under one source must not ship before
+    # the lookup is template-keyed, or .first() picks an arbitrary mapping.
+    mapping_source = (_SRC / "pipeline" / "mapping.py").read_text()
+    assert "template_id" not in mapping_source, (
+        "pipeline/mapping.py mentions template_id — that is the Slice 8a change; "
+        "Slice 8 carries the field on the envelope only (D71)"
+    )
+
+
 def test_contracts_describe_no_ordering_key() -> None:
     # AC11 (D60 resolved as STRIKE): neither contract mentions an ordering key —
     # this is the regression guard on the strike.

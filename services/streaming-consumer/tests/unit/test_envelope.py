@@ -27,6 +27,7 @@ def _good_payload() -> dict[str, object]:
         "tenant_id": "019e89f9-dbd5-7703-8221-ae6b811599bb",
         "store_id": "019e89f9-dbd5-7703-8221-ae8bfa6528bf",
         "source_id": "sc_pos_v1",
+        "template_id": "019e98c9-df80-7649-98cd-83fb6293777a",  # Slice 8 carry (D71)
         "bronze_ref": "019e9508-0000-7000-8000-000000000002",
         "gcs_uri": (
             "gs://ithina-bronze-raw/tenant/019e89f9-dbd5-7703-8221-ae6b811599bb/"
@@ -42,6 +43,9 @@ def test_good_payload_parses() -> None:
     event = parse_ingress_ready(json.dumps(_good_payload()).encode())
     assert event.schema_version == 1
     assert event.source_id == "sc_pos_v1"
+    # Parsed, NOT consumed (Slice 8 / D71): the lookup stays template-unaware
+    # until Slice 8a — a regression test in test_service_surface pins that.
+    assert str(event.template_id) == "019e98c9-df80-7649-98cd-83fb6293777a"
     assert event.replay is False  # absent -> the contract default
     assert event.received_ts.tzinfo is not None
 
@@ -53,6 +57,8 @@ def test_good_payload_parses() -> None:
         ("tenant_id", "not-a-uuid"),
         ("schema_version", 2),  # const: 1
         ("source_id", ""),  # min length
+        ("template_id", None),  # required since Slice 8 (D71 carry)
+        ("template_id", "not-a-uuid"),
         ("bronze_ref", None),
     ],
 )

@@ -38,6 +38,11 @@ class CsvReceivedEvent(BaseModel):
     tenant_id: UUID
     store_id: UUID
     source_id: str = Field(min_length=1)
+    # The mapping template the CSV was uploaded against (Slice 8, D71). Carried:
+    # passed through to ingress.ready and persisted to bronze for replay lineage.
+    # The worker never resolves or validates it (dis-ui-server validated ACTIVE
+    # at Phase 1); the streaming consumer ignores it until Slice 8a.
+    template_id: UUID
     upload_session_id: str = Field(pattern=_UPLOAD_SESSION_PATTERN)
     gcs_uri: str = Field(min_length=1)
     received_ts: datetime

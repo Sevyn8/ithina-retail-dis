@@ -45,6 +45,7 @@ def test_contract_example_parses() -> None:
     assert event.tenant_id == UUID(_EXAMPLE["tenant_id"])
     assert event.store_id == UUID(_EXAMPLE["store_id"])
     assert event.source_id == _EXAMPLE["source_id"]
+    assert event.template_id == UUID(_EXAMPLE["template_id"])  # Slice 8 carry (D71)
     assert event.upload_session_id == _EXAMPLE["upload_session_id"]
     assert event.gcs_uri == _EXAMPLE["gcs_uri"]
     assert event.tenant_display_code == _EXAMPLE["tenant_display_code"]
@@ -84,6 +85,7 @@ def test_missing_required_field_raises_with_field_name(field: str) -> None:
         ("trace_id", "not-a-uuid"),
         ("tenant_id", "t_acme9k2l1mn4"),  # the retired invented form
         ("store_id", ""),
+        ("template_id", "not-a-uuid"),  # Slice 8 carry: required, format uuid
         ("schema_version", 2),  # const: 1
         ("upload_session_id", "sess-12345"),  # violates ^us_[a-z0-9]{12}$
         ("upload_session_id", ""),  # the idempotency key is a required value

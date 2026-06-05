@@ -123,6 +123,7 @@ async def test_end_to_end_csv_received_to_ingress_ready(
         ext="csv",
     )
     storage.upload_bytes(key, _GOOD_CSV, content_type="text/csv")
+    template_id = new_uuid7()  # Slice 8 carry: required on the contract (D71)
     event_payload = {
         "schema_version": 1,
         "trace_id": str(trace_id),
@@ -131,6 +132,7 @@ async def test_end_to_end_csv_received_to_ingress_ready(
         "tenant_display_code": PRIMARY_TENANT.display_code,
         "store_code": PRIMARY_STORE.store_code,
         "source_id": DEFAULT_SOURCE_ID,
+        "template_id": str(template_id),
         "upload_session_id": _unique_session_id(),
         "gcs_uri": f"gs://{bucket}/{key}",
         "received_ts": received.isoformat(),
@@ -146,7 +148,7 @@ async def test_end_to_end_csv_received_to_ingress_ready(
         row = conn.execute(
             text(
                 "SELECT id, tenant_id, store_id, payload_sha256, processing_status, "
-                "       published_at FROM bronze.data_ingress_events WHERE trace_id = :tid"
+                "       published_at, template_id FROM bronze.data_ingress_events WHERE trace_id = :tid"
             ),
             {"tid": trace_id},
         ).one()
@@ -154,6 +156,7 @@ async def test_end_to_end_csv_received_to_ingress_ready(
     assert row.store_id == PRIMARY_STORE.uuid
     assert row.payload_sha256 == hashlib.sha256(_GOOD_CSV).hexdigest()
     assert row.processing_status == "PUBLISHED"
+    assert row.template_id == template_id  # persisted for replay lineage (Slice 8 / D71)
 
     # ingress.ready arrived, carrying the EVENT's trace (read, never minted) and
     # the bronze pointer the streaming consumer needs.
@@ -163,6 +166,7 @@ async def test_end_to_end_csv_received_to_ingress_ready(
     assert envelope["bronze_ref"] == str(row.id)
     assert envelope["tenant_id"] == str(PRIMARY_TENANT.uuid)
     assert envelope["gcs_uri"] == event_payload["gcs_uri"]
+    assert envelope["template_id"] == str(template_id)  # carried verbatim (D71)
 
     # The message was ACKed: another poll re-processes nothing for this trace.
     await wired_subscriber.poll_once()

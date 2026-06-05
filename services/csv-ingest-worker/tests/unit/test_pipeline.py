@@ -213,6 +213,7 @@ async def test_bronze_row_is_metadata_only_with_event_identity(
     assert row.store_id == UUID(_CSV_EXAMPLE["store_id"])  # single-store session
     assert row.trace_id == UUID(_CSV_EXAMPLE["trace_id"])
     assert row.source_payload_id == _CSV_EXAMPLE["upload_session_id"]
+    assert row.template_id == UUID(_CSV_EXAMPLE["template_id"])  # replay lineage (Slice 8 / D71)
     assert row.processing_status == "RECEIVED"
     assert row.row_count == 3
     assert len(row.payload_sha256) == 64
@@ -230,6 +231,7 @@ async def test_published_envelope_carries_bronze_ref_and_codes(
     assert published["bronze_ref"] == str(outcome.bronze_id)
     assert published["tenant_display_code"] == _CSV_EXAMPLE["tenant_display_code"]
     assert published["store_code"] == _CSV_EXAMPLE["store_code"]
+    assert published["template_id"] == _CSV_EXAMPLE["template_id"]  # carried verbatim (D71)
     assert recorder.first("publish")[0] == "ingress.ready"
 
 
@@ -386,6 +388,26 @@ async def test_duplicate_with_unpublished_prior_resumes_publish_and_marks(
     assert recorder.first("mark_published") == prior.bronze_id
     names = recorder.names()
     assert names.index("publish") < names.index("mark_published")
+
+
+async def test_resume_against_pre_slice8_null_template_prior_cannot_wedge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The operator-flagged edge: an unpublished prior bronze row from BEFORE the
+    # 0006 migration has template_id NULL. The resume publish must not read the
+    # template off bronze (PriorIngest deliberately carries none — asserted here),
+    # must publish with the INCOMING event's template_id, and must conclude in a
+    # normal acked disposition — never an error that NACK/redelivers into a
+    # poison-message loop.
+    prior = _prior()  # RECEIVED, unpublished; the fixture has NO template field
+    assert not hasattr(prior, "template_id")
+    recorder = _Recorder()
+    pipeline, _ = _wire(monkeypatch, recorder, prior=prior)
+    outcome = await pipeline.process(_event())  # completes; the subscriber acks this
+    assert outcome.disposition == "duplicate_resumed"
+    _, published = recorder.first("publish")
+    assert published["template_id"] == _CSV_EXAMPLE["template_id"]  # from the event
+    assert recorder.first("mark_published") == prior.bronze_id  # loop-breaker stamped
 
 
 # ---------------------------------------------------------------------------

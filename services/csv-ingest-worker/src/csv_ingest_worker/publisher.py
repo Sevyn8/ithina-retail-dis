@@ -47,6 +47,7 @@ class IngressReadyEnvelope(BaseModel):
     tenant_id: UUID
     store_id: UUID
     source_id: str = Field(min_length=1)
+    template_id: UUID
     bronze_ref: UUID
     gcs_uri: str = Field(min_length=1)
     received_ts: datetime
@@ -75,12 +76,18 @@ def build_ingress_ready(
     resume-and-mark path (D59) publishes under the PRIOR ingest's ``trace_id``;
     the fresh path passes the event's. Either way it is a READ trace_id — the
     worker mints none (hard rule 4, D54).
+
+    ``template_id`` always comes off the INCOMING event (contract-required since
+    Slice 8), never the bronze row — deliberately, so the resume-and-mark path
+    cannot wedge on a pre-Slice-8 bronze row whose ``template_id`` column is NULL
+    (the publish needs no bronze read for it).
     """
     return IngressReadyEnvelope(
         trace_id=trace_id,
         tenant_id=event.tenant_id,
         store_id=event.store_id,
         source_id=event.source_id,
+        template_id=event.template_id,
         bronze_ref=bronze_ref,
         gcs_uri=event.gcs_uri,
         received_ts=ensure_utc(received_at),

@@ -362,6 +362,9 @@ def seed_chunk(
         tenant_id=tenant,
         store_id=event_store_uuid or store,
         source_id=source_id,
+        # Carried, not consumed (Slice 8 / D71): the lookup stays keyed on
+        # (tenant, source) until Slice 8a, so the value is immaterial here.
+        template_id=new_uuid7(),
         bronze_ref=bronze_ref,
         gcs_uri=gcs_uri,
         received_ts=BASE_TS,

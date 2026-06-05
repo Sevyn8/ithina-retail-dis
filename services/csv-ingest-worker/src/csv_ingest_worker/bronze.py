@@ -80,6 +80,11 @@ class BronzeRow:
     payload_sha256: str
     row_count: int | None
     source_payload_id: str
+    # Replay lineage (Slice 8 / D71): persisted from the event; informational like
+    # mapping_version_id. NULL only on pre-Slice-8 rows — and deliberately NOT read
+    # back for the resume-and-mark re-publish (the envelope takes it off the
+    # incoming event), so a NULL prior row can never wedge the publish.
+    template_id: UUID
     received_at: datetime
     processing_status: ProcessingStatus
 
@@ -153,11 +158,11 @@ async def insert_row(conn: AsyncConnection, row: BronzeRow) -> None:
             "INSERT INTO bronze.data_ingress_events "
             "(id, tenant_id, store_id, source_id, dis_channel, trace_id, gcs_uri, "
             " payload_size_bytes, payload_sha256, row_count, content_type, "
-            " source_payload_id, received_at, processing_status) "
+            " source_payload_id, template_id, received_at, processing_status) "
             "VALUES "
             "(:id, :tenant_id, :store_id, :source_id, :dis_channel, :trace_id, :gcs_uri, "
             " :payload_size_bytes, :payload_sha256, :row_count, :content_type, "
-            " :source_payload_id, :received_at, :processing_status)"
+            " :source_payload_id, :template_id, :received_at, :processing_status)"
         ),
         {
             "id": row.id,
@@ -172,6 +177,7 @@ async def insert_row(conn: AsyncConnection, row: BronzeRow) -> None:
             "row_count": row.row_count,
             "content_type": CONTENT_TYPE,
             "source_payload_id": row.source_payload_id,
+            "template_id": row.template_id,
             "received_at": row.received_at,
             "processing_status": row.processing_status,
         },

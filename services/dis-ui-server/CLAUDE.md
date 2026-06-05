@@ -4,7 +4,7 @@ Loaded when Claude Code works in `services/dis-ui-server/`. Service-specific rul
 
 ## What this service is
 
-The BFF (backend-for-frontend) for the DIS UI. Single backend service hosting all UI-facing sub-modules: sample upload, onboarding review, mapping CRUD, quarantine console, audit lookup, DuckDB query panel, and the upload-session endpoint that starts a CSV upload (Phase 1 per `decisions.md` D36). Hosts the onboarding sub-module in-process.
+The BFF (backend-for-frontend) for the DIS UI. Single backend service hosting all UI-facing sub-modules: sample upload, onboarding review, mapping CRUD, quarantine console, audit lookup, DuckDB query panel, and the synchronous csv-uploads endpoint — CSV upload Phase 1 (placement per `decisions.md` D36; the signed-URL mechanic is SUPERSEDED by Slice 8's stream-through design). Hosts the onboarding sub-module in-process.
 
 For the EPE block (purpose, entry, process, exit), file structure, and operational detail, see `README.md` in this directory. For the current build slice, see the slice doc in `docs/slices/`.
 
@@ -12,14 +12,14 @@ For the EPE block (purpose, entry, process, exit), file structure, and operation
 
 ## Rules specific to this service
 
-- Writes to: `config.source_mappings` (mapping authoring); Pub/Sub `mapping.changed` (notify streaming consumer on active mapping change); Pub/Sub `ingress.resubmit` (resubmit from quarantine console). Do not write to other tables or topics from here.
+- Writes to: `config.source_mappings` (mapping authoring); the bronze GCS bucket (the Slice 8 CSV-upload object, canonical D53 path via `dis-storage` only); `audit.events` via `dis-audit` (fire-and-forget); Pub/Sub `csv.received` (the Slice 8 upload trigger, D54), `mapping.changed` (notify streaming consumer on active mapping change), and `ingress.resubmit` (resubmit from quarantine console). Do not write to other tables or topics from here. NEVER bronze tables (the worker owns bronze).
 - Reads from: Cloud SQL read replica (canonical), Cloud SQL `audit.events` (Phase 1; BigQuery `audit_events` from Phase 3 onward per D34), `config.source_mappings`, `quarantine.*`, `identity_mirror` (via identity-service).
 - All Postgres access uses `libs/dis-rls`. No raw SQLAlchemy sessions.
 - Audit reads from Cloud SQL `audit.events` in Phase 1 via standard repos. BigQuery via `libs/dis-core` BqClient lands in Phase 3 (BqClient is a stub in Phase 1).
 - All audit emission uses `libs/dis-audit`.
 - Never writes to canonical tables or audit. Never publishes to `ingress.ready` or `quarantine` (those are receiver/worker concerns).
 - Authenticates via Customer Master JWT; extracts tenant_id and role claims; FastAPI dependency injection scopes every request.
-- Hosts the `upload_session` handler that issues signed PUT URLs for CSV upload (Phase 1; see D36). Generates the `trace_id` here; the `csv-ingest-worker` service reads it from the GCS object path in Phase 2.
+- Hosts the `csv_uploads` handler (Slice 8): the file streams THROUGH this service to GCS in one request — no signed PUT URL, no upload-session object, no completion detection (supersedes D36's mechanic; closes D54's fork). Mints `trace_id` here (the receiver, hard rule 4); the worker reads it off the `csv.received` EVENT (D54), never from the object path. The 10 MB cap is enforced MID-STREAM (`upload_stream.py` is the reusable pattern for any later file-body endpoint). `template_id` is validated ACTIVE and carried end to end but the streaming consumer stays template-unaware until Slice 8a (D71 — no promote-to-ACTIVE path may ship before 8a).
 - Onboarding sub-module is in-process; not a separate service. See architecture §4.16, §4.17.
 - DuckDB query panel is ops-role-restricted. RBAC enforced at the handler level.
 

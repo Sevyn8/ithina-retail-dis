@@ -58,6 +58,23 @@ from dis_ui_server.main import create_app
 # Parseable URL, nothing listens: startup must survive it, /readyz must not.
 UNREACHABLE_POSTGRES_URL = "postgresql+psycopg://u:p@127.0.0.1:9/ithina_dis_db"
 
+
+def set_unit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The unit-test environment: required config present, every backend unreachable.
+
+    Slice 8 made GCS_BUCKET_BRONZE + PUBSUB_PROJECT_ID required (crashloop on
+    missing, same posture as POSTGRES_URL); the upload dependencies are
+    construction-lazy, so unreachable emulator hosts keep startup green while
+    any actual I/O would fail loudly — unit tests override ``app.state`` with
+    fakes instead of reaching them.
+    """
+    monkeypatch.setenv("POSTGRES_URL", UNREACHABLE_POSTGRES_URL)
+    monkeypatch.setenv("GCS_BUCKET_BRONZE", "ithina-bronze-raw")
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "local-dis")
+    monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "127.0.0.1:9")  # construction guard only
+    monkeypatch.setenv("STORAGE_EMULATOR_HOST", "http://127.0.0.1:9")
+
+
 TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
 TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"
 
@@ -210,9 +227,15 @@ def _probe_router() -> APIRouter:
 
 
 @pytest.fixture
+def unit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The unit env alone — for tests that build their own app/client."""
+    set_unit_env(monkeypatch)
+
+
+@pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     """The app over an unreachable DB, probe routes mounted, lifespan run."""
-    monkeypatch.setenv("POSTGRES_URL", UNREACHABLE_POSTGRES_URL)
+    set_unit_env(monkeypatch)
     with TestClient(create_app(extra_api_routers=[_probe_router()])) as test_client:
         yield test_client
 
@@ -222,7 +245,7 @@ def lenient_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     """Like ``client`` but returns server errors as responses instead of
     re-raising them — needed to assert what an UNHANDLED exception actually
     sends over the wire."""
-    monkeypatch.setenv("POSTGRES_URL", UNREACHABLE_POSTGRES_URL)
+    set_unit_env(monkeypatch)
     app = create_app(extra_api_routers=[_probe_router()])
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client

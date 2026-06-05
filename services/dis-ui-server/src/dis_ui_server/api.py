@@ -10,7 +10,7 @@ engineer). Health probes deliberately do NOT live here: ``/healthz`` and
 ``/readyz`` stay at the root per infra convention.
 
 Slice 14b mounts the first data endpoints: the store list, the field catalog,
-and the mapping-template resource.
+and the mapping-template resource. Slice 8 mounts the synchronous CSV upload.
 """
 
 from __future__ import annotations
@@ -18,9 +18,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from dis_ui_server.config import API_PREFIX
-from dis_ui_server.handlers import mapping_templates, stores, template_mapping_fields
+from dis_ui_server.handlers import csv_uploads, mapping_templates, stores, template_mapping_fields
 
 api_router = APIRouter(prefix=API_PREFIX)
 api_router.include_router(stores.router)
 api_router.include_router(template_mapping_fields.router)
 api_router.include_router(mapping_templates.router)
+api_router.include_router(csv_uploads.router)

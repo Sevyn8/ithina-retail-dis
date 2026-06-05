@@ -151,6 +151,7 @@ class IngestPipeline:
             payload_sha256=payload_sha256,
             row_count=preflight.row_count,
             source_payload_id=event.upload_session_id,
+            template_id=event.template_id,
             received_at=received_at,
             processing_status="RECEIVED",
         )
@@ -295,6 +296,7 @@ class IngestPipeline:
             payload_sha256=payload_sha256,
             row_count=None,  # nothing parsed
             source_payload_id=event.upload_session_id,
+            template_id=event.template_id,
             received_at=now_utc(),
             processing_status="FAILED",
         )

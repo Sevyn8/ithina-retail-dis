@@ -300,6 +300,8 @@ Both modes call the same upsert logic in `sync/`. Different entry points; same w
 
 ### D36 CSV upload — Phase 1 is a dis-ui-server endpoint, not a separate receiver service; Phase 2 ships as `csv-ingest-worker`
 
+**Superseded in part (D72, Slice 8).** Phase 1's signed-URL mechanic below ("returns a short-lived signed PUT URL") is superseded: the upload is now synchronous, streaming the file through dis-ui-server to GCS in one request, with no upload-session object and no signed URL. The PLACEMENT decision — Phase 1 inside dis-ui-server, the BFF rationale — stands and is what Slice 8 implemented. (Phase 2's "GCS-event-driven" trigger was separately replaced by the `csv.received` event in D54.)
+
 **Decision.** The CSV upload flow is split into two operational halves:
 1. **Phase 1 (synchronous, UI-driven).** Lives as an endpoint inside `dis-ui-server` (e.g. `POST /v1/upload-sessions`). Validates the Customer Master session, generates `trace_id`, builds the canonical GCS path via `libs/dis-storage`, returns a short-lived signed PUT URL, emits audit.
 2. **Phase 2 (asynchronous, GCS-event-driven).** Lives as a standalone worker service `services/csv-ingest-worker/`. Triggered by GCS object-finalized notifications. Runs DuckDB preflight, PII tokenization, bronze metadata write, `ingress.ready` publish, audit emission, idempotency.
@@ -577,7 +579,7 @@ Tier-0 structural CSV validation (file present, non-empty, decodes, parses as CS
 
 **Trust-boundary tradeoff (named).** The worker trusting dis-ui-server's identity means a dis-ui-server identity bug would propagate; re-resolving is rejected because it would only re-derive what dis-ui-server already knew. Downstream freshness (tenant/store deactivated between upload and processing) is the streaming consumer's `validate()`, not the worker's, so nothing is lost by dropping the worker's resolve.
 
-**Open mechanic for the owning slices (not settled here).** How dis-ui-server learns the PUT completed (it issues the signed URL and is otherwise out of the loop): a client completion-callback to dis-ui-server, or dis-ui-server subscribing to GCS finalize itself and re-publishing `csv.received`. That is a Slice 9a / Slice 8 design point. Also confirm the upload-session-to-`trace_id` cardinality (whether one session can span more than one file/`trace_id`).
+**Open mechanic — CLOSED by D72 (Slice 8), superseded in part.** The fork below (client callback vs GCS-finalize subscription) is closed by removal: the upload is now synchronous (D72), dis-ui-server writes the object itself, and save-confirmation is the write return — no completion detection exists to need. The signed-PUT wording in the Decision above is likewise superseded (the trigger, the trust model, and the `upload_session_id`-as-`source_payload_id` role all stand; the value is now deterministically derived per D72, and one upload = one `trace_id` by construction). ~~How dis-ui-server learns the PUT completed (it issues the signed URL and is otherwise out of the loop): a client completion-callback to dis-ui-server, or dis-ui-server subscribing to GCS finalize itself and re-publishing `csv.received`. That is a Slice 9a / Slice 8 design point. Also confirm the upload-session-to-`trace_id` cardinality (whether one session can span more than one file/`trace_id`).~~
 
 **Cross-refs.** D36 (the Phase-1/Phase-2 split this refines; its "encoded in the object path" wording is corrected here), D37 (translation at Phase 1), D52/D53 (contract + path), D5 (bronze-first still holds: the worker writes bronze then publishes `ingress.ready`). **Scope.** Contract (`csv.received`) + the trigger model; the publish point in dis-ui-server and the worker's subscription land in Slice 8 / Slice 9b.
 
@@ -1088,3 +1090,42 @@ predicate pattern.
 **Cross-refs.** D41 (`identity_mirror` RLS-off resolution), D67 (the ORM layer this read
 uses), D69 (the contrasting RLS-ON posture on `config.source_mappings`). **Scope.**
 dis-ui-server `repos/stores.py` + its isolation tests + this entry; no DDL.
+
+
+### D71 Consumer mapping lookup is template-unaware; the template-keyed fix is owed as Slice 8a, gated before any second ACTIVE template `OPEN`
+
+**Status.** `OPEN` (registered while scoping Slice 8). The streaming consumer's `load_active_mapping` (`services/streaming-consumer/src/streaming_consumer/pipeline/mapping.py:188-194`) selects the mapping by `(tenant_id, source_id, status='ACTIVE')` and takes `.first()`, with no `template_id` predicate. Since 14a, the live `uq_csm_active_per_source` index permits multiple ACTIVE rows per `(tenant, source)`, one per template (D68), so the consumer's lookup is template-unaware: it is deterministic today only because the 0005 backfill leaves exactly one ACTIVE 'default' template per source. The moment a second template goes ACTIVE under one source, `.first()` returns an arbitrary row and a CSV may be processed with the wrong template's `mapping_rules`, silently, with no error.
+
+**Decision.** Slice 8 carries `template_id` end to end on the wire now (the `csv.received` and `ingress.ready` contracts gain a required `template_id`; dis-ui-server populates it; the worker passes it through; bronze persists it for replay lineage), but the consumer is NOT amended in Slice 8 (carried-but-ignored, which is safe in the current single-ACTIVE-per-source world). The consumer template-keyed-lookup fix is owed as **Slice 8a**, taken up immediately after Slice 8 lands: add `AND template_id = :template_id` to the lookup (the index then guarantees a single row), parse `template_id` off `ingress.ready`, thread it through orchestration and the `MAPPING_LOOKED_UP` audit, and decide the consumer's behaviour when a message carries no `template_id` (back-compat fallback vs hard error). **Hard gate:** no promote-to-ACTIVE path that can produce a second ACTIVE template under one source ships before Slice 8a lands.
+
+**Owed-downstream gaps folded under this entry (8a scope or its immediate neighbours).** (1) the consumer lookup fix above; (2) bronze `template_id` column added in Slice 8 so replay (Slice 12) can re-derive the template from `bronze_ref` rather than re-resolving; (3) the `template_id`-absent contract policy, decided in 8a.
+
+**Cross-refs.** D54 (`csv.received` trigger + trust model), D68 (template grain), D69 (config RLS), D22 (`mapping_version_id` pin), Slice 8, Slice 10, Slice 12.
+
+
+### D72 CSV upload Phase 1 is synchronous: the file streams through dis-ui-server to GCS in one request; no upload-session object, no signed PUT URL, no completion detection `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 8). Supersedes D36's signed-URL mechanic and closes D54's open completion fork.
+
+**Decision.** `POST /api/v1/csv-uploads` on dis-ui-server receives the multipart CSV (`file` + `template_id` + `store_code`), enforces the 10 MB ceiling mid-stream, runs the tier-0 structural gate (D51), resolves identity once (tenant from the verified token, store from the mirror, source from the template lineage — D37 posture), writes the object to the canonical D53 path itself, and publishes `csv.received` — all in one synchronous request. The upload-session object, the signed PUT URL, and the completion-detection mechanic are removed entirely.
+
+**What this supersedes and what stands.** D36's signed-URL mechanic (Phase-1 item 1: "returns a short-lived signed PUT URL") is superseded; D36's *placement* decision — Phase 1 inside dis-ui-server, the BFF rationale — stands and is what Slice 8 implements. D54's open "how does the server learn the PUT completed" fork is closed by removal: the server writes the object, so save-confirmation is the synchronous write return. D54's trust model (the worker reads identity and `trace_id` off the event and resolves nothing) stands unchanged.
+
+**Why.** The 10 MB ceiling removes any large-file case for direct-to-GCS upload; streaming through the server is simpler (no session store, no URL expiry, no completion race) and puts the tier-0 gate and the size boundary where the bytes actually arrive. The ceiling is enforced as bytes cross it (the streaming guard is the boundary; `Content-Length` is only a spoofable first check) — proven at the ASGI seam, not just the reader unit.
+
+**The `upload_session_id` field remains on the wire, deterministically derived.** `us_` + the first 12 lowercase-hex chars of SHA-256 over `tenant_id|store_id|template_id|payload_sha256`. Deterministic so a client retry of the same bytes re-derives the same id: the worker's D58 dedup key `(tenant, source_payload_id, payload_sha256)` fires across retries and the D65 id-less-source protection holds (one bronze row → one `ingress.ready` → no double-counted canonical events). Its "session object" meaning is retired; the field NAME is now historical (stale-wording, future contract-hygiene pass).
+
+**Failure posture.** GCS-write-then-publish; a publish failure after the write returns 503 and leaves an accepted orphan object (unreferenced, no bronze row, no compensating delete — the deterministic retry converges without one). A 201 is returned only after the publish is broker-acked, so a client can never hold a 201 without a published event; the inverse window (event without 201, crash before the response) is absorbed by the same dedup.
+
+**Cross-refs.** D36 (placement stands; mechanic superseded), D54 (fork closed; trust model stands), D58 (the dedup key this derivation feeds), D65 (the id-less protection retry-determinism preserves), D71 (the `template_id` the upload validates ACTIVE and carries). **Scope.** dis-ui-server `handlers/csv_uploads.py` + `upload_stream.py`/`tier0.py`/`publisher.py`/`audit.py`, the `csv.received` contract, Slice 8.
+
+
+### D73 bronze persists `template_id` for replay lineage `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 8; the obligation was folded under D71 item 2).
+
+**Decision.** `bronze.data_ingress_events` carries `template_id` (nullable `uuid`, no FK, no index — migration 0006), written by the csv-ingest-worker from the `csv.received` event. Slice 12 replay (`ingress.resubmit`) can therefore re-derive the template from `bronze_ref` rather than re-resolving it from long-gone request state.
+
+**Why nullable, no FK.** Pre-Slice-8 rows genuinely have no template (history cannot be backfilled truthfully); `template_id` is not FK-addressable (`config.source_mappings` is keyed by `mapping_version_id`; the template id repeats across a lineage's version rows), and bronze deliberately does not enforce on config tables (the `mapping_version_id` precedent). The contract requires the field on every event since Slice 8, so new rows always carry it. The worker's resume-and-mark re-publish takes `template_id` off the incoming event, never off bronze — a pre-0006 NULL row can never wedge the publish (test-pinned).
+
+**Cross-refs.** D71 (the carry this completes the persistence leg of), D54 (the event the value arrives on), Slice 12 (the replay consumer). **Scope.** Migration 0006, the bronze manifest, `csv_ingest_worker/bronze.py` + `pipeline.py`.

@@ -49,6 +49,7 @@ from dis_rls import rls_session
 from dis_ui_server.models import SourceMappingRow
 
 _STATUS_DRAFT = "DRAFT"
+_STATUS_ACTIVE = "ACTIVE"
 _STATUS_DEPRECATED = "DEPRECATED"
 
 _NAME_EXCLUDE_CONSTRAINT = "ex_csm_template_name_per_source"
@@ -87,6 +88,43 @@ async def get_template_rows(engine: AsyncEngine, tenant_id: UUID, template_id: U
     )
     async with rls_session(engine, tenant_id) as conn:
         return (await conn.execute(statement)).all()
+
+
+async def resolve_active_template(engine: AsyncEngine, tenant_id: UUID, template_id: UUID) -> Row[Any]:
+    """The lineage's single ACTIVE version row — the Slice 8 upload gate.
+
+    Two-step so the response codes stay honest (and oracle-free):
+
+    - lineage invisible/absent under RLS → 404 (unknown and other-tenant are
+      deliberately the same answer);
+    - lineage exists but carries no ACTIVE version → 409 (a well-formed request
+      against a non-usable lifecycle state; operator-resolvable by activating).
+
+    At most one ACTIVE exists per lineage (``uq_csm_active_per_source`` is keyed
+    ``(tenant, source, template) WHERE status='ACTIVE'``), so the returned row is
+    unique by construction — and it carries the lineage's ``source_id``, which is
+    how the upload derives the source (the request never names one).
+    """
+    rows = await get_template_rows(engine, tenant_id, template_id)
+    if not rows:
+        raise ResourceNotFoundError(
+            f"mapping template {template_id} not found",
+            resource="mapping_template",
+            identifier=str(template_id),
+            tenant_id=str(tenant_id),
+        )
+    active = [row for row in rows if row.status == _STATUS_ACTIVE]
+    if not active:
+        # rows arrive version desc; the head names the lineage's current state.
+        raise MappingStateConflictError(
+            f"mapping template {template_id} has no ACTIVE version; a CSV can only "
+            "be uploaded against a live template",
+            template_id=str(template_id),
+            tenant_id=str(tenant_id),
+            expected=_STATUS_ACTIVE,
+            actual=rows[0].status,
+        )
+    return active[0]
 
 
 async def create_template(

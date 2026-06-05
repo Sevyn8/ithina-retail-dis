@@ -424,7 +424,11 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0005"
+        # The pin moves with each new revision ON PURPOSE: a new migration's
+        # author must revisit this test and confirm the fresh-bootstrap no-op
+        # property holds for it too (0006: the bronze template_id ADD COLUMN is
+        # existence-gated, so a manifest-fresh database is untouched).
+        assert head == "0006"
 
         # 0005 must be a TRUE NO-OP on a manifest-fresh database. Without this,
         # a drifted manifest could bootstrap the WRONG shape and 0005's

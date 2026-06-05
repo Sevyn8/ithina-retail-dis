@@ -24,8 +24,11 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from dis_audit import AuditBackend, select_writer
 from dis_core.logging import configure_logging, get_logger
+from dis_storage import StorageClient
 from dis_ui_server.api import api_router
+from dis_ui_server.audit import UiAudit
 from dis_ui_server.catalog import build_field_catalog
 from dis_ui_server.config import (
     API_PREFIX,
@@ -36,6 +39,7 @@ from dis_ui_server.config import (
 from dis_ui_server.db import create_engine_from_config
 from dis_ui_server.errors_http import register_error_handlers
 from dis_ui_server.handlers import health
+from dis_ui_server.publisher import PubsubPublisher
 
 _log = get_logger(SERVICE_NAME)
 
@@ -46,6 +50,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine_from_config(config)  # lazy: no connection yet
     app.state.config = config
     app.state.engine = engine
+    # Slice 8 upload dependencies — all construction-lazy like the engine (no
+    # network I/O until first use), so the liveness/readiness split holds: a
+    # missing env var crashloops here, an unreachable backend degrades later.
+    # PubsubPublisher refuses to construct without PUBSUB_EMULATOR_HOST (cloud
+    # wiring is deferred infra, the 9b posture). Tests override these state
+    # entries with fakes after startup.
+    app.state.storage = StorageClient(bucket=config.gcs_bucket_bronze)
+    app.state.publisher = PubsubPublisher(project_id=config.pubsub_project_id)
+    app.state.audit = UiAudit(select_writer(AuditBackend.POSTGRES, engine=engine))
     # Built once per process (inputs are code constants; no DB, no tenant). A
     # label-vs-derivation drift raises FieldCatalogDriftError HERE, aborting
     # startup — crashloop is the correct signal, never a half-true catalog.

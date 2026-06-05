@@ -17,6 +17,7 @@ from dis_core.errors import (
     DisError,
     EventContractError,
     EventPathMismatchError,
+    EventPublishError,
     FieldCatalogDriftError,
     IdentityClientError,
     IdentityNotFoundError,
@@ -28,11 +29,15 @@ from dis_core.errors import (
     MappingTemplateNameConflictError,
     MirrorSyncError,
     OpsRoleRequiredError,
+    PayloadTooLargeError,
     PreflightFailedError,
     ResourceNotFoundError,
+    StoreStateConflictError,
     SuiteDefinitionError,
     SuiteDriftError,
     TenantScopeError,
+    UploadRequestError,
+    UploadStructureError,
     ValidationSuiteError,
 )
 
@@ -243,6 +248,68 @@ def test_field_catalog_drift_error_preserves_column_names() -> None:
     err = FieldCatalogDriftError("labels drifted", missing=("quantity",), stale=("ghost",))
     assert err.missing == ("quantity",)
     assert err.stale == ("ghost",)
+
+
+def test_csv_upload_errors_root_at_dis_error() -> None:
+    # Slice 8: the csv-uploads endpoint's error family, mapped to 413/400/422/
+    # 409/503 by the dis-ui-server exception handlers (contract §2.3).
+    assert issubclass(PayloadTooLargeError, DisError)
+    assert issubclass(UploadRequestError, DisError)
+    assert issubclass(UploadStructureError, DisError)
+    assert issubclass(StoreStateConflictError, DisError)
+    assert issubclass(EventPublishError, DisError)
+
+
+def test_payload_too_large_error_preserves_sizes() -> None:
+    err = PayloadTooLargeError(
+        "body crossed the ceiling mid-stream",
+        limit_bytes=10 * 1024 * 1024,
+        observed_bytes=10 * 1024 * 1024 + 1,
+        tenant_id="ten",
+        trace_id="tr",
+    )
+    assert err.limit_bytes == 10 * 1024 * 1024
+    assert err.observed_bytes == err.limit_bytes + 1
+    assert err.tenant_id == "ten"
+    assert err.trace_id == "tr"
+
+
+def test_upload_request_error_names_the_part_only() -> None:
+    # The error names WHICH part offended, never its value (PII posture).
+    err = UploadRequestError("required part missing", part="template_id", tenant_id="ten", trace_id="tr")
+    assert err.part == "template_id"
+    assert err.tenant_id == "ten"
+
+
+def test_upload_structure_error_preserves_reason() -> None:
+    err = UploadStructureError(
+        "below min-rows floor", reason="below_min_rows", tenant_id="ten", trace_id="tr"
+    )
+    assert err.reason == "below_min_rows"
+    assert err.trace_id == "tr"
+
+
+def test_store_state_conflict_error_preserves_context() -> None:
+    err = StoreStateConflictError(
+        "store is not ACTIVE",
+        store_id="019e5f10-2a3b-7c4d-8e5f-6a7b8c9d0e1f",
+        store_code="buc-ees-0001",
+        tenant_id="ten",
+        expected="ACTIVE",
+        actual="CLOSED",
+    )
+    assert err.store_code == "buc-ees-0001"
+    assert err.expected == "ACTIVE"
+    assert err.actual == "CLOSED"
+
+
+def test_event_publish_error_preserves_topic() -> None:
+    err = EventPublishError(
+        "publish failed after GCS write", topic="csv.received", tenant_id="ten", trace_id="tr"
+    )
+    assert err.topic == "csv.received"
+    assert err.tenant_id == "ten"
+    assert err.trace_id == "tr"
 
 
 def test_errors_module_is_leaf_level() -> None:

@@ -611,3 +611,141 @@ class FieldCatalogDriftError(DisError):
         self.message = message
         self.missing = missing
         self.stale = stale
+
+
+# -- dis-ui-server CSV-upload errors (Slice 8) -----------------------------------
+# Raised by the synchronous csv-uploads endpoint (the CSV-upload Phase 1 receiver;
+# supersedes the D36 signed-URL mechanic) and mapped by the dis-ui-server exception
+# handlers to the §2.3 envelope. Each carries the load-bearing identifiers
+# (code-quality rule 5); none ever carries file bytes, a multipart field value
+# beyond the named identifiers, or any payload content (never log/echo PII).
+
+
+class PayloadTooLargeError(DisError):
+    """The upload body crossed the size ceiling. Maps to HTTP 413.
+
+    Raised either by the spoofable-but-cheap ``Content-Length`` early check or by
+    the real boundary — the streaming guard that counts bytes as they arrive and
+    aborts mid-stream, never after a full read. ``limit_bytes`` is the enforced
+    ceiling; ``observed_bytes`` is the declared or counted size at rejection.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        limit_bytes: int | None = None,
+        observed_bytes: int | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.limit_bytes = limit_bytes
+        self.observed_bytes = observed_bytes
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
+class UploadRequestError(DisError):
+    """The multipart request is malformed. Maps to HTTP 400.
+
+    A required part is missing (``file``, ``template_id``, ``store_code``), a
+    field is not parseable in its declared form (e.g. ``template_id`` is not a
+    UUID), or the body is not parseable multipart at all. ``part`` names the
+    offending part; values are never echoed (a request body can contain anything,
+    including PII).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        part: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.part = part
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
+class UploadStructureError(DisError):
+    """The uploaded file failed the tier-0 structural gate (D51). Maps to HTTP 422.
+
+    Structural only: empty file, does not decode as UTF-8, does not parse as CSV,
+    below the minimum-rows floor. Column- and mapping-aware checks are tier 1
+    (the source-shape suite, downstream) and are never raised here. ``reason`` is
+    a short machine-stable code (``empty_file``, ``not_utf8``, ``not_csv``,
+    ``below_min_rows``); never cell values, never payload.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.reason = reason
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
+class StoreStateConflictError(DisError):
+    """The store's lifecycle state refuses the requested operation. Maps to HTTP 409.
+
+    The :class:`MappingStateConflictError` shape for stores: the request is
+    well-formed and the store IS the caller's (a cross-tenant or unknown
+    ``store_code`` is a 404 *before* this gate — no existence oracle), but its
+    ``identity_mirror.stores.status`` is not in the operation's allowed set
+    (CSV upload v1: ACTIVE only). Operator-resolvable in Customer Master.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        store_id: str | None = None,
+        store_code: str | None = None,
+        tenant_id: str | None = None,
+        expected: str | None = None,
+        actual: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.store_id = store_id
+        self.store_code = store_code
+        self.tenant_id = tenant_id
+        self.expected = expected
+        self.actual = actual
+
+
+class EventPublishError(DisError):
+    """A Pub/Sub publish failed after the side effects before it succeeded. Maps to HTTP 503.
+
+    Raised by the csv-uploads endpoint when the ``csv.received`` publish fails
+    AFTER the GCS object is written (the accepted orphan-object posture: the
+    object is unreferenced, no bronze row exists, and a client retry converges via
+    the deterministic ``upload_session_id``). Retryable: the dependency, not the
+    request, is at fault. ``topic`` names the target; the payload is never carried.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        topic: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.topic = topic
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id

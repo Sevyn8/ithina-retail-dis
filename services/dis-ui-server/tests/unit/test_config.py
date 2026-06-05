@@ -5,24 +5,46 @@ from __future__ import annotations
 import pytest
 
 from dis_core.errors import DisError
-from dis_ui_server.config import API_PREFIX, SERVICE_NAME, UiServerConfig
+from dis_ui_server.config import (
+    API_PREFIX,
+    CSV_RECEIVED_TOPIC,
+    CSV_UPLOAD_BODY_CEILING_BYTES,
+    CSV_UPLOAD_MAX_FILE_BYTES,
+    SERVICE_NAME,
+    UiServerConfig,
+)
 
 
-def test_missing_postgres_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def _set_all_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POSTGRES_URL", "postgresql+psycopg://u:p@localhost:5433/ithina_dis_db")
+    monkeypatch.setenv("GCS_BUCKET_BRONZE", "ithina-bronze-raw")
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "local-dis")
+
+
+@pytest.mark.parametrize("missing", ["POSTGRES_URL", "GCS_BUCKET_BRONZE", "PUBSUB_PROJECT_ID"])
+def test_missing_required_env_raises(missing: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Fail-fast at startup is the crashloop signal for MISCONFIGURATION — kept
     # strictly separate from the present-but-unreachable case (test_health.py),
     # which must NOT crash startup.
-    monkeypatch.delenv("POSTGRES_URL", raising=False)
-    with pytest.raises(DisError, match="POSTGRES_URL"):
+    _set_all_required(monkeypatch)
+    monkeypatch.delenv(missing, raising=False)
+    with pytest.raises(DisError, match=missing):
         UiServerConfig.from_env()
 
 
-def test_present_postgres_url_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POSTGRES_URL", "postgresql+psycopg://u:p@localhost:5433/ithina_dis_db")
+def test_present_required_env_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_all_required(monkeypatch)
     config = UiServerConfig.from_env()
     assert config.postgres_url.endswith("/ithina_dis_db")
+    assert config.gcs_bucket_bronze == "ithina-bronze-raw"
+    assert config.pubsub_project_id == "local-dis"
 
 
 def test_service_constants_frozen() -> None:
     assert SERVICE_NAME == "dis-ui-server"
     assert API_PREFIX == "/api/v1"
+    # Slice 8: the frozen publish target (hard rule 10) and the upload ceiling
+    # (the synchronous-streaming register entry's decision value).
+    assert CSV_RECEIVED_TOPIC == "csv.received"
+    assert CSV_UPLOAD_MAX_FILE_BYTES == 10 * 1024 * 1024
+    assert CSV_UPLOAD_BODY_CEILING_BYTES > CSV_UPLOAD_MAX_FILE_BYTES

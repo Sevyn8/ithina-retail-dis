@@ -139,6 +139,11 @@ def test_label_drift_aborts_the_boot_not_just_the_builder(monkeypatch: pytest.Mo
     del pruned["sale_event"]["quantity"]
     monkeypatch.setattr("dis_ui_server.catalog.field_catalog.LABELS", pruned)
     monkeypatch.setenv("POSTGRES_URL", "postgresql+psycopg://u:p@127.0.0.1:9/ithina_dis_db")
+    # Slice 8 required config (lazy construction; the drift abort fires regardless).
+    monkeypatch.setenv("GCS_BUCKET_BRONZE", "ithina-bronze-raw")
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "local-dis")
+    monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "127.0.0.1:9")
+    monkeypatch.setenv("STORAGE_EMULATOR_HOST", "http://127.0.0.1:9")
 
     from dis_ui_server.main import create_app
 

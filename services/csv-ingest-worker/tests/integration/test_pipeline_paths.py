@@ -66,6 +66,7 @@ def _make_event(storage: StorageClient, bucket: str, data: bytes, cleanup: list[
         tenant_id=PRIMARY_TENANT.uuid,
         store_id=PRIMARY_STORE.uuid,
         source_id=DEFAULT_SOURCE_ID,
+        template_id=new_uuid7(),  # Slice 8 carry: required on the contract (D71)
         upload_session_id=_unique_session_id(),
         gcs_uri=f"gs://{bucket}/{key}",
         received_ts=received,

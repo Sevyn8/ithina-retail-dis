@@ -50,7 +50,7 @@ Restated from root `CLAUDE.md` — the stack this contract is implemented on:
 - **Audit via `libs/dis-audit`** (`AuditEvent` + writer `emit()`), fire-and-forget: audit failures are logged, never raised to the caller (hard rule 11).
 - **Pub/Sub envelopes** are the frozen contracts in `contracts/pubsub/` — this service publishes `mapping.changed`, `ingress.resubmit`, and `csv.received` only.
 - **Logging:** dis-core structlog-style binding; every log line carries `tenant_id`, `trace_id` (where applicable), `service="dis-ui-server"`, `stage`.
-- **Tracing:** OpenTelemetry; `trace_id` minted only in `POST /v1/upload-sessions` and `POST /v1/quarantine/{trace_id}/resubmit` (both ingress-starting actions — see §8 and §4.3); never anywhere else.
+- **Tracing:** OpenTelemetry; `trace_id` minted only in `POST /v1/csv-uploads` (Slice 8, the synchronous form) and `POST /v1/quarantine/{trace_id}/resubmit` (both ingress-starting actions — see §8 and §4.3); never anywhere else.
 
 This service **never writes canonical tables** (D26). Its writes: `config.source_mappings` rows/status, the three Pub/Sub topics above, and GCS onboarding-staging objects. Every endpoint below states its side effects; none implies a canonical write.
 
@@ -111,13 +111,18 @@ Domain error → status mapping (FastAPI exception handlers; existing dis-core e
 
 | dis-core error | Status | Used by |
 |---|---|---|
-| `IdentityNotFoundError` | 404 | upload-sessions (unknown tenant/store) |
-| `IdentityServiceUnavailableError` | 503 + `Retry-After` | upload-sessions (circuit open) |
+| `IdentityNotFoundError` | 404 | (future identity-service consumers; the Slice 8 upload resolves via mirror reads instead) |
+| `IdentityServiceUnavailableError` | 503 + `Retry-After` | (future identity-service consumers) |
 | `RlsContextError` | 500 | any DB endpoint (misconfig) |
-| `StorageError` | 502 | sample upload, quarantine payload fetch, signed-URL issuance |
+| `StorageError` | 503 | csv-uploads GCS write (LIVE, Slice 8 — retryable dependency); sample upload, quarantine payload fetch |
 | `MappingConfigError` | 400 | mapping override/approve (invalid rules) |
 | `MappingInputError` | 422 | dry-run (sample violates engine contract) |
 | `ValidationSuiteError` | 500 | dry-run / validation-draft internals |
+| `PayloadTooLargeError` | 413 | csv-uploads (LIVE, Slice 8): mid-stream ceiling + Content-Length early check |
+| `UploadRequestError(part)` | 400 | csv-uploads (LIVE): malformed multipart; values never echoed |
+| `UploadStructureError(reason)` | 422 | csv-uploads (LIVE): tier-0 structural gate (D51) |
+| `StoreStateConflictError` | 409 | csv-uploads (LIVE): store resolved but not ACTIVE (after the 404 resolve) |
+| `EventPublishError(topic)` | 503 | csv-uploads (LIVE): publish failed after the GCS write (accepted orphan) |
 
 New error classes this service requires — **to be added to `libs/dis-core/errors.py`** (conventions: subclass `DisError`, keyword-only context fields):
 
@@ -129,8 +134,7 @@ New error classes this service requires — **to be added to `libs/dis-core/erro
 | `ResourceNotFoundError(resource, identifier, tenant_id)` | 404 | generic not-found for throw-style lookups (quarantine detail, notification id, sample id) |
 | `MappingStateConflictError(source_id, expected, actual)` | 409 | promote/reject with no staged version; concurrent transition |
 | `ResubmitChainCapError(trace_id, chain_depth)` | 409 | resubmit at/over cap 3 (architecture §6.5) |
-| `UploadSessionError(reason)` | 400 | invalid `source_id` / size on upload-session create |
-| `RateLimitedError(retry_after)` | 429 + `Retry-After` | upload-session rate cap (demand-list conventions: `RateLimited` RECOVERED) |
+| `RateLimitedError(retry_after)` | 429 + `Retry-After` | upload rate cap (demand-list conventions: `RateLimited` RECOVERED) — not yet built |
 | `DuckDbQueryError(message)` | 400 | invalid SQL/URI (message is surfaced; the UI renders it SQL-style) |
 | `DuckDbTimeoutError(cap_seconds)` | 504 | query exceeded the configured cap |
 
@@ -215,8 +219,7 @@ The BFF owns vocabulary translation; DB vocab never leaks to the UI.
 | 27 | GET | /v1/ops/fleet/summary | OpsFleet (`ops-fleet.ts`) | ops | n |
 | 28 | GET | /v1/ops/fleet/tenants | OpsFleet (`ops-fleet.ts`) | ops | n |
 | 29 | POST | /v1/ops/duckdb/query | OpsQuery (`ops-query.ts:executeQuery`) | ops | n (Blocker 3) |
-| 30 | POST | /v1/upload-sessions | **no UI call site yet** — D36 mandate | tenant | y (audit; GCS object created later by client PUT) |
-| 31 | POST | /v1/upload-sessions/{upload_session_id}/confirm | **no UI call site yet** — D54 publish point | tenant | y (`csv.received` publish) |
+| 30 | POST | /v1/csv-uploads | **BUILT (Slice 8)**; no UI call site yet — synchronous upload, supersedes the signed-URL 8.1/8.2 pair | tenant | y (GCS object write + `csv.received` publish + audit) |
 | — | GET | /healthz | (infra) | none | n |
 
 ---
@@ -562,22 +565,24 @@ class MeResponse(BaseModel):           # types.ts:10
     tenant_id: str | None
     tenant_name: str | None            # identity_mirror.tenants.name; null for ops
 
-# ---- upload sessions (D36/D54; no UI call site yet) ----------------------------
+# ---- csv uploads (Slice 8, synchronous; supersedes the D36 signed-URL design) ---
+# Request is multipart/form-data, not a JSON model: parts `file` (binary CSV,
+# 10 MB cap enforced MID-STREAM), `template_id` (UUID text), `store_code` (text).
+# Unknown parts are drained and ignored (tenant comes from the token ONLY).
 
-class UploadSessionCreate(BaseModel):
-    source_id: str = Field(pattern=r"^[a-z0-9_]+$", max_length=128)
-    filename: str | None = None        # display only; the object key is trace_id.csv
-    content_length: int = Field(gt=0, le=104_857_600)  # bytes; 100 MB cap PROVISIONAL
-
-class UploadSessionResult(BaseModel):  # README EPE: {upload_url, trace_id, expires_at}
-    upload_session_id: str             # ^us_[a-z0-9]{12}$ (csv.received contract)
-    upload_url: str                    # V4 signed PUT, 15-min expiry, single object
-    trace_id: str                      # UUIDv7, minted HERE (hard rule 4 origin point)
-    expires_at: str
-
-class UploadSessionConfirmResult(BaseModel):
-    upload_session_id: str
-    trace_id: str
+class CsvUploadResult(BaseModel):      # 201 — schemas/csv_uploads.py (live)
+    trace_id: UUID                     # UUIDv7, minted HERE (hard rule 4 origin point)
+    upload_id: str                     # ^us_[a-z0-9]{12}$ — deterministic per logical
+                                       # upload (csv.received upload_session_id; the
+                                       # worker's D58 idempotency component)
+    tenant_id: UUID                    # resolved internal UUIDs (D37/D52)
+    store_id: UUID
+    store_code: str
+    source_id: str                     # derived from the template lineage, never the request
+    template_id: UUID
+    gcs_uri: str                       # the D53 path the object was written to
+    row_count: int                     # tier-0 observed data rows (excl. header)
+    received_ts: datetime
     status: Literal["received"]
 ```
 
@@ -825,25 +830,17 @@ The UI's Mapping Versions screen is read-only ("New version (Phase 2)" button is
 - **Errors:** 401, 403; **400 `DuckDbQueryError`** — the envelope `message` is the DuckDB error text (the UI shows its own generic error state today; the message is for the error envelope/logs); **504 `DuckDbTimeoutError`** (configurable cap, README).
 - **Side effects:** none persisted. In-process DuckDB over GCS bronze objects via dis-storage-resolved URIs; read-only enforcement, row caps, and the `bronze` table-resolution model await Blocker 3.
 
-### Group 8 — Upload sessions (D36/D54 — backend-mandated; **no dis-ui call site yet**)
+### Group 8 — CSV upload (Slice 8, BUILT — synchronous; supersedes the signed-URL design; **no dis-ui call site yet**)
 
-The UI has no real-data-upload journey yet (`/upload` is onboarding samples, a different flow). These endpoints are in this contract because D36 places CSV-upload Phase 1 in dis-ui-server and the UI is its only intended initiator; the missing UI journey is recorded here as a gap for a future dis-ui slice, not a blocker.
+The UI has no real-data-upload journey yet (`/upload` is onboarding samples, a different flow); the missing UI journey is recorded here as a gap for a future dis-ui slice, not a blocker. **Supersession (register entry at the Slice 8 commit gate):** the original 8.1/8.2 (signed PUT URL + upload-session object + confirm) is REMOVED — with a 10 MB ceiling there is no large-file case for direct-to-GCS, so the bytes stream through the server in one request, which also closes D54's open "how does the server learn the PUT completed" fork (no detection exists to need). D36's *placement* (Phase 1 inside dis-ui-server) and D54's *trust model* (the worker reads identity off `csv.received` and resolves nothing) stand unchanged.
 
-#### 8.1 POST /v1/upload-sessions
-- **Mandate:** D36 (path verbatim); README `upload_session` EPE.
-- **Auth:** tenant (requires `tenant_id`; `dis:upload` role when role-gating lands).
-- **Request:** `UploadSessionCreate`.
-- **Response 201:** `UploadSessionResult` — the only place in this service (with 4.3) that **mints `trace_id`** (UUIDv7 via dis-core). `upload_url` is a V4 signed PUT scoped to exactly one object: `build_object_path(tenant_uuid, source_id, trace_id, (Y,M,D), "csv")` + `generate_upload_url(bucket, key, 900)` (15-min expiry, README). The GCS object does not exist until the client PUTs.
-- **Errors:** 401, 403; 400 `UploadSessionError` (invalid `source_id` / size); 404 `IdentityNotFoundError`; **429 `RateLimitedError`** + `Retry-After`; **503 `IdentityServiceUnavailableError`** + `Retry-After` (identity circuit open).
-- **Side effects:** resolves identity (tenant/store UUIDs + display codes) via the identity-service client (`clients/identity.py` — §9 open dependency; D37: translation happens here, once); creates the upload-session record (`us_`-prefixed id per the `csv.received` contract pattern `^us_[a-z0-9]{12}$`); emits audit (README names `UPLOAD_SESSION_CREATED` — Stage-enum gap, §9). **No Pub/Sub publish yet** (that is 8.2).
-
-#### 8.2 POST /v1/upload-sessions/{upload_session_id}/confirm
-- **Mandate:** D54 — "dis-ui-server publishes a `csv.received` event once the tenant's signed-PUT upload is confirmed saved in GCS"; the publish point lands in this service (D54 cross-refs, Slice 8). The confirm **trigger mechanism** (UI call after PUT vs. GCS notification) is not pinned by D54; this endpoint is the UI-callable form — if the slice that builds it chooses GCS-notification triggering instead, the publish semantics below are unchanged.
-- **Auth:** tenant (same tenant that created the session).
-- **Request:** empty body.
-- **Response 200:** `UploadSessionConfirmResult`.
-- **Errors:** 401, 403, 404 (unknown/expired session); 409 (already confirmed — idempotent replay returns the same 200 instead; a *conflicting* state returns `MappingStateConflictError`); 502 `StorageError` (object absent in GCS — the PUT never landed).
-- **Side effects:** verifies the object exists via dis-storage; publishes **`csv.received`** (frozen contract: `trace_id` minted at 8.1, tenant/store UUIDs + codes resolved at 8.1, `upload_session_id`, `gcs_uri`, `received_ts`). Phase 2 (`csv-ingest-worker`) takes over from there (D54: the worker trusts the event, resolves no identity). Audit fire-and-forget.
+#### 8.1 POST /v1/csv-uploads  (live: `handlers/csv_uploads.py`)
+- **Mandate:** D36 (placement) + the Slice 8 supersession; D51/D52 (tier-0 here); D71 (`template_id` carried end to end, consumer unamended until Slice 8a).
+- **Auth:** tenant (requires `tenant_id`; `user_id` from `sub`). Tenant from the TOKEN only; a smuggled body `tenant_id` is drained and ignored (test-pinned).
+- **Request:** `multipart/form-data` — `file` (binary CSV), `template_id` (UUID), `store_code` (text). **10 MB cap enforced mid-stream** (`upload_stream.py`: the Content-Length early-reject is the spoofable first check; the streaming byte counter is the real boundary — the body is never fully read past the ceiling).
+- **Response 201:** `CsvUploadResult` — the only place in this service (with 4.3) that **mints `trace_id`** (UUIDv7 via dis-core, bound to the request context so every error envelope carries it).
+- **Errors:** 401, 403; **413 `PayloadTooLargeError`** (mid-stream or declared); **400 `UploadRequestError`** (not multipart / missing or repeated part / malformed `template_id`; values never echoed); **422 `UploadStructureError(reason)`** (tier-0: `empty_file` / `not_utf8` / `not_csv` / `below_min_rows` — no GCS write, no publish); **404 `ResourceNotFoundError`** (unknown/cross-tenant `template_id` or `store_code` — RLS/in-query scoping; no existence oracle); **409 `MappingStateConflictError`** (template has no ACTIVE version); **409 `StoreStateConflictError`** (store resolved but not ACTIVE — the gate runs AFTER the 404 resolve, so a cross-tenant code stays 404); **503 `StorageError`** (GCS write failed; nothing published); **503 `EventPublishError`** (publish failed AFTER the object was written — the object is an accepted orphan, deliberately not deleted; a retry of the same bytes converges via the deterministic `upload_id`).
+- **Side effects (order is load-bearing):** stream+limit → tier-0 (D51) → template resolve via `rls_session` (`resolve_active_template`; the ACTIVE row supplies `source_id`) → store resolve via the in-query mirror chokepoint (`resolve_store_by_code`) → ACTIVE-only store gate → GCS write at `build_object_path(tenant_uuid, source_id, trace_id, (Y,M,D), "csv")` → **`csv.received` publish** (frozen contract incl. required `template_id`; `upload_session_id` = deterministic `us_` + 12-hex of SHA-256 over `tenant|store|template|payload_sha256`, so client retries collapse in the worker's D58 dedup) → audit (fire-and-forget, `Stage.RECEIVED` + `event_data.phase="csv_upload_phase1"`; the dedicated-stage gap remains §9/D42). Phase 2 (`csv-ingest-worker`) takes over from the publish (D54). No bronze write here; no upload-session record exists anymore.
 
 ---
 
@@ -853,15 +850,15 @@ What this service needs from elsewhere, and how each is stubbed until it lands:
 
 | Dependency | Needed by | Status / stub |
 |---|---|---|
-| **identity-service** (`clients/identity.py`) | 8.1 (resolve tenant/store UUID + codes at upload Phase 1, D37) | Service directory exists with **no src**. Stub: a client interface returning seeded mirror UUIDs in dev; circuit-open path returns `IdentityServiceUnavailableError`. |
+| **identity-service** (`clients/identity.py`) | future identity consumers (13b). **No longer 8.1**: the Slice 8 upload resolves the store via the `identity_mirror` in-query chokepoint (`repos/stores.py`) per the slice contract — note the D37-wording tension, surfaced at the Slice 8 plan review | Service directory exists with **no src**. Stub: a client interface returning seeded mirror UUIDs in dev; circuit-open path returns `IdentityServiceUnavailableError`. |
 | **Customer Master profile call** (`clients/customer_master.py`) | 1.1 `email`/`name`; 3.1 `created_by` display names | OPEN (D56, Blocker 5). Stub: deterministic placeholders from `sub` / UUID string for `created_by`, marked in code. |
 | **Customer Master JWKS** | §2.1 auth | OPEN (D25/D56). Dev stub: HMAC HS256 verifier (§2.1), single-seam swap. |
 | **dis-storage onboarding-staging path builder** | 2.1 sample storage | Does not exist (`paths.py` has only the canonical bronze path; hard rule 9 forbids improvising paths). Required lib extension: `build_onboarding_sample_path(tenant_uuid, sample_id) -> str` + parse counterpart, added to `libs/dis-storage` in the slice that builds 2.1. |
 | **dis-core error classes** | §2.3 table | To be added to `libs/dis-core/errors.py` in this service's first implementation slice (same-commit-as-use). |
-| **dis-audit `Stage` vocabulary** | 8.1 `UPLOAD_SESSION_CREATED`; config-change audit on §3/§5 writes | Current `Stage` enum covers pipeline stages only. Extension (or an `event_data` convention) needed; coordinate with D42/D45 audit follow-ups. |
+| **dis-audit `Stage` vocabulary** | 8.1 (a dedicated upload stage); config-change audit on §3/§5 writes | Current `Stage` enum covers pipeline stages only. Slice 8 ships the documented interim: `Stage.RECEIVED` + `event_data.phase="csv_upload_phase1"`, disambiguated from the worker's RECEIVED by `service_name`. Extension still owed; coordinate with D42/D45 audit follow-ups. |
 | **dis-rls platform-scope read path** | 4.1/4.2/5.1/7.x ops cross-tenant reads over RLS-forced tables | `rls_session(engine, tenant_id)` is per-tenant today. Needs a platform variant inside `libs/dis-rls` (never raw SQLAlchemy). |
 | **Cloud SQL read replica config** | dashboard/fleet/shadow reads (README `repos/canonical_replica.py`) | Local dev: same instance, port 5433. |
-| **Pub/Sub publisher setup** | `mapping.changed` (2.5/2.8/2.9), `ingress.resubmit` (4.3), `csv.received` (8.2) | Emulator on `localhost:8085`; topics created by `make run-local`. Envelopes are the frozen `contracts/pubsub/*.schema.json`. |
+| **Pub/Sub publisher setup** | `mapping.changed` (2.5/2.8/2.9), `ingress.resubmit` (4.3), `csv.received` (8.1 — **LIVE**, Slice 8: `publisher.py`, emulator-guarded) | Emulator on `localhost:8085`; topics created by `make run-local`. Envelopes are the frozen `contracts/pubsub/*.schema.json`. |
 | **Notifications store + emitters** | §6 | **Blocker 1** — undecided. |
 | **Source registry** | §1.3–1.7, source display names in 4.x/§1.2 | **Blocker 2** — undecided. |
 | **Resubmit lineage store** | 4.2/4.3 chain data | **Blocker 4** — undecided. |

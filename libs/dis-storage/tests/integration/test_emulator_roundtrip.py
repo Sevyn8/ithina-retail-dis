@@ -68,11 +68,14 @@ def test_wrapper_upload_download_roundtrip(emulator_client: StorageClient) -> No
 @pytest.mark.xfail(
     reason="PUT/GET *through* a V4 signed URL is deferred to real GCS: fake-gcs-server "
     "does not reliably honour signed-URL signatures. Issuance correctness and "
-    "wrapper object access (the two checks above/in unit tests) still hold; "
-    "real-GCS signature acceptance is first exercised in Slice 8.",
+    "wrapper object access (the two checks above/in unit tests) still hold. "
+    "NOTE: Slice 8 (the originally planned first consumer) SUPERSEDED the "
+    "signed-URL upload mechanic with synchronous stream-through, so signed URLs "
+    "currently have NO consumer — this stays deferred until a slice actually "
+    "issues one against real GCS.",
     strict=False,
 )
 def test_signed_url_roundtrip_deferred() -> None:
     # Intentionally not implemented against the emulator; named so the deferral is
     # explicit rather than a silent gap.
-    raise AssertionError("signed-URL round-trip deferred to real GCS (Slice 8)")
+    raise AssertionError("signed-URL round-trip deferred to real GCS (no live consumer)")

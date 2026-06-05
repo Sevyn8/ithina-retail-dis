@@ -10,6 +10,7 @@
     "tenant_id",
     "store_id",
     "source_id",
+    "template_id",
     "bronze_ref",
     "gcs_uri",
     "received_ts"
@@ -46,6 +47,11 @@
     "source_id": {
       "type": "string",
       "description": "Source registration identifier (POS type, ERP type, etc.)."
+    },
+    "template_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The mapping template (config.source_mappings template lineage, D68) this payload was uploaded against. Passed through verbatim from csv.received by the worker and persisted to bronze for replay lineage. NOT consumed for mapping selection until Slice 8a (D71: the streaming consumer parses but ignores it; hard gate, no second ACTIVE template per source before 8a)."
     },
     "bronze_ref": {
       "type": "string",
