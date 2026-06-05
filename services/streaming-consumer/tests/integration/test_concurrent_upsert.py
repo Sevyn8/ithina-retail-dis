@@ -49,15 +49,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import text
-from streaming_consumer.envelope import IngressReadyEvent
-from streaming_consumer.pipeline.mapping import LoadedMapping
-from streaming_consumer.sinks.canonical import _HotGroup, _upsert_hot  # noqa: PLC2701 - white-box
 
 from dis_canonical import StoreSkuSaleEvent
 from dis_core.ids import new_uuid7
 from dis_mapping import SourceMapping
 from dis_rls import create_rls_engine, rls_session
 from dis_testing.fixtures import PRIMARY_STORE, PRIMARY_TENANT
+from streaming_consumer.envelope import IngressReadyEvent
+from streaming_consumer.pipeline.mapping import LoadedMapping
+from streaming_consumer.sinks.canonical import _HotGroup, _upsert_hot  # noqa: PLC2701 - white-box
 
 from .conftest import Cleanup
 

@@ -38,10 +38,10 @@ from dis_storage import build_object_path
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
-    from streaming_consumer.envelope import IngressReadyEvent
-    from streaming_consumer.orchestrate import ConsumerPipeline
 
     from dis_storage.client import StorageClient
+    from streaming_consumer.envelope import IngressReadyEvent
+    from streaming_consumer.orchestrate import ConsumerPipeline
 
 
 class StackRequiredError(RuntimeError):
@@ -249,10 +249,9 @@ def pipeline(
     consumer_mappings: dict[str, int],
 ) -> ConsumerPipeline:
     """A fully wired consumer pipeline against the live stack."""
+    from dis_audit import AuditBackend, select_writer
     from streaming_consumer.orchestrate import ConsumerPipeline
     from streaming_consumer.sinks.audit import ConsumerAudit
-
-    from dis_audit import AuditBackend, select_writer
 
     return ConsumerPipeline(
         engine=engine,
@@ -290,9 +289,8 @@ def seed_chunk(
     the malformed-producer construction the canonical no-orphan FK (D39) is the
     last line of defense against.
     """
-    from streaming_consumer.envelope import IngressReadyEvent
-
     from dis_testing.fixtures import PRIMARY_STORE, PRIMARY_TENANT
+    from streaming_consumer.envelope import IngressReadyEvent
 
     tenant = tenant_uuid or PRIMARY_TENANT.uuid
     store = store_uuid or PRIMARY_STORE.uuid
@@ -418,6 +416,7 @@ def drain_subscription(project_id: str) -> int:
     stand-in for Slice 11's quarantine drain.
     """
     from google.cloud import pubsub_v1
+
     from streaming_consumer.config import INGRESS_READY_SUBSCRIPTION
 
     client = pubsub_v1.SubscriberClient()

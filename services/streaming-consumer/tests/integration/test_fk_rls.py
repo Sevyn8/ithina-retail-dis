@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import text
-from streaming_consumer.orchestrate import ConsumerPipeline
 
 from dis_core.ids import new_uuid7
 from dis_rls import rls_session
 from dis_testing.fixtures import TENANTS
+from streaming_consumer.orchestrate import ConsumerPipeline
 
 from .conftest import CHANGE_SOURCE_ID, Cleanup, change_csv, seed_chunk, ts
 

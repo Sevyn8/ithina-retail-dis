@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import text
-from streaming_consumer.orchestrate import ConsumerPipeline
-from streaming_consumer.sinks.audit import ConsumerAudit
 
 from dis_audit import AuditEvent
 from dis_core.ids import new_uuid7
+from streaming_consumer.orchestrate import ConsumerPipeline
+from streaming_consumer.sinks.audit import ConsumerAudit
 
 from .conftest import SALE_SOURCE_ID, Cleanup, sale_csv, seed_chunk, seed_hot_row, ts
 

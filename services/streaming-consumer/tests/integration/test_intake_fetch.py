@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import text
-from streaming_consumer.clients.pubsub import Subscriber
-from streaming_consumer.config import INGRESS_READY_TOPIC
-from streaming_consumer.orchestrate import ConsumerPipeline
 
 from dis_core.errors import DisError
 from dis_core.ids import new_uuid7
 from dis_testing.fakes.pubsub import EmulatorPublisher
+from streaming_consumer.clients.pubsub import Subscriber
+from streaming_consumer.config import INGRESS_READY_TOPIC
+from streaming_consumer.orchestrate import ConsumerPipeline
 
 from .conftest import (
     SALE_SOURCE_ID,

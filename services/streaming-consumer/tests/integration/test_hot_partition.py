@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import text
+
 from streaming_consumer.pipeline.mapping import (
     HOT_CHECK_IMPLICATIONS,
     HOT_REQUIRED_FROM_PROJECTION,

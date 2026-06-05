@@ -11,6 +11,10 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+
+from dis_canonical import StoreSkuChangeEvent, StoreSkuSaleEvent
+from dis_core.errors import MappingConfigError
+from dis_mapping import SourceMapping
 from streaming_consumer.pipeline.mapping import route_target_model
 from streaming_consumer.pipeline.normalize import (
     EventRow,
@@ -18,10 +22,6 @@ from streaming_consumer.pipeline.normalize import (
     derive_source_event_id,
 )
 from streaming_consumer.sinks.canonical import _group_hot  # noqa: PLC2701 - white-box unit
-
-from dis_canonical import StoreSkuChangeEvent, StoreSkuSaleEvent
-from dis_core.errors import MappingConfigError
-from dis_mapping import SourceMapping
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "mappings"
 _BRONZE_REF = UUID("019e9508-0000-7000-8000-00000000000b")

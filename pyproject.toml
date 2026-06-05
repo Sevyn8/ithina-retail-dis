@@ -120,6 +120,7 @@ known-first-party = [
   "dis_validation",
   "mirror_sync_consumer",
   "csv_ingest_worker",
+  "streaming_consumer",
   "dis_ui_server",
 ]
 

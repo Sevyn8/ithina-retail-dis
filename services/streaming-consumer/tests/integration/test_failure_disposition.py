@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import text
+
+from dis_testing.fakes.pubsub import EmulatorPublisher
 from streaming_consumer.clients.pubsub import Subscriber, process_message
 from streaming_consumer.config import INGRESS_READY_TOPIC
 from streaming_consumer.orchestrate import ConsumerPipeline
-
-from dis_testing.fakes.pubsub import EmulatorPublisher
 
 from .conftest import SALE_SOURCE_ID, Cleanup, drain_subscription, seed_chunk
 

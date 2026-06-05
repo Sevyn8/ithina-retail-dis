@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import text
-from streaming_consumer.orchestrate import ConsumerPipeline
 
 from dis_core.ids import new_uuid7
 from dis_testing.fixtures import PRIMARY_TENANT
+from streaming_consumer.orchestrate import ConsumerPipeline
 
 from .conftest import SALE_SOURCE_ID, Cleanup, sale_csv, seed_chunk, seed_hot_row, ts
 

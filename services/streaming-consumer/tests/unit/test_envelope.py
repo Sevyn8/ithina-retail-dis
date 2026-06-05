@@ -11,9 +11,9 @@ import json
 from pathlib import Path
 
 import pytest
-from streaming_consumer.envelope import IngressReadyEvent, parse_ingress_ready
 
 from dis_core.errors import EventContractError
+from streaming_consumer.envelope import IngressReadyEvent, parse_ingress_ready
 
 # services/streaming-consumer/tests/unit/ -> repo root / contracts/pubsub.
 _CONTRACTS = Path(__file__).resolve().parents[3].parent / "contracts" / "pubsub"

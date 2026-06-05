@@ -9,14 +9,14 @@ import re
 from pathlib import Path
 
 import pytest
+
+from dis_core.errors import DisError
 from streaming_consumer.config import (
     BATCH_SIZE_ROW_PAIRS,
     INGRESS_READY_SUBSCRIPTION,
     INGRESS_READY_TOPIC,
     ConsumerConfig,
 )
-
-from dis_core.errors import DisError
 
 _REPO = Path(__file__).resolve().parents[3].parent
 _SRC = Path(__file__).resolve().parents[2] / "src" / "streaming_consumer"
