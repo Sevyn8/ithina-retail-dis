@@ -1,5 +1,4 @@
 import { screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
 import * as sources from '../lib/dis-ui-server/sources'
@@ -70,7 +69,7 @@ describe('SourcesIndex', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/could not load sources/i)
   })
 
-  it('offers Create and per-row Edit/Deprecate actions, and no hard-delete control', async () => {
+  it('offers Create and per-row Edit, with deprecate moved out (T6) and no hard-delete control', async () => {
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
     await screen.findByRole('heading', { name: 'Manage sources' })
     // R7: the connector picker is the add-source front door
@@ -79,18 +78,10 @@ describe('SourcesIndex', () => {
       'href',
       '/sources/manual_csv_upload/edit',
     )
-    expect(screen.getByRole('button', { name: 'Deprecate' })).toBeInTheDocument()
+    // T6: Deprecate is no longer here; it lives in SourceEdit (the per-source "Manage source").
+    expect(screen.queryByRole('button', { name: 'Deprecate' })).not.toBeInTheDocument()
     // FM1: there is no hard-delete control anywhere
     expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /delete/i })).not.toBeInTheDocument()
-  })
-
-  it('deprecates a source via the confirm dialog (soft transition)', async () => {
-    const user = userEvent.setup()
-    renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
-    await screen.findByRole('heading', { name: 'Manage sources' })
-    await user.click(screen.getByRole('button', { name: 'Deprecate' }))
-    await user.click(await screen.findByRole('button', { name: 'Confirm deprecate' }))
-    expect(await screen.findByText('deprecated')).toBeInTheDocument()
   })
 })

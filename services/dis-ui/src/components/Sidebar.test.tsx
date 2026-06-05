@@ -84,8 +84,22 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Ingest Data' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Create Template' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Upload' })).not.toBeInTheDocument()
-    // The old "Sources" top-level nav item is gone (source CRUD is reached from Ingest Data).
+    // The old "Sources"/"Manage Sources" top-level nav items are gone (source management is
+    // reached from Ingest Data's per-source "Manage source").
     expect(screen.queryByRole('link', { name: 'Sources' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Manage Sources' })).not.toBeInTheDocument()
+  })
+
+  it('renders an "Add Source" item routing to the connector picker, below "Create Template"', () => {
+    renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    const addSource = screen.getByRole('link', { name: 'Add Source' })
+    expect(addSource).toHaveAttribute('href', '/connect')
+    // ordered immediately below Create Template
+    const links = screen.getAllByRole('link')
+    const createIdx = links.findIndex((l) => l.textContent === 'Create Template')
+    const addIdx = links.findIndex((l) => l.textContent === 'Add Source')
+    expect(createIdx).toBeGreaterThanOrEqual(0)
+    expect(addIdx).toBe(createIdx + 1)
   })
 
   it('collapses and expands', async () => {

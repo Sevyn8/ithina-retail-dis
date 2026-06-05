@@ -42,4 +42,23 @@ describe('SourceEdit', () => {
     expect(await screen.findByRole('heading', { name: 'Manage sources' })).toBeInTheDocument()
     expect(screen.getByText('Renamed CSV')).toBeInTheDocument()
   })
+
+  it('offers the Deprecate action here (T6: per-source manage home, not the list)', async () => {
+    renderAt('/sources/manual_csv_upload/edit')
+    expect(await screen.findByRole('heading', { name: 'Edit source' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Deprecate source' })).toBeInTheDocument()
+    // FM1: soft transition only, no hard delete
+    expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument()
+  })
+
+  it('deprecates the source via the confirm dialog (soft transition), then lands on the list', async () => {
+    const user = userEvent.setup()
+    renderAt('/sources/manual_csv_upload/edit')
+    await screen.findByRole('heading', { name: 'Edit source' })
+    await user.click(screen.getByRole('button', { name: 'Deprecate source' }))
+    await user.click(await screen.findByRole('button', { name: 'Confirm deprecate' }))
+    // navigates back to the sources list, where the source now reads deprecated
+    expect(await screen.findByRole('heading', { name: 'Manage sources' })).toBeInTheDocument()
+    expect(await screen.findByText('deprecated')).toBeInTheDocument()
+  })
 })

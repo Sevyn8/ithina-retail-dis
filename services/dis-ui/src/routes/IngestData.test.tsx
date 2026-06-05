@@ -18,21 +18,22 @@ function render(dark = false) {
   })
 }
 
-// T5: Ingest Data is a FLAT list of all templates across sources, each row showing its source,
-// with a per-row ingest action gated on an active version. Source CRUD stays reachable.
-describe('IngestData (flat template list)', () => {
-  it('lists templates across more than one source, each with its source context', async () => {
+// T6: Ingest Data lists all templates across sources GROUPED by source. Each source is a group
+// heading (context) hosting a once-per-source "Manage source" link into SourceEdit; each
+// template row keeps its View + active-gated Ingest action.
+describe('IngestData (templates grouped by source)', () => {
+  it('groups templates under their source, each source shown once for context', async () => {
     render()
     await screen.findByRole('heading', { name: 'Ingest Data' })
-    // two sources represented (manual_csv_upload + square_pos)
-    expect(screen.getAllByText('manual_csv_upload').length).toBeGreaterThan(0)
-    expect(screen.getByText('square_pos')).toBeInTheDocument()
+    // two sources represented (manual_csv_upload + square_pos), each as a group heading
+    expect(screen.getByRole('heading', { name: 'manual_csv_upload' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'square_pos' })).toBeInTheDocument()
     // template names from each source
     expect(screen.getByText('Sales')).toBeInTheDocument()
     expect(screen.getByText('Orders')).toBeInTheDocument()
   })
 
-  it('offers a per-row ingest action, gated by active version', async () => {
+  it('offers a per-template ingest action, gated by active version', async () => {
     render()
     await screen.findByRole('heading', { name: 'Ingest Data' })
     // active templates (Sales, Inventory, Orders) -> enabled links; Pricing (no active) -> disabled
@@ -42,11 +43,17 @@ describe('IngestData (flat template list)', () => {
     expect(disabled.getAttribute('title')).toMatch(/no active version/i)
   })
 
-  it('keeps source management reachable via a "Manage sources" link to /sources', async () => {
+  it('offers a once-per-source "Manage source" link into SourceEdit (edit + deprecate)', async () => {
     render()
     await screen.findByRole('heading', { name: 'Ingest Data' })
-    const manage = screen.getByRole('link', { name: 'Manage sources' })
-    expect(manage).toHaveAttribute('href', '/sources')
+    // one Manage source link per source (two sources in the fixture), not per template row
+    const manage = screen.getAllByRole('link', { name: 'Manage source' })
+    expect(manage).toHaveLength(2)
+    const hrefs = manage.map((link) => link.getAttribute('href'))
+    expect(hrefs).toContain('/sources/manual_csv_upload/edit')
+    expect(hrefs).toContain('/sources/square_pos/edit')
+    // the old flat-list "Manage sources" header link is gone
+    expect(screen.queryByRole('link', { name: 'Manage sources' })).not.toBeInTheDocument()
   })
 
   it('links each row to the template detail', async () => {
