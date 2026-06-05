@@ -28,7 +28,7 @@
     "tenant_id": {
       "type": "string",
       "format": "uuid",
-      "description": "Internal tenant UUID, identical to Customer Master core.tenants.id and identity_mirror.tenants.tenant_id. Load-bearing identity. Used as the Pub/Sub ordering key."
+      "description": "Internal tenant UUID, identical to Customer Master core.tenants.id and identity_mirror.tenants.tenant_id. Load-bearing identity."
     },
     "store_id": {
       "type": "string",
