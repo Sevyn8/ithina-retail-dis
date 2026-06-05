@@ -127,7 +127,9 @@ Phase 1 services depend on a set of shared libraries. Each lib slice builds the 
 
 ### Streaming pipeline
 
-- `TODO` Slice 10: Streaming consumer happy path. Reads `ingress.ready`, fetches bronze chunk from GCS, applies a stub mapping, validates with Pandera, writes the canonical hot table plus the event table in a single transaction, emits audit events. FK to `identity_mirror` enforced; RLS enforcement verified.
+- `DONE` Slice 10: Streaming consumer happy path. Reads `ingress.ready`, fetches bronze chunk from GCS, applies a stub mapping, validates with Pandera, writes the canonical hot table plus the event table in a single transaction, emits audit events. FK to `identity_mirror` enforced; RLS enforcement verified.
+Deferred at Slice 10, reactive-only by design: the named-custom-transform escape hatch (D61) and proactive schema-drift monitoring (D62). Triggers recorded in decisions.md.
+
 - `TODO` Slice 11: Quarantine path. Failing rows from the streaming consumer flow to the `quarantine` topic; the drainer service writes them to Cloud SQL `quarantine.*` tables; rows are visible for replay/inspection.
 - `TODO` Slice 12: Replay tooling. `tools/replay/` CLI lets an ops operator replay a bronze chunk; the replay gets a new `trace_id` linked to the original as `parent_trace_id`; audit records the chain. The dis-ui-server replay endpoint (UI-driven resubmit) is built in Slice 13 as a thin wrapper over this tooling.
 
