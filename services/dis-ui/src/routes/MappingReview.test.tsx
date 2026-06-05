@@ -44,8 +44,10 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     const select = screen.getByLabelText('Canonical for pos_terminal')
-    await user.selectOptions(select, 'store_id')
-    expect((select as HTMLSelectElement).value).toBe('store_id')
+    // Targets are real catalog keys now (T1; store_id is not an event target). Selecting
+    // updates the draft exactly as before - only the option SOURCE changed.
+    await user.selectOptions(select, 'quantity')
+    expect((select as HTMLSelectElement).value).toBe('quantity')
     await user.selectOptions(select, 'unit_sale_price')
     expect((select as HTMLSelectElement).value).toBe('unit_sale_price')
   })
@@ -78,7 +80,7 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
   it('shows the assistant reasoning on low-confidence columns', async () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    expect(screen.getByText(/Assistant:.*terminal identifiers/)).toBeInTheDocument()
+    expect(screen.getByText(/Assistant:.*terminal or register/)).toBeInTheDocument()
     expect(screen.getByText(/Assistant:.*day-month-year/)).toBeInTheDocument()
   })
 
@@ -86,9 +88,9 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     const select = screen.getByLabelText('Canonical for pos_terminal')
-    // the alternative target is offered (assistant's alternatives group), e.g. transaction_id at 30%
+    // the alternative target is offered (assistant's alternatives group), e.g. sku_variant at 20%
     expect(within(select).getByRole('group', { name: "Assistant's alternatives" })).toBeInTheDocument()
-    expect(within(select).getByRole('option', { name: /transaction_id \(30%\)/ })).toBeInTheDocument()
+    expect(within(select).getByRole('option', { name: /sku_variant \(20%\)/ })).toBeInTheDocument()
   })
 
   it('degrades gracefully for a column with no reasoning/alternatives', async () => {
@@ -106,8 +108,28 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     const select = screen.getByLabelText('Canonical for pos_terminal')
-    await user.selectOptions(select, 'transaction_id')
-    expect((select as HTMLSelectElement).value).toBe('transaction_id')
+    await user.selectOptions(select, 'sku_variant')
+    expect((select as HTMLSelectElement).value).toBe('sku_variant')
+  })
+
+  // T1: canonical targets now come from the real template-mapping-fields catalog.
+  it('offers canonical targets from the catalog, section-grouped, not the legacy list', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    const select = screen.getByLabelText('Canonical for item_code')
+    // section grouping from the catalog
+    expect(within(select).getByRole('group', { name: 'Sale event' })).toBeInTheDocument()
+    expect(within(select).getByRole('group', { name: 'Change event' })).toBeInTheDocument()
+    // real catalog keys are offered (by value); a legacy non-event name is NOT
+    const values = within(select)
+      .getAllByRole('option')
+      .map((o) => o.getAttribute('value'))
+    expect(values).toContain('sku_id')
+    expect(values).toContain('quantity')
+    expect(values).toContain('attribute_name') // a change_event-only key
+    expect(values).not.toContain('store_id') // identity-resolved; not an event target
+    // mandatory marker rendered on a required field (SKU appears once per section)
+    expect(within(select).getAllByRole('option', { name: /SKU \* \(text\)/ }).length).toBeGreaterThan(0)
   })
 
   it('renders the demo-data banner', async () => {

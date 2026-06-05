@@ -61,28 +61,11 @@ export type DryRunResult = { rows: Record<string, unknown>[] }
 // 2.5 POST .../approve.
 export type ApproveResult = { source_id: string; mapping_version: number; status: 'staged' }
 
-// Canonical column targets offered by the Mapping Review override dropdown. These
-// are REAL field names mirrored from the dis-canonical models (slice 03):
-// sale_events (sku_id, store_id, quantity, unit_sale_price, unit_retail_price,
-// source_sale_timestamp, transaction_id, currency, tax_treatment) and
-// store_sku_current_position (current_retail_price, product_name,
-// product_description). This is a curated Phase-1 subset, NOT the full canonical
-// vocabulary (50+ fields across four entities); the subset choice is provisional,
-// the names are authoritative.
-export const CANONICAL_COLUMNS = [
-  'sku_id',
-  'store_id',
-  'quantity',
-  'unit_sale_price',
-  'unit_retail_price',
-  'current_retail_price',
-  'source_sale_timestamp',
-  'transaction_id',
-  'product_name',
-  'product_description',
-  'currency',
-  'tax_treatment',
-] as const
+// Canonical mapping targets are no longer a hardcoded list here: the Mapping Review
+// dropdown reads them from the real template-mapping-fields catalog (T1; see
+// lib/dis-ui-server/mapping-fields.ts). Fixture `proposed_canonical`/`alternatives.target`
+// below are real catalog keys (sale_event / change_event columns); store is
+// identity-resolved (no event target), so a store/terminal-style column has none.
 
 const KNOWN_SAMPLE_ID = 'smp_acme0001'
 
@@ -128,12 +111,12 @@ const SAMPLE_FIXTURES: Record<string, SampleAnalysis> = {
         inferred_type: 'string',
         sample_values: ['T-2A'],
         null_pct: 0,
-        proposed_canonical: 'store_id',
+        proposed_canonical: 'transaction_id',
         confidence: 0.41,
         transforms: [],
         reasoning:
-          'Values look like terminal identifiers (e.g. T-2A), likely a store or register code.',
-        alternatives: [{ target: 'transaction_id', confidence: 0.3 }],
+          'Values look like terminal or register identifiers; the canonical target is uncertain (store binding is identity-resolved, not a mapped field).',
+        alternatives: [{ target: 'sku_variant', confidence: 0.2 }],
       },
     ],
   },

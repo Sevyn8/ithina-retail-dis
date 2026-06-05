@@ -13,13 +13,14 @@ import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
-  CANONICAL_COLUMNS,
   approveSample,
   dryRunSample,
   patchSampleMapping,
   useSample,
 } from '../lib/dis-ui-server/onboarding'
 import type { ApproveResult, DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
+import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
+import type { FieldSection, TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
 import { CSV_JOURNEY_STEPS, CSV_JOURNEY_STEP_INDEX } from './csv-journey'
 
 type Override = { proposed_canonical: string; authoritative: boolean }
@@ -52,12 +53,42 @@ export function MappingReview() {
   const { sampleId } = useParams()
   const navigate = useNavigate()
   const sample = useSample(sampleId ?? null)
+  // Canonical mapping targets now come from the real template-mapping-fields catalog
+  // (T1), not a hardcoded list. Section-grouped, with mandatory/datatype metadata.
+  const fields = useTemplateMappingFields()
 
   const [step, setStep] = useState<JourneyStep>('review')
   const [overrides, setOverrides] = useState<Record<string, Override>>({})
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
   const [approved, setApproved] = useState<ApproveResult | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+
+  // The canonical-target options, section-grouped from the catalog. Each option's value is
+  // the canonical key, so selecting one is the same setOverride path as before (behavior
+  // unchanged); the display carries the friendly name, a mandatory marker, and the datatype.
+  const SECTION_LABEL: Record<FieldSection, string> = {
+    sale_event: 'Sale event',
+    change_event: 'Change event',
+  }
+  function renderCanonicalGroups() {
+    const catalog: TemplateMappingField[] = fields.data ?? []
+    return (['sale_event', 'change_event'] as FieldSection[]).map((section) => {
+      const inSection = catalog.filter((field) => field.section === section)
+      if (inSection.length === 0) {
+        return null
+      }
+      return (
+        <optgroup key={section} label={SECTION_LABEL[section]}>
+          {inSection.map((field) => (
+            <option key={`${section}-${field.key}`} value={field.key}>
+              {field.display_name}
+              {field.mandatory ? ' *' : ''} ({field.datatype})
+            </option>
+          ))}
+        </optgroup>
+      )
+    })
+  }
 
   if (sampleId === undefined) {
     return <EmptyState title="No sample" message="No sample id in the URL." />
@@ -153,21 +184,7 @@ export function MappingReview() {
                 ))}
               </optgroup>
             ) : null}
-            {column.alternatives && column.alternatives.length > 0 ? (
-              <optgroup label="All canonical columns">
-                {CANONICAL_COLUMNS.map((canonical) => (
-                  <option key={canonical} value={canonical}>
-                    {canonical}
-                  </option>
-                ))}
-              </optgroup>
-            ) : (
-              CANONICAL_COLUMNS.map((canonical) => (
-                <option key={canonical} value={canonical}>
-                  {canonical}
-                </option>
-              ))
-            )}
+            {renderCanonicalGroups()}
           </Select>
         </TableCell>
         <TableCell>
