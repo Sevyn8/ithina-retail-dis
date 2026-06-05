@@ -1,0 +1,87 @@
+# Cloud Build: build + push all DIS service images to Artifact Registry.
+#
+# Run from the repo root:
+#   gcloud builds submit --config docker/cloudbuild.yaml \
+#     --substitutions=_REGION=asia-south1,_REPO=dis-images,_API_BASE=https://dis-ui-server-XXXX.run.app .
+#
+# Images are tagged with the build's short commit SHA ($SHORT_SHA) and :latest.
+# dis-ui-server uses its existing services/dis-ui-server/Dockerfile.
+# The 3 workers + the frontend use the Dockerfiles in docker/.
+
+substitutions:
+  _REGION: "asia-south1"
+  _REPO: "dis-images"
+  _API_BASE: "" # frontend VITE_API_BASE; set to the dis-ui-server URL
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # dis-ui-server (existing Dockerfile in the service dir)
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/dis-ui-server/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/dis-ui-server:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/dis-ui-server:latest
+      - .
+
+  # csv-ingest-worker
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - docker/csv-ingest-worker.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/csv-ingest-worker:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/csv-ingest-worker:latest
+      - .
+
+  # streaming-consumer
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - docker/streaming-consumer.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/streaming-consumer:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/streaming-consumer:latest
+      - .
+
+  # mirror-sync-consumer
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - docker/mirror-sync-consumer.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/mirror-sync-consumer:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/mirror-sync-consumer:latest
+      - .
+
+  # dis-ui frontend (build context is the frontend package dir)
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - docker/dis-ui.Dockerfile
+      - --build-arg
+      - VITE_API_BASE=${_API_BASE}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/dis-ui:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/dis-ui:latest
+      - services/dis-ui
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/dis-ui-server
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/csv-ingest-worker
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/streaming-consumer
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/mirror-sync-consumer
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/dis-ui
