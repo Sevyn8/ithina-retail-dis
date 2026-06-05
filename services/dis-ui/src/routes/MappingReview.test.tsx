@@ -19,6 +19,15 @@ function renderReview(sampleId: string) {
   })
 }
 
+// T3: the format rules are mandatory by the mapped field's datatype and gate "Continue".
+// The sample's qty -> quantity (number) needs a decimal_separator; txn_date ->
+// source_sale_timestamp (datetime) needs a format + timezone. Declare them to pass the gate.
+async function declareRequiredRules(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.selectOptions(await screen.findByLabelText('Decimal separator for qty'), '.')
+  await user.selectOptions(screen.getByLabelText('Date format for txn_date'), '%d-%m-%Y')
+  await user.selectOptions(screen.getByLabelText('Timezone for txn_date'), 'UTC')
+}
+
 // R3 reshaped these screens into the guided journey (Upload -> Review mapping -> Preview ->
 // Go live behind the rail). The DATA assertions below are unchanged from before; only the
 // step FLOW and the headings (selectors) are updated. The mapping data layer (onboarding.ts)
@@ -56,6 +65,7 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
+    await declareRequiredRules(user)
     await user.click(screen.getByRole('button', { name: /continue to preview/i }))
     expect(await screen.findByRole('heading', { name: 'Preview' })).toBeInTheDocument()
     expect(screen.getAllByText('A123').length).toBeGreaterThan(0)
@@ -65,6 +75,7 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
+    await declareRequiredRules(user)
     await user.click(screen.getByRole('button', { name: /continue to preview/i }))
     await user.click(await screen.findByRole('button', { name: /go live/i }))
     expect(await screen.findByRole('status')).toHaveTextContent(/approved to staged \(version 1\)/i)
@@ -137,5 +148,44 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     await screen.findByRole('heading', { name: 'Review mapping' })
     expect(screen.getByText(/Demo data\./)).toBeInTheDocument()
     expect(screen.getByText(/not parsed yet/)).toBeInTheDocument()
+  })
+
+  // T3: each column is presented as two explicit parts - field mapping + format rules.
+  it('presents both the field-mapping and the format-rules parts', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    // field mapping: the catalog-sourced canonical select (preserved)
+    expect(screen.getByLabelText('Canonical for qty')).toBeInTheDocument()
+    // format rules: the two explicit part headers, and a required locale control
+    expect(screen.getAllByText('Field mapping').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Format rules').length).toBeGreaterThan(0)
+    expect(await screen.findByLabelText('Decimal separator for qty')).toBeInTheDocument()
+    // a text-mapped column needs no locale rule
+    expect(screen.getAllByText('No locale rule needed').length).toBeGreaterThan(0)
+  })
+
+  it('requires a mandatory locale rule (with a visible example) and blocks Continue until declared', async () => {
+    const user = userEvent.setup()
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    // qty -> quantity (number) requires a decimal separator; the example is visible
+    expect(await screen.findByLabelText('Decimal separator for qty')).toBeInTheDocument()
+    expect(screen.getByText('1.299,50 -> 1299.50')).toBeInTheDocument()
+    // undeclared -> Continue blocked
+    expect(screen.getByRole('button', { name: /continue to preview/i })).toBeDisabled()
+    // declare all required rules -> Continue enabled
+    await declareRequiredRules(user)
+    expect(screen.getByRole('button', { name: /continue to preview/i })).toBeEnabled()
+  })
+
+  it('recomputes the required rule when the field mapping changes datatype', async () => {
+    const user = userEvent.setup()
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    // pos_terminal -> transaction_id (text): no locale rule control
+    expect(screen.queryByLabelText('Decimal separator for pos_terminal')).not.toBeInTheDocument()
+    // remap pos_terminal to quantity (number) -> a decimal rule becomes required
+    await user.selectOptions(screen.getByLabelText('Canonical for pos_terminal'), 'quantity')
+    expect(await screen.findByLabelText('Decimal separator for pos_terminal')).toBeInTheDocument()
   })
 })

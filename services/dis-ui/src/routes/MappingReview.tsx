@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 
+import { useAuth } from '../auth/useAuth'
+
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
@@ -20,7 +22,17 @@ import {
 } from '../lib/dis-ui-server/onboarding'
 import type { ApproveResult, DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
 import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
-import type { FieldSection, TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
+import type { FieldDatatype, FieldSection, TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
+import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
+import {
+  COMMON_TIMEZONES,
+  DATE_FORMAT_CHOICES,
+  DECIMAL_CHOICES,
+  THOUSANDS_CHOICES,
+  isRuleComplete,
+  requiredRuleKind,
+} from '../components/locale-rules'
+import type { LocaleDeclaration, RuleKind } from '../components/locale-rules'
 import { CSV_JOURNEY_STEPS, CSV_JOURNEY_STEP_INDEX } from './csv-journey'
 
 type Override = { proposed_canonical: string; authoritative: boolean }
@@ -51,17 +63,37 @@ function confidenceBand(confidence: number): { text: string; tone: StatusTone } 
 // confidence, the canonical target, the mapping rules); no fabricated reasoning.
 export function MappingReview() {
   const { sampleId } = useParams()
+  const { snapshot } = useAuth()
   const navigate = useNavigate()
   const sample = useSample(sampleId ?? null)
   // Canonical mapping targets now come from the real template-mapping-fields catalog
   // (T1), not a hardcoded list. Section-grouped, with mandatory/datatype metadata.
   const fields = useTemplateMappingFields()
 
+  // Onboarded-store timezones feed the datetime locale declaration (a datetime field
+  // requires a timezone per the real parse_datetime op); never inferred, the user picks.
+  const stores = useStoresOnboarded(snapshot)
+
   const [step, setStep] = useState<JourneyStep>('review')
   const [overrides, setOverrides] = useState<Record<string, Override>>({})
+  // FORMAT-RULES declarations (T3), the second concern. Per source column, the locale
+  // declaration that builds the REAL mapping_rules.normalize TransformSpec. Mandatory by
+  // the mapped field's datatype and NEVER inferred/pre-filled - starts empty; the operator
+  // must declare it before proceeding.
+  const [localeRules, setLocaleRules] = useState<Record<string, LocaleDeclaration>>({})
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
   const [approved, setApproved] = useState<ApproveResult | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+
+  // Catalog datatype lookup, by canonical key (first section wins; datatype is consistent
+  // per key). Drives which locale rule a mapped column requires.
+  const catalogByKey = new Map<string, TemplateMappingField>()
+  for (const field of fields.data ?? []) {
+    if (!catalogByKey.has(field.key)) {
+      catalogByKey.set(field.key, field)
+    }
+  }
+  const timezones = [...new Set([...(stores.data ?? []).map((s) => s.timezone), ...COMMON_TIMEZONES])]
 
   // The canonical-target options, section-grouped from the catalog. Each option's value is
   // the canonical key, so selecting one is the same setOverride path as before (behavior
@@ -115,6 +147,18 @@ export function MappingReview() {
     })
   }
 
+  function setLocale(sourceCol: string, patch: Partial<LocaleDeclaration>): void {
+    setLocaleRules((prev) => ({ ...prev, [sourceCol]: { ...prev[sourceCol], ...patch } }))
+  }
+
+  // The locale rule a column requires, from its MAPPED field's catalog datatype (recomputes
+  // when the field mapping changes). null = no locale rule needed.
+  function ruleKindFor(column: SampleColumn): RuleKind {
+    const canonicalKey = overrideFor(column).proposed_canonical
+    const datatype: FieldDatatype | undefined = catalogByKey.get(canonicalKey)?.datatype
+    return datatype === undefined ? null : requiredRuleKind(datatype)
+  }
+
   async function continueToPreview(): Promise<void> {
     setActionError(null)
     try {
@@ -144,6 +188,13 @@ export function MappingReview() {
 
   const highConfidence = analysis.columns.filter((c) => c.confidence >= HIGH_CONFIDENCE)
   const needsReview = analysis.columns.filter((c) => c.confidence < HIGH_CONFIDENCE)
+
+  // Proceed gate (FM2): every column whose datatype requires a locale rule must have a
+  // complete declaration before preview/go-live. Undeclared required rules block Continue.
+  const undeclaredColumns = analysis.columns.filter(
+    (c) => !isRuleComplete(ruleKindFor(c), localeRules[c.source_col]),
+  )
+  const allRulesDeclared = undeclaredColumns.length === 0
 
   function mappingRow(column: SampleColumn) {
     const ov = overrideFor(column)
@@ -192,11 +243,7 @@ export function MappingReview() {
             {Math.round(column.confidence * 100)}% {band.text}
           </StatusBadge>
         </TableCell>
-        <TableCell className="text-muted-foreground">
-          {column.transforms.length === 0
-            ? '-'
-            : column.transforms.map((t) => `${t.type}: ${t.value}`).join(', ')}
-        </TableCell>
+        <TableCell className="align-top">{renderFormatRules(column)}</TableCell>
         <TableCell>
           <input
             type="checkbox"
@@ -209,17 +256,115 @@ export function MappingReview() {
     )
   }
 
+  // The FORMAT-RULES half (T3): a mandatory, never-inferred locale declaration whose shape
+  // is driven by the mapped field's datatype, each choice carrying a visible example. Feeds
+  // the real mapping_rules.normalize {op, args}. Text/other datatypes need no locale rule.
+  function renderFormatRules(column: SampleColumn) {
+    const kind = ruleKindFor(column)
+    const decl = localeRules[column.source_col]
+    const col = column.source_col
+    if (kind === null) {
+      return <span className="text-caption text-muted-foreground">No locale rule needed</span>
+    }
+    const complete = isRuleComplete(kind, decl)
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="text-label text-muted-foreground">
+          {kind === 'decimal' ? 'Decimal format' : 'Date format'} <span className="text-danger">*</span>
+        </span>
+        {kind === 'decimal' ? (
+          <>
+            <Select
+              aria-label={`Decimal separator for ${col}`}
+              value={decl?.decimal_separator ?? ''}
+              onChange={(e) => setLocale(col, { decimal_separator: e.target.value })}
+              className="h-7 w-auto"
+            >
+              <option value="">Declare separator...</option>
+              {DECIMAL_CHOICES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+            <Select
+              aria-label={`Thousands separator for ${col}`}
+              value={decl?.thousands_separator ?? ''}
+              onChange={(e) => setLocale(col, { thousands_separator: e.target.value })}
+              className="h-7 w-auto"
+            >
+              {THOUSANDS_CHOICES.map((c) => (
+                <option key={c.label} value={c.value}>
+                  Thousands: {c.label}
+                </option>
+              ))}
+            </Select>
+            <div className="text-caption text-muted-foreground">
+              {DECIMAL_CHOICES.map((c) => (
+                <div key={c.value}>{c.example}</div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <Select
+              aria-label={`Date format for ${col}`}
+              value={decl?.format ?? ''}
+              onChange={(e) => setLocale(col, { format: e.target.value })}
+              className="h-7 w-auto"
+            >
+              <option value="">Declare format...</option>
+              {DATE_FORMAT_CHOICES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+            {kind === 'datetime' ? (
+              <Select
+                aria-label={`Timezone for ${col}`}
+                value={decl?.timezone ?? ''}
+                onChange={(e) => setLocale(col, { timezone: e.target.value })}
+                className="h-7 w-auto"
+              >
+                <option value="">Declare timezone...</option>
+                {timezones.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+            <div className="text-caption text-muted-foreground">
+              {DATE_FORMAT_CHOICES.map((c) => (
+                <div key={c.value}>{c.example}</div>
+              ))}
+            </div>
+          </>
+        )}
+        {!complete ? (
+          <span className="text-caption text-danger">Required before preview</span>
+        ) : null}
+      </div>
+    )
+  }
+
   function mappingTable(columns: SampleColumn[]) {
     return (
       <Table>
         <TableHeader>
+          {/* The two explicit concerns (T3): field mapping vs format rules. */}
+          <TableRow>
+            <TableHead colSpan={5}>Field mapping</TableHead>
+            <TableHead colSpan={2}>Format rules</TableHead>
+          </TableRow>
           <TableRow>
             <TableHead>Source column</TableHead>
             <TableHead>Inferred type</TableHead>
             <TableHead>Null %</TableHead>
-            <TableHead>Canonical</TableHead>
+            <TableHead>Canonical field</TableHead>
             <TableHead>Confidence</TableHead>
-            <TableHead>Mapping rules</TableHead>
+            <TableHead>Locale / format</TableHead>
             <TableHead>Authoritative</TableHead>
           </TableRow>
         </TableHeader>
@@ -281,11 +426,17 @@ export function MappingReview() {
             </Card>
           ) : null}
 
+          {/* FM2: required locale rules must be declared (never inferred) before preview. */}
+          {!allRulesDeclared ? (
+            <p role="alert" className="text-caption text-danger">
+              Declare the required format rule for: {undeclaredColumns.map((c) => c.source_col).join(', ')}.
+            </p>
+          ) : null}
           <div className="flex gap-3">
             <Button type="button" variant="ghost" onClick={() => navigate('/upload')}>
               Back
             </Button>
-            <Button type="button" onClick={() => void continueToPreview()}>
+            <Button type="button" disabled={!allRulesDeclared} onClick={() => void continueToPreview()}>
               Continue to preview
             </Button>
           </div>

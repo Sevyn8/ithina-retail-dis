@@ -39,9 +39,10 @@ describe('TemplateDetail (T2: lineage + field/rules split + store context)', () 
     expect(screen.getByText('sku_id')).toBeInTheDocument()
     expect(screen.getAllByText('sale_event').length).toBeGreaterThan(0) // catalog section
     expect(screen.queryByText('store_id')).not.toBeInTheDocument()
-    // format rules: a date format and a decimal separator are declared
+    // format rules: the real normalize shape renders a date format (polars string) + a
+    // decimal separator
     expect(screen.getByText('Format rules')).toBeInTheDocument()
-    expect(screen.getByText(/DD-MM-YYYY/)).toBeInTheDocument()
+    expect(screen.getByText(/format=%d-%m-%Y/)).toBeInTheDocument()
     expect(screen.getByText(/decimal_separator/)).toBeInTheDocument()
   })
 

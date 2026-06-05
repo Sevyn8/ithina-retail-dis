@@ -16,8 +16,11 @@ export type TemplateStatus = 'draft' | 'staged' | 'active' | 'deprecated'
 // Raw D49 SourceMapping (mapping_rules served raw by the backend): the FIELD half is
 // `rename` (source col -> canonical key); the FORMAT-RULES half is normalize/cast/derive
 // (date format, decimal separator, type casts) - the two concerns T2 lays out separately.
-export type NormalizeOp = { op: string; [arg: string]: unknown }
-export type CastSpec = { type: string; precision?: number; scale?: number }
+// Real TransformSpec shape (libs/dis-mapping/models/transform.py): { op, args } with args
+// NESTED. parse_date/parse_datetime use args.format (a polars strptime string) + (datetime)
+// args.timezone; parse_decimal uses args.decimal_separator + args.thousands_separator.
+export type NormalizeOp = { op: string; args: Record<string, unknown> }
+export type CastSpec = { type: string; precision?: number; scale?: number } // CastType: string|integer|decimal|date|datetime|boolean
 export type SourceMappingRules = {
   version: number
   rename: Record<string, string>
@@ -99,15 +102,15 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               sale_type: 'event_subtype',
             },
             normalize: {
-              source_sale_timestamp: [{ op: 'parse_date', date_format: 'DD-MM-YYYY' }],
-              unit_sale_price: [{ op: 'parse_decimal', decimal_separator: ',', thousands_separator: '.' }],
+              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } }],
+              unit_sale_price: [{ op: 'parse_decimal', args: { decimal_separator: ',', thousands_separator: '.' } }],
             },
             cast: {
               quantity: { type: 'integer' },
-              unit_sale_price: { type: 'numeric', precision: 12, scale: 4 },
+              unit_sale_price: { type: 'decimal', precision: 12, scale: 4 },
             },
             derive: {
-              event_date: [{ op: 'date_from_datetime', source: 'source_sale_timestamp' }],
+              event_date: [{ op: 'date_from_datetime', args: { source: 'source_sale_timestamp' } }],
             },
           },
         },
@@ -132,15 +135,15 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               sale_type: 'event_subtype',
             },
             normalize: {
-              source_sale_timestamp: [{ op: 'parse_date', date_format: 'DD-MM-YYYY' }],
-              unit_sale_price: [{ op: 'parse_decimal', decimal_separator: ',', thousands_separator: '.' }],
+              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } }],
+              unit_sale_price: [{ op: 'parse_decimal', args: { decimal_separator: ',', thousands_separator: '.' } }],
             },
             cast: {
               quantity: { type: 'integer' },
-              unit_sale_price: { type: 'numeric', precision: 12, scale: 4 },
+              unit_sale_price: { type: 'decimal', precision: 12, scale: 4 },
             },
             derive: {
-              event_date: [{ op: 'date_from_datetime', source: 'source_sale_timestamp' }],
+              event_date: [{ op: 'date_from_datetime', args: { source: 'source_sale_timestamp' } }],
             },
           },
         },
@@ -159,7 +162,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
             version: 1,
             rename: { item_code: 'sku_id', qty: 'quantity', txn_date: 'source_sale_timestamp' },
             normalize: {
-              source_sale_timestamp: [{ op: 'parse_date', date_format: 'DD-MM-YYYY' }],
+              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } }],
             },
             cast: { quantity: { type: 'integer' } },
             derive: {},
@@ -198,12 +201,12 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               attr: 'attribute_name',
             },
             normalize: {
-              source_event_timestamp: [{ op: 'parse_date', date_format: 'YYYY-MM-DD' }],
+              source_event_timestamp: [{ op: 'parse_datetime', args: { format: '%Y-%m-%d %H:%M:%S', timezone: 'UTC' } }],
             },
             cast: {},
             derive: {
-              event_date: [{ op: 'date_from_datetime', source: 'source_event_timestamp' }],
-              event_category: [{ op: 'constant', value: 'INVENTORY' }],
+              event_date: [{ op: 'date_from_datetime', args: { source: 'source_event_timestamp' } }],
+              event_category: [{ op: 'constant', args: { value: 'INVENTORY' } }],
             },
           },
         },

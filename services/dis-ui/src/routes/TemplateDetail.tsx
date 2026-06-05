@@ -30,9 +30,7 @@ function statusTone(status: TemplateStatus): StatusTone {
 // Render one normalize/derive op as "name (arg=value, ...)" - the format declarations
 // (date_format, decimal_separator) live in the args.
 function formatOp(op: NormalizeOp): string {
-  const args = Object.entries(op)
-    .filter(([key]) => key !== 'op')
-    .map(([key, value]) => `${key}=${String(value)}`)
+  const args = Object.entries(op.args).map(([key, value]) => `${key}=${String(value)}`)
   return args.length > 0 ? `${op.op} (${args.join(', ')})` : op.op
 }
 

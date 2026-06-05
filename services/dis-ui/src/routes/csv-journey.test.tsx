@@ -35,8 +35,13 @@ describe('CSV journey (one guided flow)', () => {
     await user.type(screen.getByLabelText(/source name/i), 'POS-CSV-Main')
     await user.click(screen.getByRole('button', { name: /analyze sample/i }))
 
-    // Review mapping
+    // Review mapping: declare the mandatory locale rules (T3 gate) before proceeding -
+    // qty -> quantity (number) needs a decimal separator; txn_date -> source_sale_timestamp
+    // (datetime) needs a format + timezone.
     await screen.findByRole('heading', { name: 'Review mapping' })
+    await user.selectOptions(await screen.findByLabelText('Decimal separator for qty'), '.')
+    await user.selectOptions(screen.getByLabelText('Date format for txn_date'), '%d-%m-%Y')
+    await user.selectOptions(screen.getByLabelText('Timezone for txn_date'), 'UTC')
     await user.click(screen.getByRole('button', { name: /continue to preview/i }))
 
     // Preview

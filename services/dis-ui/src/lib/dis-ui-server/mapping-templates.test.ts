@@ -77,11 +77,14 @@ describe('mapping-templates fixtures (shaped to the real contract)', () => {
       expect(v.mapping_rules).toHaveProperty('cast')
       expect(v.mapping_rules).toHaveProperty('derive')
     }
-    // the active version carries a date_format normalize + a decimal_separator (FM3 halves)
+    // the active version carries the REAL normalize shape: {op, args} with a format + a
+    // decimal_separator (FM3 - the real arg names, not the flat T2 draft)
     const active = activeTemplateVersion(detail)
     expect(active?.status).toBe('active')
-    expect(JSON.stringify(active?.mapping_rules.normalize)).toMatch(/date_format/)
-    expect(JSON.stringify(active?.mapping_rules.normalize)).toMatch(/decimal_separator/)
+    const normalizeJson = JSON.stringify(active?.mapping_rules.normalize)
+    expect(normalizeJson).toMatch(/"op":"parse_datetime"/)
+    expect(normalizeJson).toMatch(/"args":\{"format":/)
+    expect(normalizeJson).toMatch(/decimal_separator/)
     // store_id is never a field-mapping target (FM3)
     expect(Object.values(active?.mapping_rules.rename ?? {})).not.toContain('store_id')
   })
