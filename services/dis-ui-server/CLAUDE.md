@@ -23,6 +23,32 @@ For the EPE block (purpose, entry, process, exit), file structure, and operation
 - Onboarding sub-module is in-process; not a separate service. See architecture §4.16, §4.17.
 - DuckDB query panel is ops-role-restricted. RBAC enforced at the handler level.
 
+## Durable invariants (established in Slice 13a)
+
+- **`/api/v1` prefix.** Every UI data endpoint mounts under the `/api/v1` prefix via
+  `api.py`'s `api_router` (the prefix constant is `config.API_PREFIX`); the contract's
+  relative `/v1/<group>/<resource>` paths are unchanged — only the deployed base is
+  `/api/v1`. Health probes (`/healthz`, `/readyz`) stay at the ROOT, per infra
+  convention. dis-ui's `client.ts` fetch base must agree (`/api/v1`) when the
+  frontend's real mode wires up (13b/19, API_CONTRACT Appendix B).
+- **ORM through `dis-rls` only.** This service uses the SQLAlchemy ORM/declarative
+  layer (`db.py` `Base`; D-number registered at the 13a commit gate). Any model on
+  that base executes ONLY inside `rls_session(engine, tenant_id)` — never a raw
+  `AsyncSession`, never a second engine. The engine comes from `create_rls_engine`
+  so the `current_database()=='ithina_dis_db'` + NOBYPASSRLS guard covers every
+  connection.
+- **The auth seam is the sole source of `tenant_id`.** `auth/scope.py` dependencies
+  (`get_current_identity`, `require_tenant`, `require_ops`) read the verified token
+  only — never a body, query param, or unverified header — and are the only path by
+  which a tenant scope reaches `rls_session`. `auth/verifier.py` is the single swap
+  point for the 13b JWKS verifier; nothing outside it inspects a token.
+- **DIS-side RLS is single-GUC** (`app.tenant_id` only, live-introspected 13a): there
+  is no `app.user_type` discriminator and NO platform see-all posture on the DIS
+  database. The PLATFORM cross-tenant read (ops fleet/quarantine) requires BOTH a
+  dis-rls session variant AND a DIS policy migration — owned by the first ops-read
+  slice, not improvised here. The CM-replica two-GUC pattern
+  (`docs/ithina_master_db_read_access.md`) is Customer-Master-only.
+
 ## References
 
 - `README.md` (this directory) — EPE block, file structure, behavioural detail.

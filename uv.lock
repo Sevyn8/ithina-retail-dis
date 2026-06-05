@@ -19,6 +19,7 @@ members = [
     "dis-rls",
     "dis-storage",
     "dis-testing",
+    "dis-ui-server",
     "dis-validation",
     "ithina-dis",
     "mirror-sync-consumer",
@@ -763,6 +764,33 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
     { name = "uuid-utils", specifier = ">=0.9" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+]
+
+[[package]]
+name = "dis-ui-server"
+version = "0.0.0"
+source = { editable = "services/dis-ui-server" }
+dependencies = [
+    { name = "dis-core" },
+    { name = "dis-rls" },
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
@@ -1630,6 +1658,7 @@ dev = [
     { name = "dis-rls" },
     { name = "dis-storage" },
     { name = "dis-testing" },
+    { name = "dis-ui-server" },
     { name = "dis-validation" },
     { name = "faker" },
     { name = "import-linter" },
@@ -1688,6 +1717,7 @@ dev = [
     { name = "dis-rls", editable = "libs/dis-rls" },
     { name = "dis-storage", editable = "libs/dis-storage" },
     { name = "dis-testing", editable = "libs/dis-testing" },
+    { name = "dis-ui-server", editable = "services/dis-ui-server" },
     { name = "dis-validation", editable = "libs/dis-validation" },
     { name = "faker", specifier = ">=30" },
     { name = "import-linter", specifier = ">=2.0" },

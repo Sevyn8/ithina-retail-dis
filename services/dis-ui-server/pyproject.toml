@@ -1,0 +1,33 @@
+[project]
+name = "dis-ui-server"
+version = "0.0.0"
+description = "DIS UI backend-for-frontend foundation (Slice 13a, D26): deployable FastAPI skeleton with /healthz (DB-free liveness) and /readyz (proves a tenant-scoped dis-rls session opens), the auth seam (dev-stub HS256 verifier behind get_current_identity / require_tenant / require_ops — the SOLE source of tenant_id), DisError-to-envelope exception handlers (contract §2.3), structured logging, and the SQLAlchemy declarative base for later CRUD. No UI data endpoints (Slices 8/14+), no JWKS (13b), no Pub/Sub, no config.source_mappings writes."
+requires-python = ">=3.12"
+dependencies = [
+  # DisError root + the Slice-13a auth-seam errors, UUIDv7 (readiness probe
+  # tenant), trace_id contextvar (envelope), structured logging.
+  "dis-core",
+  # The ONLY Postgres path (hard rules 1 & 12): create_rls_engine + the
+  # per-tenant rls_session, inheriting the current_database()=='ithina_dis_db'
+  # + NOBYPASSRLS target guard (DIS on 5433, never Customer Master).
+  "dis-rls",
+  # HTTP surface; handlers are thin APIRouters mounted by main.py.
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  # Dev-stub HS256 verification (contract §2.1); the 13b JWKS swap reuses it.
+  "pyjwt[crypto]>=2.8",
+  # Async engine plumbing + the declarative Base for this service's later CRUD
+  # (ORM layer choice: D-number registered at the commit gate). Executes only
+  # through the dis-rls session — never a second engine.
+  "sqlalchemy[asyncio]>=2.0.36",
+  "psycopg[binary]>=3.2",
+  # Request/response models (later slices; FastAPI serializes them directly).
+  "pydantic>=2.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dis_ui_server"]

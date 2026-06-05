@@ -64,6 +64,7 @@ MYPY_PACKAGES = \
 	libs/dis-testing \
 	libs/dis-validation \
 	services/csv-ingest-worker \
+	services/dis-ui-server \
 	services/mirror-sync-consumer \
 	services/streaming-consumer \
 	tests \
