@@ -696,3 +696,48 @@ was verified before the Slice 10 dual-write and event-time-wins proofs. NULL mea
 event-written (e.g. pre-seeded catalogue rows); the column is nullable by design.
 
 **Cross-ref.** D38 (shared prerequisite migration), D30, D33, architecture 2.3.1, Slice 10.
+
+
+### D58 single-instance posture under autoscaling: SPLIT (M-HOTKEY) — consumer SOLVED; worker bronze dedup a NOW-LIVE OPEN gap
+
+**Posture change.** The deployment posture is AUTOSCALING (multiple instances per
+service). The single-instance operating assumption D58 recorded is therefore no longer a
+tolerable footing anywhere it is load-bearing. This entry SPLITS the assumption's two
+dependents — it is deliberately NOT a clean "D58 retracted":
+
+**(a) streaming-consumer hot path — SOLVED.** Migration `0004_hot_natural_key_arbitration`
+(M-HOTKEY) replaces the NULLS NOT DISTINCT natural-key constraint (which PG15 cannot
+arbitrate for NULL key segments — the limitation that had forced a single-instance-only
+read-modify-write upsert) with the unique COALESCE-sentinel expression index
+`uq_sscp_natural_key` plus two sentinel CHECKs (`sku_variant <> ''`,
+`sku_lot_batch <> ''`; the empty string is operator-confirmed never legitimate and is now
+engine-impossible). Atomic `INSERT … ON CONFLICT (COALESCE target) DO UPDATE … WHERE
+event-time-wins` is thereby restored and is concurrency-safe under N instances — proven
+on live 15.17 with two real concurrent writers: the insert-race loser takes the UPDATE
+branch (no error surfaces); the `DO UPDATE … WHERE` predicate re-evaluates against the
+LOCKED current row, so an older event can never overwrite a newer one in either arrival
+order; deadlocks from overlapping batches are eliminated by the deterministic per-batch
+natural-key sort (demonstrated: opposite-order interleave deadlocks, total-order commits).
+The Slice 10 service amendment swaps the upsert mechanism accordingly.
+
+**(b) csv-ingest-worker bronze dedup — NOW-LIVE OPEN gap.** D58's original subject: the
+worker's idempotency check is a query (no UNIQUE over the dedup key, no concurrency
+guard) and is single-instance-safe ONLY. Under the autoscaling posture this is no longer
+a forward-looking note — it is a live exposure the moment the worker runs with more than
+one instance: two concurrent identical deliveries can both pass the SELECT and
+double-write bronze. **Status: OPEN. Owner: a worker-hardening slice. Trigger: the
+csv-ingest-worker is deployed with >1 instance, or autoscaling is enabled for it.** Until
+then the worker carries a single-instance-or-fixed-dedup deploy obligation (below). The
+consumer fix in (a) does NOT cover this; system-wide autoscaling is not handled by this
+entry.
+
+**Deploy obligations restated.** The single-instance deploy-time obligation previously
+recorded against the streaming consumer (the Slice 10 adversarial pass) is **RESCINDED
+for streaming-consumer ONLY** — its hot path is concurrency-safe by (a). A
+single-instance-or-fixed-dedup obligation now attaches to **csv-ingest-worker** per (b).
+"Rescinded" does not mean "no instance constraint anywhere."
+
+**Cross-refs.** D58 (the original assumption; its bronze posture is the (b) gap), D30
+(transaction boundary unchanged), D63/D64 (semantics unchanged, now concurrency-proven),
+the PG15 implementation note (superseded — see its addendum), M-HOTKEY/0004, Slice 10
+Part 3.
