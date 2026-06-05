@@ -1013,3 +1013,54 @@ constraint is what preserves the foundation rule.
 
 **Cross-refs.** D26 (BFF), hard rule 1 (RLS via dis-rls). **Scope.** dis-ui-server + this
 entry; no DDL.
+
+### D68 config.source_mappings mapping grain is (tenant_id, source_id, template_id) `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 14a, registered in plan mode, number assigned at the commit
+gate).
+
+**Decision.** A `(tenant_id, source_id)` source carries multiple named mapping templates
+(e.g. `manual_csv_upload` carrying sales, inventory, pricing); the mapping grain becomes
+`(tenant_id, source_id, template_id)`. `template_id` (UUIDv7, minted server-side at DRAFT
+creation, immutable once set) is a grain dimension, NOT a primary key: `mapping_version_id`
+stays the global BIGSERIAL surrogate, the canonical-row pin, and the audit reference (D22
+unchanged). `template_name` is the operator-set human label, unique per
+`(tenant_id, source_id)` among non-DEPRECATED rows; active-uniqueness and the version
+sequence (`version_seq_per_source`, name kept to avoid contract churn) are rekeyed to the
+template grain, each template's lineage starting at 1. Pre-14a rows were backfilled with
+one minted template per `(tenant, source)` group, named `default` (lineage preserved,
+never per-row minting).
+
+**Cross-refs.** D15 (mapping config in Postgres, versioned), D17 (staged-rollout lifecycle
+the grain keys respect), D22 (pin unchanged), D49 (`mapping_rules` shape untouched), D69
+(RLS ON on the same table). **Scope.** Alembic 0005 + the `schemas/postgres` manifest; no
+service code. Owed downstream: the Slice 10 template-keyed consumer lookup
+(`load_active_mapping` takes `.first()` and must key on template before any second
+template goes ACTIVE under one source), the Slice 8 upload-session template carry, the
+Slice 14b per-template `version`/`active_version` contract surfacing and the label's
+template component.
+
+### D69 config.source_mappings RLS ON (ENABLE + FORCE, single-GUC tenant policy) `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 14a, registered in plan mode, number assigned at the commit
+gate).
+
+**Decision.** `config.source_mappings` carries `tenant_id` and its rows are per-tenant
+data, so it follows the DIS principle (RLS ON wherever `tenant_id` exists): ENABLE + FORCE
+with the same single-GUC `app.tenant_id` `tenant_isolation` policy as the other DIS tenant
+tables. The prior DDL comment ("holds configuration, not tenant data", with a claimed
+cross-tenant startup read) is corrected — the live consumer reads the mapping per-lookup
+inside a tenant-scoped `rls_session` (D6 side input), so no cross-tenant read exists. The
+two-GUC `app.user_type` pattern remains Customer-Master-replica-only. Riders, decided with
+this entry: (1) the `btree_gist` extension is added for the EXCLUDE name-uniqueness
+constraint (`ex_csm_template_name_per_source`; a plain unique index cannot express
+name-to-template uniqueness because version rows of one template share a name); (2)
+`config.source_mappings_v` is set `security_invoker = true`, closing the owner-rights RLS
+bypass (verified live: the only view in the database, zero SECURITY DEFINER functions);
+(3) the test-infra updates (seeder GUC scoping, pinned fixture template, consumer conftest,
+seed tests) were a necessary consequence of RLS-ON — a scope clarification of
+"schema-only", not row-write scope creep.
+
+**Cross-refs.** D68 (the grain on the same table), D24/hard rule 1 (isolation posture),
+D6 (consumer side-input read). **Scope.** Alembic 0005 + the `schemas/postgres` manifest +
+the dis-testing/consumer test infra; no service code, no policy change on any other table.

@@ -70,6 +70,18 @@ _MAPPING_FILES = {
     BAD_SUBTYPE_SOURCE_ID: "sale_pos_bad_subtype_v1.json",
 }
 
+# Pinned per-source template ids (Slice 14a grain): the rekeyed
+# uq_csm_seq_per_source conflict target includes template_id, so the upsert
+# only lands on the same row across runs when the id is deterministic. Used
+# only when the (tenant, source) carries no 'default' template yet — a DB that
+# predates 14a was BACKFILLED with minted ids, and inserting a different id
+# under the same name would (correctly) trip ex_csm_template_name_per_source.
+_TEMPLATE_IDS = {
+    SALE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a1"),
+    CHANGE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a2"),
+    BAD_SUBTYPE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a3"),
+}
+
 # All test event timestamps anchor here: today at a mid-day hour, so the chunk's
 # rows and a ±1-day spread stay inside the partitions ensure_event_partitions makes.
 BASE_TS = datetime.now(tz=UTC).replace(hour=12, minute=0, second=0, microsecond=0)
@@ -143,19 +155,34 @@ def consumer_mappings(admin_engine_session: Engine, seeded: None) -> dict[str, i
     with admin_engine_session.begin() as conn:
         for source_id, filename in _MAPPING_FILES.items():
             rules = json.loads((_FIXTURES / "mappings" / filename).read_text())
+            # Adopt the EXISTING 'default' template id when the source already
+            # carries one (e.g. the 0005 backfill minted it); pin only on a
+            # virgin (tenant, source). Keeps the upsert landing on one row.
+            existing = conn.execute(
+                text(
+                    "SELECT template_id FROM config.source_mappings "
+                    "WHERE tenant_id = CAST(:tenant_id AS uuid) AND source_id = :source_id "
+                    "AND template_name = 'default' AND status <> 'DEPRECATED' LIMIT 1"
+                ),
+                {"tenant_id": str(PRIMARY_TENANT.uuid), "source_id": source_id},
+            ).scalar()
+            template_id = str(existing) if existing else str(_TEMPLATE_IDS[source_id])
             row = conn.execute(
                 text(
                     "INSERT INTO config.source_mappings "
-                    "(tenant_id, source_id, version_seq_per_source, status, mapping_rules, activated_at) "
-                    "VALUES (CAST(:tenant_id AS uuid), :source_id, 1, 'ACTIVE', "
+                    "(tenant_id, source_id, template_id, template_name, "
+                    "version_seq_per_source, status, mapping_rules, activated_at) "
+                    "VALUES (CAST(:tenant_id AS uuid), :source_id, "
+                    "CAST(:template_id AS uuid), 'default', 1, 'ACTIVE', "
                     "CAST(:rules AS JSONB), NOW()) "
-                    "ON CONFLICT (tenant_id, source_id, version_seq_per_source) "
+                    "ON CONFLICT (tenant_id, source_id, template_id, version_seq_per_source) "
                     "DO UPDATE SET mapping_rules = EXCLUDED.mapping_rules "
                     "RETURNING mapping_version_id"
                 ),
                 {
                     "tenant_id": str(PRIMARY_TENANT.uuid),
                     "source_id": source_id,
+                    "template_id": template_id,
                     "rules": json.dumps(rules),
                 },
             ).first()

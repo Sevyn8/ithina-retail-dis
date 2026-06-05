@@ -13,15 +13,18 @@ SCOPE — read carefully:
     no code path to Customer Master (5432). See the Slice 2 plan §1.
   * **Direct SQLAlchemy is intentional here.** The root rule "canonical reads/writes
     go through libs/dis-rls" is about *canonical* schemas; this writes only to
-    ``identity_mirror`` and ``config``, which are RLS-not-enabled (Slice 1 schema
-    headers), so no ``app.tenant_id`` context is needed and writing as the
-    NOBYPASSRLS service role succeeds.
+    ``identity_mirror`` (RLS-not-enabled, Slice 1 schema header) and ``config``.
+    ``config.source_mappings`` is RLS ON since Slice 14a, so the mapping
+    existence-check + INSERT set the transaction-local ``app.tenant_id`` GUC
+    (the NOBYPASSRLS service role would otherwise read zero rows and fail the
+    policy WITH CHECK). The ``identity_mirror`` writes stay GUC-independent.
 
 Idempotency: tenants/stores use ``ON CONFLICT DO NOTHING`` on their fixed UUID
 PKs; the single ACTIVE ``config.source_mappings`` row is guarded by an
 existence check (its PK is a BIGSERIAL that cannot conflict; the partial unique
-index ``uq_csm_active_per_source`` backstops a duplicate ACTIVE). Re-running is a
-no-op and never raises.
+index ``uq_csm_active_per_source`` backstops a duplicate ACTIVE per template).
+The fixture's ``template_id`` is pinned (fixtures.py), never minted per run, so
+re-running is a no-op and never raises.
 """
 
 from __future__ import annotations
@@ -69,11 +72,17 @@ _SELECT_ACTIVE_MAPPING = text(
 _INSERT_MAPPING = text(
     """
     INSERT INTO config.source_mappings
-        (tenant_id, source_id, status, mapping_rules, activated_at)
+        (tenant_id, source_id, template_id, template_name, status, mapping_rules,
+         activated_at)
     VALUES
-        (:tenant_id, :source_id, 'ACTIVE', CAST(:mapping_rules AS JSONB), NOW())
+        (:tenant_id, :source_id, :template_id, :template_name, 'ACTIVE',
+         CAST(:mapping_rules AS JSONB), NOW())
     """
 )
+
+# config.source_mappings is RLS ON (FORCE, Slice 14a); the seeding role is
+# NOBYPASSRLS, so the mapping check/insert need the transaction-local GUC.
+_SET_TENANT_GUC = text("SELECT set_config('app.tenant_id', :tenant_id, true)")
 
 
 @dataclass
@@ -153,9 +162,13 @@ def _seed(conn: Connection) -> SeedSummary:
         )
         summary.stores_inserted += result.rowcount if result.rowcount > 0 else 0
 
-    # 3. Default ACTIVE source mapping (existence-guarded; BIGSERIAL PK can't conflict).
+    # 3. Default ACTIVE source mapping (existence-guarded; BIGSERIAL PK can't
+    #    conflict). RLS ON (Slice 14a): scope the transaction to the fixture
+    #    tenant first — without the GUC the existence check reads zero rows and
+    #    the INSERT fails the policy WITH CHECK.
     mapping = fx.DEFAULT_SOURCE_MAPPING
     tenant_uuid = str(fx.tenant_uuid_for(str(mapping["tenant_display_code"])))
+    conn.execute(_SET_TENANT_GUC, {"tenant_id": tenant_uuid})
     exists = conn.execute(
         _SELECT_ACTIVE_MAPPING,
         {"tenant_id": tenant_uuid, "source_id": mapping["source_id"]},
@@ -166,6 +179,8 @@ def _seed(conn: Connection) -> SeedSummary:
             {
                 "tenant_id": tenant_uuid,
                 "source_id": mapping["source_id"],
+                "template_id": str(mapping["template_id"]),
+                "template_name": mapping["template_name"],
                 "mapping_rules": json.dumps(mapping["mapping_rules"]),
             },
         )

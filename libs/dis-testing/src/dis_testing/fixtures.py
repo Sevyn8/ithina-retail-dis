@@ -242,11 +242,20 @@ PRIMARY_STORE = STORES[0]
 # ---------------------------------------------------------------------------
 # Default config.source_mappings row (so mapping_version_id FKs resolve in later
 # slices' tests). One ACTIVE mapping for the primary tenant.
+#
+# template_id/template_name (Slice 14a grain): pinned, deterministic — the
+# seeder's idempotency and the rekeyed uq_csm_seq_per_source conflict target
+# both key on template_id, so a per-run mint would strand duplicates. The
+# pinned value follows the fixture convention (UUIDv7-shaped, load-bearing).
 # ---------------------------------------------------------------------------
 DEFAULT_SOURCE_ID = "manual_csv_upload"
+DEFAULT_TEMPLATE_ID = UUID("019e97d0-0000-7000-8000-000000000001")
+DEFAULT_TEMPLATE_NAME = "default"
 DEFAULT_SOURCE_MAPPING: dict[str, object] = {
     "tenant_display_code": PRIMARY_TENANT.display_code,
     "source_id": DEFAULT_SOURCE_ID,
+    "template_id": DEFAULT_TEMPLATE_ID,
+    "template_name": DEFAULT_TEMPLATE_NAME,
     "status": "ACTIVE",
     "mapping_rules": {
         "version": 1,
