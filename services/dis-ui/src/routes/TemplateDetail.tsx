@@ -96,7 +96,7 @@ export function TemplateDetail() {
           <CardTitle>Version history</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
+          <div className="overflow-x-auto"><Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Version</TableHead>
@@ -125,7 +125,7 @@ export function TemplateDetail() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </Table></div>
         </CardContent>
       </Card>
 
@@ -140,7 +140,7 @@ export function TemplateDetail() {
               </p>
             </CardHeader>
             <CardContent>
-              <Table>
+              <div className="overflow-x-auto"><Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Source column</TableHead>
@@ -168,7 +168,7 @@ export function TemplateDetail() {
                     )
                   })}
                 </TableBody>
-              </Table>
+              </Table></div>
             </CardContent>
           </Card>
 
@@ -183,7 +183,7 @@ export function TemplateDetail() {
               {ruleColumns.length === 0 ? (
                 <p className="text-caption text-muted-foreground">No format rules declared.</p>
               ) : (
-                <Table>
+                <div className="overflow-x-auto"><Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Canonical field</TableHead>
@@ -215,7 +215,7 @@ export function TemplateDetail() {
                       )
                     })}
                   </TableBody>
-                </Table>
+                </Table></div>
               )}
             </CardContent>
           </Card>
@@ -236,7 +236,7 @@ export function TemplateDetail() {
           ) : stores.isError || stores.data === undefined || stores.data.length === 0 ? (
             <p className="text-caption text-muted-foreground">No onboarded stores.</p>
           ) : (
-            <Table>
+            <div className="overflow-x-auto"><Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Store</TableHead>
@@ -255,7 +255,7 @@ export function TemplateDetail() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+            </Table></div>
           )}
         </CardContent>
       </Card>

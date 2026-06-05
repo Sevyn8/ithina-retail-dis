@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 
 import { Button, buttonVariants } from '@/components/ui/button'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
 import { ProgressRail } from '@/components/ui/progress-rail'
 import { EmptyState } from '../components/states/EmptyState'
@@ -186,9 +186,6 @@ export function MappingReview() {
         ? CSV_JOURNEY_STEP_INDEX.preview
         : CSV_JOURNEY_STEP_INDEX.golive
 
-  const highConfidence = analysis.columns.filter((c) => c.confidence >= HIGH_CONFIDENCE)
-  const needsReview = analysis.columns.filter((c) => c.confidence < HIGH_CONFIDENCE)
-
   // Proceed gate (FM2): every column whose datatype requires a locale rule must have a
   // complete declaration before preview/go-live. Undeclared required rules block Continue.
   const undeclaredColumns = analysis.columns.filter(
@@ -196,63 +193,115 @@ export function MappingReview() {
   )
   const allRulesDeclared = undeclaredColumns.length === 0
 
-  function mappingRow(column: SampleColumn) {
+  // A column needs full attention if it is low-confidence OR carries a required locale rule
+  // (so any rule-bearing column stays a full, editable card whether or not it is declared).
+  function needsAttention(column: SampleColumn): boolean {
+    return column.confidence < HIGH_CONFIDENCE || ruleKindFor(column) !== null
+  }
+
+  // The catalog-sourced canonical-target select (R8 alternatives optgroup + the section
+  // groups). Same aria-label + setOverride path as before; shared by full and condensed cards.
+  function canonicalSelect(column: SampleColumn, ov: Override) {
+    return (
+      <Select
+        aria-label={`Canonical for ${column.source_col}`}
+        value={ov.proposed_canonical}
+        onChange={(e) => setOverride(column.source_col, { ...ov, proposed_canonical: e.target.value })}
+        className="h-7 w-auto"
+      >
+        {column.alternatives && column.alternatives.length > 0 ? (
+          <optgroup label="Assistant's alternatives">
+            {column.alternatives.map((alt) => (
+              <option key={`alt-${alt.target}`} value={alt.target}>
+                {alt.target} ({Math.round(alt.confidence * 100)}%)
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {renderCanonicalGroups()}
+      </Select>
+    )
+  }
+
+  function authoritativeToggle(column: SampleColumn, ov: Override) {
+    return (
+      <label className="flex items-center gap-1 text-caption text-muted-foreground">
+        <input
+          type="checkbox"
+          aria-label={`Authoritative for ${column.source_col}`}
+          checked={ov.authoritative}
+          onChange={(e) => setOverride(column.source_col, { ...ov, authoritative: e.target.checked })}
+        />
+        Authoritative
+      </label>
+    )
+  }
+
+  // A full card: the two stacked concerns (field mapping + format rules), R8 reasoning and
+  // the confidence band inside. Used for needs-attention columns; leads the page.
+  function fullCard(column: SampleColumn) {
     const ov = overrideFor(column)
     const band = confidenceBand(column.confidence)
     return (
-      <TableRow key={column.source_col} className="align-top">
-        <TableCell className="font-medium text-foreground">
-          {column.source_col}
-          <div className="text-caption font-normal text-muted-foreground">
-            sample: {column.sample_values.join(', ')}
-          </div>
-          {/* The assistant's explanation, when provided. Optional and never fabricated: a
-              column without reasoning shows nothing here (graceful). */}
-          {column.reasoning != null && column.reasoning.length > 0 ? (
-            <div className="text-caption font-normal text-muted-foreground italic">
-              Assistant: {column.reasoning}
+      <Card key={column.source_col}>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <span className="font-mono text-sm text-foreground">{column.source_col}</span>
+              <div className="text-caption text-muted-foreground">
+                {column.inferred_type} · {Math.round(column.null_pct * 100)}% null · sample:{' '}
+                {column.sample_values.join(', ')}
+              </div>
             </div>
-          ) : null}
-        </TableCell>
-        <TableCell>{column.inferred_type}</TableCell>
-        <TableCell>{Math.round(column.null_pct * 100)}%</TableCell>
-        <TableCell>
-          <Select
-            aria-label={`Canonical for ${column.source_col}`}
-            value={ov.proposed_canonical}
-            onChange={(e) => setOverride(column.source_col, { ...ov, proposed_canonical: e.target.value })}
-            className="h-7 w-auto"
-          >
-            {/* The assistant's other candidates as quick-picks, above the full list. Optional:
-                absent -> just the full canonical list (today's behavior). Selecting either
-                calls the same setOverride (the existing override path). */}
-            {column.alternatives && column.alternatives.length > 0 ? (
-              <optgroup label="Assistant's alternatives">
-                {column.alternatives.map((alt) => (
-                  <option key={`alt-${alt.target}`} value={alt.target}>
-                    {alt.target} ({Math.round(alt.confidence * 100)}%)
-                  </option>
-                ))}
-              </optgroup>
+            <StatusBadge tone={band.tone}>
+              {Math.round(column.confidence * 100)}% {band.text}
+            </StatusBadge>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-label text-muted-foreground">Field mapping</span>
+            {/* The assistant's explanation, when provided (R8); optional, never fabricated. */}
+            {column.reasoning != null && column.reasoning.length > 0 ? (
+              <div className="text-caption font-normal text-muted-foreground italic">
+                Assistant: {column.reasoning}
+              </div>
             ) : null}
-            {renderCanonicalGroups()}
-          </Select>
-        </TableCell>
-        <TableCell>
-          <StatusBadge tone={band.tone}>
-            {Math.round(column.confidence * 100)}% {band.text}
-          </StatusBadge>
-        </TableCell>
-        <TableCell className="align-top">{renderFormatRules(column)}</TableCell>
-        <TableCell>
-          <input
-            type="checkbox"
-            aria-label={`Authoritative for ${column.source_col}`}
-            checked={ov.authoritative}
-            onChange={(e) => setOverride(column.source_col, { ...ov, authoritative: e.target.checked })}
-          />
-        </TableCell>
-      </TableRow>
+            <div className="flex flex-wrap items-center gap-3">
+              {canonicalSelect(column, ov)}
+              {authoritativeToggle(column, ov)}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-label text-muted-foreground">Format rules</span>
+            {renderFormatRules(column)}
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // A condensed card: a compact one-line row for an auto-mapped column with nothing
+  // outstanding. Keeps the canonical select + authoritative toggle editable (no hidden
+  // controls), just without the sample/reasoning/format clutter.
+  function condensedCard(column: SampleColumn) {
+    const ov = overrideFor(column)
+    const band = confidenceBand(column.confidence)
+    return (
+      <div
+        key={column.source_col}
+        className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3 py-2"
+      >
+        <span className="font-mono text-xs text-muted-foreground">{column.source_col}</span>
+        <span aria-hidden="true" className="text-muted-foreground">
+          to
+        </span>
+        {canonicalSelect(column, ov)}
+        <StatusBadge tone={band.tone}>
+          {Math.round(column.confidence * 100)}% {band.text}
+        </StatusBadge>
+        <span className="ml-auto">{authoritativeToggle(column, ov)}</span>
+      </div>
     )
   }
 
@@ -269,9 +318,6 @@ export function MappingReview() {
     const complete = isRuleComplete(kind, decl)
     return (
       <div className="flex flex-col gap-1">
-        <span className="text-label text-muted-foreground">
-          {kind === 'decimal' ? 'Decimal format' : 'Date format'} <span className="text-danger">*</span>
-        </span>
         {kind === 'decimal' ? (
           <>
             <Select
@@ -349,29 +395,8 @@ export function MappingReview() {
     )
   }
 
-  function mappingTable(columns: SampleColumn[]) {
-    return (
-      <Table>
-        <TableHeader>
-          {/* The two explicit concerns (T3): field mapping vs format rules. */}
-          <TableRow>
-            <TableHead colSpan={5}>Field mapping</TableHead>
-            <TableHead colSpan={2}>Format rules</TableHead>
-          </TableRow>
-          <TableRow>
-            <TableHead>Source column</TableHead>
-            <TableHead>Inferred type</TableHead>
-            <TableHead>Null %</TableHead>
-            <TableHead>Canonical field</TableHead>
-            <TableHead>Confidence</TableHead>
-            <TableHead>Locale / format</TableHead>
-            <TableHead>Authoritative</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>{columns.map((column) => mappingRow(column))}</TableBody>
-      </Table>
-    )
-  }
+  const attention = analysis.columns.filter((c) => needsAttention(c))
+  const autoMapped = analysis.columns.filter((c) => !needsAttention(c))
 
   return (
     <section className="flex flex-col gap-4">
@@ -400,30 +425,26 @@ export function MappingReview() {
 
       {step === 'review' ? (
         <>
-          {needsReview.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <h2 className="text-subheading">Needs your review</h2>
+          {/* Needs your review: full cards, leading the page (low-confidence or a required
+              locale rule outstanding). Each is the two stacked concerns (field + format). */}
+          {attention.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              <div>
+                <h2 className="text-subheading">Needs your review ({attention.length})</h2>
                 <p className="text-caption text-muted-foreground">
-                  {needsReview.length} column{needsReview.length === 1 ? '' : 's'} we are not confident
-                  about. Confirm or correct the canonical target.
+                  Confirm or correct the canonical target, and declare any required format rule.
                 </p>
-              </CardHeader>
-              <CardContent>{mappingTable(needsReview)}</CardContent>
-            </Card>
+              </div>
+              {attention.map((column) => fullCard(column))}
+            </div>
           ) : null}
 
-          {highConfidence.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <h2 className="text-subheading text-muted-foreground">Auto-mapped</h2>
-                <p className="text-caption text-muted-foreground">
-                  {highConfidence.length} high-confidence column{highConfidence.length === 1 ? '' : 's'}.
-                  Edit if you need to.
-                </p>
-              </CardHeader>
-              <CardContent>{mappingTable(highConfidence)}</CardContent>
-            </Card>
+          {/* Auto-mapped: condensed one-line cards (high-confidence, nothing outstanding). */}
+          {autoMapped.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              <h2 className="text-subheading text-muted-foreground">Auto-mapped ({autoMapped.length})</h2>
+              {autoMapped.map((column) => condensedCard(column))}
+            </div>
           ) : null}
 
           {/* FM2: required locale rules must be declared (never inferred) before preview. */}

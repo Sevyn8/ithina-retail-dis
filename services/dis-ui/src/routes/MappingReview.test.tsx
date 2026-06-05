@@ -178,6 +178,22 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(screen.getByRole('button', { name: /continue to preview/i })).toBeEnabled()
   })
 
+  // T3.5: per-column card layout - needs-attention full cards, auto-mapped condensed.
+  it('renders needs-review columns as full cards and auto-mapped columns condensed', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    // the visual hierarchy: a "Needs your review" group (low-confidence or rule-bearing) and
+    // an "Auto-mapped" group (high-confidence, nothing outstanding)
+    expect(screen.getByText(/Needs your review/)).toBeInTheDocument()
+    expect(screen.getByText(/Auto-mapped/)).toBeInTheDocument()
+    // item_code (high-confidence, text, no rule) is auto-mapped and condensed - but still
+    // exposes its canonical select (no hidden controls)
+    expect(screen.getByLabelText('Canonical for item_code')).toBeInTheDocument()
+    // a needs-review column carries the two labeled parts (full card)
+    expect(screen.getAllByText('Field mapping').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Format rules').length).toBeGreaterThan(0)
+  })
+
   it('recomputes the required rule when the field mapping changes datatype', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
