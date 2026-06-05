@@ -14,11 +14,13 @@ import { postMultipart } from './client'
 // session token (auth/storage.readToken()). A missing base URL throws the existing config
 // error - we fail loud rather than silently fake an upload.
 //
-// HONESTY (D71 / Slice 8a): the upload validates the template is ACTIVE and carries
-// `template_id` end to end, but the streaming consumer is template-UNAWARE until Slice 8a -
-// it does not yet pin mapping to a specific template version. So callers say a batch is
-// "uploaded against [template]", never "mapped through version vN". Slice 8a is the upgrade
-// that makes canonical mapping template-version-aware.
+// HONESTY (D71 resolved by slice-8a): the upload validates the template is ACTIVE and carries
+// `template_id` end to end, and the streaming consumer is now template-keyed, so it maps the
+// batch through the template's ACTIVE mapping version. Callers may say a batch is "ingested
+// through the template's active mapping version", with two caveats: the version applied is the
+// one active at consume time (not pinned at upload), and mapping is asynchronous (the 201 means
+// received, not mapped). The result returns no mapping_version_id, so never claim a specific
+// applied version.
 // ===========================================================================================
 
 // The 201 body, mirroring services/dis-ui-server/schemas/csv_uploads.py:CsvUploadResult.

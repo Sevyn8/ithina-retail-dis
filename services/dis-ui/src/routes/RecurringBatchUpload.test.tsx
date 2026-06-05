@@ -85,10 +85,14 @@ describe('Ingest data (real csv-uploads wiring)', () => {
     // store picker from stores-onboarded (only the ACTIVE coded store is offered)
     const store = screen.getByLabelText('Store')
     expect(within(store).getByRole('option', { name: /Acme Downtown #1 \(TX-102\)/ })).toBeInTheDocument()
-    // honest framing: "uploaded against [template]", and an 8a caveat; NOT "will use ... v2"
+    // honest framing: "uploaded against [template]" + async "active mapping version" copy.
     expect(screen.getByText(/uploaded against/i)).toBeInTheDocument()
-    expect(screen.getByText(/not yet pinned to a specific template version/i)).toBeInTheDocument()
+    expect(screen.getByText(/ingested asynchronously/i)).toBeInTheDocument()
+    expect(screen.getByText(/active mapping version/i)).toBeInTheDocument()
+    // no over-claim: never "will use ... v2", and no claim a specific version was pinned.
     expect(screen.queryByText(/will use .*v2/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/pinned/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/mapping_version_id/i)).not.toBeInTheDocument()
     // active mapping shown as read-only context (reused display), no editable review
     expect(screen.getByText('Field mappings')).toBeInTheDocument()
     expect(screen.queryByLabelText(/Canonical for/)).not.toBeInTheDocument()
@@ -116,7 +120,11 @@ describe('Ingest data (real csv-uploads wiring)', () => {
 
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent(/Uploaded 42 rows against Sales/)
-    expect(status).toHaveTextContent(/not yet version-pinned/i)
+    // async framing kept; no over-claim of a pinned/specific applied version.
+    expect(status).toHaveTextContent(/ingested\s+asynchronously/i)
+    expect(status).toHaveTextContent(/active mapping version/i)
+    expect(status).not.toHaveTextContent(/version-pinned/i)
+    expect(status).not.toHaveTextContent(/mapping_version_id/i)
   })
 
   it('surfaces a server 409 store-not-active as a clear error', async () => {

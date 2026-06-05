@@ -23,10 +23,12 @@ import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
 // the file (REALLY - the bytes are sent) to dis-ui-server's POST /api/v1/csv-uploads against
 // this template, for an ACTIVE store. It is gated on the template having an active version.
 //
-// HONESTY (D71 / Slice 8a): the batch is "uploaded against" this template. The streaming
-// consumer is template-UNAWARE until Slice 8a, so we do NOT claim the batch is mapped through
-// any specific version - the active version below is shown only as current context. Canonical
-// mapping runs asynchronously after the upload.
+// HONESTY (D71 resolved by slice-8a): the batch is "uploaded against" this template, and the
+// consumer is now template-keyed, so it maps the batch through the template's ACTIVE mapping
+// version. Two real caveats kept in the copy: the version applied is the one ACTIVE at consume
+// time (resolved when the batch is processed, not pinned at upload), and mapping is
+// asynchronous (the 201 means received, not mapped). We never claim a specific applied
+// mapping_version_id (the upload result returns none).
 
 // Map a dis-ui-server error to a user-facing message (contract 8.1 status + envelope code).
 function uploadErrorMessage(err: unknown): string {
@@ -112,7 +114,7 @@ export function RecurringBatchUpload() {
     try {
       // The real call: a live multipart POST that actually sends the file (D72). The server
       // derives source_id from the template lineage; we send only file + template_id +
-      // store_code. NOTE: mapping is not yet version-pinned (Slice 8a).
+      // store_code. The consumer maps the batch through the template's active version (D71).
       const uploaded = await uploadCsvWithSessionToken({
         file,
         templateId: template.template_id,
@@ -136,27 +138,30 @@ export function RecurringBatchUpload() {
         </p>
       </header>
 
-      {/* FM4: honest. The file IS uploaded to DIS. Canonical mapping is asynchronous and is
-          NOT yet pinned to a template version (that arrives with Slice 8a). */}
+      {/* FM4: honest. The file IS uploaded to DIS; the consumer maps it through the template's
+          active version (D71). Two caveats kept: mapping is asynchronous (201 = received, not
+          mapped) and the version applied is the one active at consume time. */}
       <div
         role="note"
         className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-caption text-muted-foreground"
       >
         <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
         <span>
-          This uploads the file to DIS for ingestion. The file is really sent. Canonical mapping
-          runs asynchronously and is not yet pinned to a specific template version (that arrives
-          with Slice 8a).
+          This uploads the file to DIS. The file is really sent, then ingested asynchronously
+          through the active mapping version of {template.template_name}. Mapping happens after
+          upload, not instantly.
         </span>
       </div>
 
-      {/* The template's current active mapping, shown as CONTEXT only (read-only). It is not a
-          guarantee of what maps this batch before Slice 8a. */}
+      {/* The template's active mapping (read-only): the rules this batch will be mapped through.
+          The version number is the template's CURRENT active version (context from
+          mapping-templates), not a claim that the upload pinned that version. */}
       <div>
-        <h2 className="text-body-strong mb-1">Current active mapping (context)</h2>
+        <h2 className="text-body-strong mb-1">Active mapping</h2>
         <p className="text-caption text-muted-foreground mb-2">
-          The template&apos;s current active version (v{active.version}). Shown for context; mapping
-          is not yet pinned to a version (Slice 8a).
+          The rules this batch will be mapped through. The version shown (v{active.version}) is the
+          template&apos;s current active version; the version applied is whichever is active when
+          the batch is processed.
         </p>
         <ActiveMappingSummary version={active} catalog={catalog} />
       </div>
@@ -217,8 +222,8 @@ export function RecurringBatchUpload() {
 
       {result !== null ? (
         <p role="status" className="rounded-md border border-border bg-muted/40 p-3 text-sm text-foreground">
-          Uploaded {result.row_count} rows against {template.template_name}. Ingestion runs
-          asynchronously (mapping is not yet version-pinned, Slice 8a). Trace {result.trace_id}.
+          Uploaded {result.row_count} rows against {template.template_name}. They are ingested
+          asynchronously through the template&apos;s active mapping version. Trace {result.trace_id}.
         </p>
       ) : (
         <div className="flex gap-3">
