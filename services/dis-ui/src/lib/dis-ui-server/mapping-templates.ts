@@ -65,6 +65,9 @@ export type MappingTemplateDetail = MappingTemplate & {
 // catalog keys ONLY - store_id is identity-resolved and never a field-mapping target.
 const SALES_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-0000000000a1'
 const INVENTORY_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-0000000000a2'
+// A draft-only template (never activated): no active version, so a recurring batch cannot
+// reuse it. Exercises the active-version precondition (T4 FM3).
+const PRICING_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-0000000000a3'
 
 const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
   t_acme9k2l1mn4: [
@@ -208,6 +211,39 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               event_date: [{ op: 'date_from_datetime', args: { source: 'source_event_timestamp' } }],
               event_category: [{ op: 'constant', args: { value: 'INVENTORY' } }],
             },
+          },
+        },
+      ],
+    },
+    {
+      template_id: PRICING_TEMPLATE_ID,
+      source_id: 'manual_csv_upload',
+      template_name: 'Pricing',
+      latest_version: 1,
+      active_version: null,
+      staged_version: null,
+      draft_version: 1,
+      versions_count: 1,
+      created_at: '2026-06-04T09:00:00Z',
+      latest_version_created_at: '2026-06-04T09:00:00Z',
+      versions: [
+        {
+          mapping_version_id: 44,
+          version: 1,
+          status: 'draft',
+          field_count: 2,
+          transform_count: 0,
+          predecessor_version_id: null,
+          created_at: '2026-06-04T09:00:00Z',
+          created_by_user_id: null,
+          activated_at: null,
+          deprecated_at: null,
+          mapping_rules: {
+            version: 1,
+            rename: { item_code: 'sku_id' },
+            normalize: {},
+            cast: {},
+            derive: {},
           },
         },
       ],

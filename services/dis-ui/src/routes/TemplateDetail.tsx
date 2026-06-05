@@ -1,15 +1,17 @@
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
+import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { ActiveMappingSummary } from '../components/ActiveMappingSummary'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
 import { activeTemplateVersion, useMappingTemplate } from '../lib/dis-ui-server/mapping-templates'
-import type { MappingTemplateVersion, NormalizeOp, TemplateStatus } from '../lib/dis-ui-server/mapping-templates'
+import type { MappingTemplateVersion, TemplateStatus } from '../lib/dis-ui-server/mapping-templates'
 import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
 import type { TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
 import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
@@ -25,13 +27,6 @@ function statusTone(status: TemplateStatus): StatusTone {
     return 'info'
   }
   return 'neutral'
-}
-
-// Render one normalize/derive op as "name (arg=value, ...)" - the format declarations
-// (date_format, decimal_separator) live in the args.
-function formatOp(op: NormalizeOp): string {
-  const args = Object.entries(op.args).map(([key, value]) => `${key}=${String(value)}`)
-  return args.length > 0 ? `${op.op} (${args.join(', ')})` : op.op
 }
 
 // Template detail (T2), at /sources/:sourceId/templates/:templateId. The active version
@@ -60,19 +55,6 @@ export function TemplateDetail() {
   const template = detail.data
   const active = activeTemplateVersion(template)
   const catalog: TemplateMappingField[] = fields.data ?? []
-  const fieldByKey = new Map<string, TemplateMappingField>()
-  for (const field of catalog) {
-    if (!fieldByKey.has(field.key)) {
-      fieldByKey.set(field.key, field)
-    }
-  }
-
-  const renameEntries = active ? Object.entries(active.mapping_rules.rename) : []
-  // Format rules: union of the canonical columns touched by normalize / cast / derive.
-  const rules = active?.mapping_rules
-  const ruleColumns = rules
-    ? [...new Set([...Object.keys(rules.normalize), ...Object.keys(rules.cast), ...Object.keys(rules.derive)])]
-    : []
 
   return (
     <section className="flex flex-col gap-6">
@@ -83,12 +65,38 @@ export function TemplateDetail() {
             Template for {template.source_id}. The active version is reused for every new batch.
           </p>
         </div>
-        {active !== null ? (
-          <StatusBadge tone="success">Active: v{active.version}</StatusBadge>
-        ) : (
-          <StatusBadge tone="neutral">No active version</StatusBadge>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {active !== null ? (
+            <StatusBadge tone="success">Active: v{active.version}</StatusBadge>
+          ) : (
+            <StatusBadge tone="neutral">No active version</StatusBadge>
+          )}
+          {/* T4: a recurring batch reuses the active mapping. The action is gated on an
+              active version existing - you cannot reuse a mapping that was never activated. */}
+          {active !== null ? (
+            <Link
+              to={`/sources/${template.source_id}/templates/${template.template_id}/upload`}
+              className={buttonVariants({ variant: 'default', size: 'sm' })}
+            >
+              Upload new batch
+            </Link>
+          ) : (
+            <button
+              type="button"
+              disabled
+              title="No active version to reuse yet"
+              className={buttonVariants({ variant: 'default', size: 'sm' })}
+            >
+              Upload new batch
+            </button>
+          )}
+        </div>
       </header>
+      {active === null ? (
+        <p className="text-caption text-muted-foreground">
+          No active version to reuse yet. Activate a mapping before uploading a batch.
+        </p>
+      ) : null}
 
       {/* Version lineage */}
       <Card>
@@ -129,98 +137,9 @@ export function TemplateDetail() {
         </CardContent>
       </Card>
 
-      {/* The active version's mapping, split into the two concerns. */}
-      {active !== null ? (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Field mappings</CardTitle>
-              <p className="text-caption text-muted-foreground">
-                Which canonical field each source column maps to (active v{active.version}).
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto"><Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Source column</TableHead>
-                    <TableHead>Canonical field</TableHead>
-                    <TableHead>Section</TableHead>
-                    <TableHead>Type</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {renameEntries.map(([sourceCol, canonicalKey]) => {
-                    const field = fieldByKey.get(canonicalKey)
-                    return (
-                      <TableRow key={sourceCol}>
-                        <TableCell className="font-mono text-xs">{sourceCol}</TableCell>
-                        <TableCell className="font-medium text-foreground">
-                          {field ? field.display_name : canonicalKey}
-                          {field?.mandatory ? ' *' : ''}
-                          <span className="block font-mono text-caption font-normal text-muted-foreground">
-                            {canonicalKey}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">{field?.section ?? '-'}</TableCell>
-                        <TableCell className="text-muted-foreground">{field?.datatype ?? '-'}</TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table></div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Format rules</CardTitle>
-              <p className="text-caption text-muted-foreground">
-                How values are normalized and cast (date format, decimal separator, type).
-              </p>
-            </CardHeader>
-            <CardContent>
-              {ruleColumns.length === 0 ? (
-                <p className="text-caption text-muted-foreground">No format rules declared.</p>
-              ) : (
-                <div className="overflow-x-auto"><Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Canonical field</TableHead>
-                      <TableHead>Rule</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {ruleColumns.map((col) => {
-                      const parts: string[] = []
-                      for (const op of rules?.normalize[col] ?? []) {
-                        parts.push(`normalize: ${formatOp(op)}`)
-                      }
-                      const castSpec = rules?.cast[col]
-                      if (castSpec) {
-                        const detailStr =
-                          castSpec.precision !== undefined
-                            ? `${castSpec.type}(${castSpec.precision},${castSpec.scale ?? 0})`
-                            : castSpec.type
-                        parts.push(`cast: ${detailStr}`)
-                      }
-                      for (const op of rules?.derive[col] ?? []) {
-                        parts.push(`derive: ${formatOp(op)}`)
-                      }
-                      return (
-                        <TableRow key={col}>
-                          <TableCell className="font-mono text-xs">{col}</TableCell>
-                          <TableCell className="text-muted-foreground">{parts.join('; ')}</TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table></div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
+      {/* The active version's mapping, split into the two concerns (read-only). The same
+          display is reused by the recurring-batch upload flow (T4). */}
+      {active !== null ? <ActiveMappingSummary version={active} catalog={catalog} /> : null}
 
       {/* Store locale context (read-only; the editable locale declaration is a later slice). */}
       <Card>

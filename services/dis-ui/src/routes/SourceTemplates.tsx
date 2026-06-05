@@ -86,12 +86,33 @@ export function SourceTemplates() {
                   <TableCell className="text-muted-foreground">{template.versions_count}</TableCell>
                   <TableCell className="text-muted-foreground">{template.latest_version_created_at}</TableCell>
                   <TableCell>
-                    <Link
-                      to={`/sources/${sourceId}/templates/${template.template_id}`}
-                      className={buttonVariants({ variant: 'outline', size: 'sm' })}
-                    >
-                      View
-                    </Link>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Link
+                        to={`/sources/${sourceId}/templates/${template.template_id}`}
+                        className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                      >
+                        View
+                      </Link>
+                      {/* T4: reuse the active mapping for a new batch. Gated on an active
+                          version existing (cannot reuse a never-activated mapping). */}
+                      {template.active_version !== null ? (
+                        <Link
+                          to={`/sources/${sourceId}/templates/${template.template_id}/upload`}
+                          className={buttonVariants({ variant: 'default', size: 'sm' })}
+                        >
+                          Upload new batch
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          title="No active version to reuse yet"
+                          className={buttonVariants({ variant: 'default', size: 'sm' })}
+                        >
+                          Upload new batch
+                        </button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

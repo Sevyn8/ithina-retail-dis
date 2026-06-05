@@ -15,6 +15,7 @@ import { Notifications } from './Notifications'
 import { OpsFleet } from './OpsFleet'
 import { OpsQuery } from './OpsQuery'
 import { QuarantineConsole } from './QuarantineConsole'
+import { RecurringBatchUpload } from './RecurringBatchUpload'
 import { SampleUpload } from './SampleUpload'
 import { Shadow } from './Shadow'
 import { SourceCreate } from './SourceCreate'
@@ -51,6 +52,11 @@ export function AppRoutes() {
           {/* Template-aware mapping surface (T2, D68): templates list + template detail. */}
           <Route path="/sources/:sourceId/templates" element={<SourceTemplates />} />
           <Route path="/sources/:sourceId/templates/:templateId" element={<TemplateDetail />} />
+          {/* Recurring-batch upload (T4): reuse a template's active mapping for a new batch. */}
+          <Route
+            path="/sources/:sourceId/templates/:templateId/upload"
+            element={<RecurringBatchUpload />}
+          />
           <Route path="/sources/:sourceId/shadow" element={<Shadow />} />
           <Route path="/upload" element={<SampleUpload />} />
           <Route path="/upload/:sampleId/review" element={<MappingReview />} />
