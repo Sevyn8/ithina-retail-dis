@@ -772,8 +772,11 @@ name = "dis-ui-server"
 version = "0.0.0"
 source = { editable = "services/dis-ui-server" }
 dependencies = [
+    { name = "dis-canonical" },
     { name = "dis-core" },
+    { name = "dis-mapping" },
     { name = "dis-rls" },
+    { name = "dis-validation" },
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
@@ -784,8 +787,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dis-canonical", editable = "libs/dis-canonical" },
     { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-mapping", editable = "libs/dis-mapping" },
     { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "dis-validation", editable = "libs/dis-validation" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.9" },

@@ -504,3 +504,110 @@ class OpsRoleRequiredError(DisError):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+# -- dis-ui-server data-endpoint errors (Slice 14b) -----------------------------
+# Raised by the dis-ui-server mapping-template handlers/repos (API_CONTRACT.md
+# §2.3) and mapped by its FastAPI exception handlers to the §2.3 envelope. Each
+# carries the load-bearing identifiers (code-quality rule 5); none ever carries a
+# mapping_rules payload or any request-body value.
+
+
+class ResourceNotFoundError(DisError):
+    """A throw-style lookup found no row visible to the caller. Maps to HTTP 404.
+
+    Used where the contract pins throw-style (not 200-with-null) semantics, e.g.
+    ``GET /mapping-templates/{template_id}``. Under RLS, "does not exist" and
+    "belongs to another tenant" are deliberately the same 404 (no existence
+    oracle). ``resource`` is the resource family (e.g. ``mapping_template``);
+    ``identifier`` is the looked-up key.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        resource: str | None = None,
+        identifier: str | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.resource = resource
+        self.identifier = identifier
+        self.tenant_id = tenant_id
+
+
+class MappingTemplateNameConflictError(DisError):
+    """``template_name`` is already taken by another template of the same source.
+
+    Maps to HTTP 409. The database arbiter is the GiST EXCLUDE constraint
+    ``ex_csm_template_name_per_source`` (name unique per ``(tenant, source)``
+    among non-DEPRECATED rows, version rows of ONE template excepted); this error
+    is its domain form, raised by the repo's IntegrityError translation — never
+    a raw 500.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: str | None = None,
+        source_id: str | None = None,
+        template_name: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tenant_id = tenant_id
+        self.source_id = source_id
+        self.template_name = template_name
+
+
+class MappingStateConflictError(DisError):
+    """The template's lifecycle state refuses the requested operation. Maps to HTTP 409.
+
+    Raised when an edit targets a template whose every version is DEPRECATED
+    (D17: the lineage is closed; create a new template), or when a concurrent
+    edit lost the per-template version-sequence race (``uq_csm_seq_per_source``).
+    ``expected``/``actual`` name the state mismatch in lifecycle vocabulary.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        template_id: str | None = None,
+        tenant_id: str | None = None,
+        expected: str | None = None,
+        actual: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.template_id = template_id
+        self.tenant_id = tenant_id
+        self.expected = expected
+        self.actual = actual
+
+
+class FieldCatalogDriftError(DisError):
+    """The authored field-catalog labels drifted from the derived canonical field set.
+
+    Raised at dis-ui-server startup by the catalog builder's both-directions
+    check: a mapping-produced canonical column without an authored label, or an
+    authored label whose column no longer exists. Either way the catalog cannot
+    be served truthfully — fail the boot loudly (crashloop is the correct
+    misconfiguration signal), never serve a partial catalog. ``missing`` /
+    ``stale`` carry column names only.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        missing: tuple[str, ...] = (),
+        stale: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.missing = missing
+        self.stale = stale

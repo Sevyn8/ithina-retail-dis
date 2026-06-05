@@ -17,15 +17,19 @@ from dis_core.errors import (
     DisError,
     EventContractError,
     EventPathMismatchError,
+    FieldCatalogDriftError,
     IdentityClientError,
     IdentityNotFoundError,
     IdentityServiceUnavailableError,
     MappingConfigError,
     MappingError,
     MappingInputError,
+    MappingStateConflictError,
+    MappingTemplateNameConflictError,
     MirrorSyncError,
     OpsRoleRequiredError,
     PreflightFailedError,
+    ResourceNotFoundError,
     SuiteDefinitionError,
     SuiteDriftError,
     TenantScopeError,
@@ -190,6 +194,55 @@ def test_tenant_scope_error_preserves_tenant_id() -> None:
 def test_ops_role_required_error_message() -> None:
     err = OpsRoleRequiredError("dis:ops role required")
     assert err.message == "dis:ops role required"
+
+
+def test_data_endpoint_errors_root_at_dis_error() -> None:
+    # Slice 14b: the dis-ui-server data endpoints' error family (contract §7.4),
+    # mapped to 404/409 (and a startup abort) by the service's handlers.
+    assert issubclass(ResourceNotFoundError, DisError)
+    assert issubclass(MappingTemplateNameConflictError, DisError)
+    assert issubclass(MappingStateConflictError, DisError)
+    assert issubclass(FieldCatalogDriftError, DisError)
+
+
+def test_resource_not_found_error_preserves_context() -> None:
+    err = ResourceNotFoundError(
+        "mapping template x not found",
+        resource="mapping_template",
+        identifier="019e9804-12ce-7f57-b9c0-eb3c7d0e8609",
+        tenant_id="ten",
+    )
+    assert err.resource == "mapping_template"
+    assert err.identifier == "019e9804-12ce-7f57-b9c0-eb3c7d0e8609"
+    assert err.tenant_id == "ten"
+
+
+def test_template_name_conflict_error_preserves_context() -> None:
+    err = MappingTemplateNameConflictError(
+        "name taken", tenant_id="ten", source_id="manual_csv_upload", template_name="sales"
+    )
+    assert err.source_id == "manual_csv_upload"
+    assert err.template_name == "sales"
+    assert err.tenant_id == "ten"
+
+
+def test_mapping_state_conflict_error_preserves_context() -> None:
+    err = MappingStateConflictError(
+        "lineage closed",
+        template_id="tpl",
+        tenant_id="ten",
+        expected="DRAFT, STAGED or ACTIVE",
+        actual="DEPRECATED",
+    )
+    assert err.template_id == "tpl"
+    assert err.expected == "DRAFT, STAGED or ACTIVE"
+    assert err.actual == "DEPRECATED"
+
+
+def test_field_catalog_drift_error_preserves_column_names() -> None:
+    err = FieldCatalogDriftError("labels drifted", missing=("quantity",), stale=("ghost",))
+    assert err.missing == ("quantity",)
+    assert err.stale == ("ghost",)
 
 
 def test_errors_module_is_leaf_level() -> None:

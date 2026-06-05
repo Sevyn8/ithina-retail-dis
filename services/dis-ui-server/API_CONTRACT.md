@@ -869,6 +869,94 @@ What this service needs from elsewhere, and how each is stubbed until it lands:
 
 ---
 
+## 7. Slice 14b surface — mapping templates + stores (template grain, D68)
+
+**Status:** built (Slice 14b). This section is ADDITIVE and documents the first live data
+endpoints. It postdates the §3–§5 surface, which was derived from the pre-template-grain
+frontend demand list; where the two disagree, **this section governs for these routes and
+sets the conventions for future surfaces** (the frontend adapts on its side; per the slice
+contract these shapes are designed clean, not reverse-engineered).
+
+### 7.1 Conventions set here (supersede the inherited ones for this and future surfaces)
+
+1. **`mapping_rules` travels in the RAW D49 shape** (`{version, rename, normalize, cast,
+   derive}`, the `dis_mapping.SourceMapping` document) on reads AND writes — not the §4
+   flat down-rendered `dict[str,str]` view. A down-rendered read cannot round-trip an edit
+   without re-inventing locale/format args, which D49 forbids (never-default locale). The
+   wire type IS the validator type (one model, no drift). Display conveniences
+   (`field_count`, `transform_count`) ride as derived sibling fields.
+2. **Detail lookups are throw-style 404** (`ResourceNotFoundError` envelope), not §2.4's
+   200-with-`null`. Under RLS, absent and other-tenant are deliberately the same 404 (no
+   existence oracle). The §2.4 rule remains only for the legacy routes it lists.
+3. **DRAFT is surfaced on the template surface.** §2.6's "DRAFT never surfaced in version
+   lists" applied to the source-grain §3.1 version list; a template's DRAFT is its editable
+   head and appears in template list/detail with wire status `"draft"`.
+
+### 7.2 Endpoints
+
+| Method + path | Auth | Success | Notes |
+|---|---|---|---|
+| GET `/v1/stores-onboarded` | tenant | 200 `OnboardedStore[]` | `identity_mirror.stores`, **in-query** tenant scoping (RLS-OFF, D41 — registered weak link; predicate lives only in `repos/stores.py`). Order: name, store_id. Store vocab lowercased (`opening\|active\|inactive\|closed`, `inclusive\|exclusive`). |
+| GET `/v1/template-mapping-fields` | any authenticated | 200 `TemplateMappingField[]` | Tenant-independent; no `rls_session`, no DB — built at startup from `dis_validation.mapping_produced_columns` over the two event models + authored labels (both-directions drift check fails boot). One entry per (section, column); `mandatory` = "must be PROVIDED by rename or constant/copy/date_from_datetime derive". |
+| GET `/v1/mapping-templates?source_id=` | tenant | 200 `MappingTemplate[]` | Lineage summaries via `rls_session`. Order: source_id, template_name. |
+| GET `/v1/mapping-templates/{template_id}` | tenant | 200 `MappingTemplateDetail` | Full version lineage (version desc, DRAFT + DEPRECATED included), rules raw. 404 throw-style. |
+| POST `/v1/mapping-templates` | tenant | **201** `MappingTemplateDetail` | Mints UUIDv7 `template_id`; writes the v1 DRAFT (seq trigger-assigned). `source_id` validated well-formed (`^[a-z0-9_]{1,128}$`) only — no source registry exists (Blocker 2; deliberate slice limit). |
+| PATCH `/v1/mapping-templates/{template_id}` | tenant | 200 `MappingTemplateDetail` | See 7.3. |
+
+Wire models: `schemas/` (`OnboardedStore`, `TemplateMappingField`, `MappingTemplate`,
+`MappingTemplateVersion`, `MappingTemplateDetail`, `MappingTemplateCreate`,
+`MappingTemplatePatch`). `version` = `version_seq_per_source` (per-template);
+`mapping_version_id` (global BIGSERIAL, the D22 pin) appears in payloads, never in URLs.
+Role posture: Phase-1 gating only (tenant-vs-ops, §2.1); `dis:mapping_admin` is NOT yet
+enforced (D25/D56 pending).
+
+### 7.3 Write semantics (the recorded boundary calls)
+
+- Create and edit write **DRAFT rows only** — no path writes ACTIVE/STAGED, so this surface
+  can never produce a second ACTIVE (the 14a consumer `.first()` ordering hazard stays
+  untriggered) and publishes **no `mapping.changed`** (DRAFTs are invisible to the consumer;
+  the publish belongs to the lifecycle-transition slice).
+- `mapping_rules` pass a four-step gate BEFORE any write (400 `MappingConfigError`): D49
+  shape/args (`SourceMapping`), non-empty rename, targets fit exactly ONE event model,
+  mandatory coverage (required ∩ mapping-produced of the routed model — derived live, the
+  same source as the field catalog). The row-level `value_before OR value_after` CHECK is
+  deliberately NOT lifted to config validation (strictly NOT-NULL-derived; an authored
+  change-template lint is a surfaced later refinement).
+- **PATCH lifecycle (D17):** a DRAFT edits in place; with no DRAFT, a STAGED/ACTIVE head
+  yields a NEW version — status DRAFT, `predecessor_version_id` = head's
+  `mapping_version_id`, seq trigger-assigned; an all-DEPRECATED lineage is 409
+  (`MappingStateConflictError`).
+- **`template_name` is lineage metadata, not version content:** a rename updates ALL of the
+  template's rows (D17 immutability covers `mapping_rules`/`source_id`/seq/predecessor, not
+  the label) and does not mint a version. Cross-template uniqueness is the DB's EXCLUDE
+  constraint → 409 `MappingTemplateNameConflictError`, never a 500.
+- **At most one DRAFT per template is a write-path convention** (not a DB invariant): create
+  mints the first; edit reuses it or chains exactly one. Concurrent PATCHes serialize on a
+  **lock-then-reread** (two `FOR UPDATE` statements; the second, fresh-snapshot read is the
+  one decided on — a single locked read resumes on a stale statement snapshot and was shown
+  live to mint a double-DRAFT, since the seq trigger's `MAX` runs on a fresh snapshot and
+  the unique backstop never fires). The normal interleaving therefore converges to
+  edit-in-place; a lost seq race remains a 409 `MappingStateConflictError` backstop only.
+- **An unprovisioned (well-formed but never-mirrored) token tenant**: reads serve `[]`/404
+  exactly like a provisioned tenant with no data (no existence oracle); create, where the
+  tenant FK (`fk_csm_tenant`) makes the difference detectable, is a clean 403
+  `TenantScopeError` ("not provisioned in DIS"), never a 500. Any OTHER IntegrityError
+  re-raises and surfaces as a 500 (rule 6: no blanket constraint-to-4xx mapping).
+- `created_by_user_id` persists only when the token `sub` parses as a UUID, else NULL
+  (column nullable by design; claim vocabulary unsigned — D56/Blocker 5).
+
+### 7.4 Error additions (extend the §2.3 table)
+
+| Error | Status | Code |
+|---|---|---|
+| `MappingConfigError` | 400 | `mapping_config` |
+| `ResourceNotFoundError` | 404 | `resource_not_found` |
+| `MappingTemplateNameConflictError` | 409 | `mapping_template_name_conflict` |
+| `MappingStateConflictError` | 409 | `mapping_state_conflict` |
+| `FieldCatalogDriftError` | (startup abort) | n/a — fails boot, never serves |
+
+---
+
 ## Appendix A — Deferred demand-list endpoints (no frontend call site)
 
 In the demand list but called nowhere in dis-ui today. Not part of the implementable surface; listed so nobody re-derives them as missing. Build only when a UI slice wires them.

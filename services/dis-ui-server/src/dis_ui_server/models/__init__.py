@@ -1,0 +1,11 @@
+"""ORM rows on ``db.Base`` (D67) — config.source_mappings + identity_mirror.stores.
+
+These models are typed table metadata for Core-style execution on the
+``rls_session`` connection (service CLAUDE.md durable invariant); they are
+never attached to an ``AsyncSession``.
+"""
+
+from dis_ui_server.models.source_mapping_row import SourceMappingRow
+from dis_ui_server.models.store_row import StoreRow
+
+__all__ = ["SourceMappingRow", "StoreRow"]

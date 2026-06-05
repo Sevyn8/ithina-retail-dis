@@ -32,11 +32,24 @@ For the EPE block (purpose, entry, process, exit), file structure, and operation
   convention. dis-ui's `client.ts` fetch base must agree (`/api/v1`) when the
   frontend's real mode wires up (13b/19, API_CONTRACT Appendix B).
 - **ORM through `dis-rls` only.** This service uses the SQLAlchemy ORM/declarative
-  layer (`db.py` `Base`; D-number registered at the 13a commit gate). Any model on
-  that base executes ONLY inside `rls_session(engine, tenant_id)` — never a raw
-  `AsyncSession`, never a second engine. The engine comes from `create_rls_engine`
-  so the `current_database()=='ithina_dis_db'` + NOBYPASSRLS guard covers every
+  layer (`db.py` `Base`; D67). Any model on that base executes ONLY inside
+  `rls_session(engine, tenant_id)` — never a raw `AsyncSession`, never a second
+  engine. The engine comes from `create_rls_engine` so the
+  `current_database()=='ithina_dis_db'` + NOBYPASSRLS guard covers every
   connection.
+
+## Durable invariant (established in Slice 14b)
+
+- **Declarative models execute CORE-STYLE on the `rls_session` connection** —
+  `await conn.execute(select(Model)…/insert(Model)…/update(Model)…)` — never via an
+  `AsyncSession` bound to it. Reason: `rls_session` owns the GUC-scoped transaction
+  (`SET LOCAL app.tenant_id`); a `session.commit()` inside the block commits that
+  transaction EARLY, and every subsequent statement on the connection autobegins a
+  NEW transaction with no `app.tenant_id` — under RLS fail-closed policies it reads
+  zero rows and writes nothing, SILENTLY. Core-style execution has no commit to
+  miscall, no identity map, no autoflush, and is fully typed via `Mapped[...]`.
+  This is the reusable data-access pattern for every later API slice; repos
+  (`repos/`) are the only modules that build statements against the ORM models.
 - **The auth seam is the sole source of `tenant_id`.** `auth/scope.py` dependencies
   (`get_current_identity`, `require_tenant`, `require_ops`) read the verified token
   only — never a body, query param, or unverified header — and are the only path by

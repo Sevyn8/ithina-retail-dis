@@ -16,6 +16,7 @@ code-quality convention).
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends, Request
 
@@ -61,3 +62,24 @@ async def require_ops(
     if OPS_ROLE not in identity.roles:
         raise OpsRoleRequiredError(f"{OPS_ROLE} role required for an ops endpoint")
     return identity
+
+
+def tenant_uuid_of(identity: Identity) -> UUID:
+    """The verified tenant claim as a UUID — the form every DB predicate needs.
+
+    Real tenant ids are internal UUIDs (D37/D52); a claim that does not parse is
+    a malformed token scope, refused as 403 (never a 500 from a cast deep in a
+    query, and never a predicate built from an unparsed string).
+    """
+    if identity.tenant_id is None:
+        raise TenantScopeError(
+            "token carries no tenant_id for a tenant-scoped endpoint",
+            tenant_id=None,
+        )
+    try:
+        return UUID(identity.tenant_id)
+    except ValueError as exc:
+        raise TenantScopeError(
+            "token tenant_id is not a valid tenant identifier",
+            tenant_id=None,  # never echo the malformed claim value
+        ) from exc

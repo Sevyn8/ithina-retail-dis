@@ -25,6 +25,7 @@ from fastapi import APIRouter, FastAPI
 
 from dis_core.logging import configure_logging, get_logger
 from dis_ui_server.api import api_router
+from dis_ui_server.catalog import build_field_catalog
 from dis_ui_server.config import API_PREFIX, SERVICE_NAME, UiServerConfig
 from dis_ui_server.db import create_engine_from_config
 from dis_ui_server.errors_http import register_error_handlers
@@ -39,6 +40,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine_from_config(config)  # lazy: no connection yet
     app.state.config = config
     app.state.engine = engine
+    # Built once per process (inputs are code constants; no DB, no tenant). A
+    # label-vs-derivation drift raises FieldCatalogDriftError HERE, aborting
+    # startup — crashloop is the correct signal, never a half-true catalog.
+    app.state.field_catalog = build_field_catalog()
     _log.bind(stage="startup").info("dis-ui-server started")
     try:
         yield

@@ -23,6 +23,14 @@ dependencies = [
   "psycopg[binary]>=3.2",
   # Request/response models (later slices; FastAPI serializes them directly).
   "pydantic>=2.9",
+  # Slice 14b: the D49 mapping_rules contract (SourceMapping is BOTH the
+  # create/edit validator and the wire type — one model, no drift).
+  "dis-mapping",
+  # Slice 14b: the canonical event models the field catalog derives from.
+  "dis-canonical",
+  # Slice 14b: mapping_produced_columns — the drift-guarded provenance
+  # partition shared by the catalog AND the create/edit semantic gate.
+  "dis-validation",
 ]
 
 [build-system]

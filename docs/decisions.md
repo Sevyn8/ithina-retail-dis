@@ -1064,3 +1064,27 @@ seed tests) were a necessary consequence of RLS-ON — a scope clarification of
 **Cross-refs.** D68 (the grain on the same table), D24/hard rule 1 (isolation posture),
 D6 (consumer side-input read). **Scope.** Alembic 0005 + the `schemas/postgres` manifest +
 the dis-testing/consumer test infra; no service code, no policy change on any other table.
+
+### D70 store-list tenant isolation is an in-query predicate, not RLS `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 14b, registered in plan mode, number assigned at the commit
+gate). A registered WEAK LINK with a revisit trigger, not a settled-forever posture.
+
+**Decision.** `GET /api/v1/stores-onboarded` (dis-ui-server) scopes by an explicit
+`WHERE tenant_id = <token tenant>` in `repos/stores.py` because `identity_mirror` is RLS-OFF
+(D41); there is no database backstop, so a missing predicate is a cross-tenant leak.
+Containment: a single chokepoint (the predicate lives in exactly one repo function; no other
+module queries the store model) plus a mutation-killing test posture — removing the predicate
+fails four isolation tests (exact-rows-per-tenant, A-cannot-see-B disjointness,
+unknown-tenant-empty, tenant-from-token-only against a smuggled query param and header). The
+read still runs inside `rls_session` so the engine's wrong-database/NOBYPASSRLS posture guard
+applies; the GUC is simply a no-op on the RLS-OFF table.
+
+**Revisit trigger.** Bring `identity_mirror` under RLS (or an equivalent database-level
+backstop) before it carries more tenant-facing read surface than this one endpoint. Any new
+tenant-facing read of `identity_mirror.*` re-opens this entry rather than copying the
+predicate pattern.
+
+**Cross-refs.** D41 (`identity_mirror` RLS-off resolution), D67 (the ORM layer this read
+uses), D69 (the contrasting RLS-ON posture on `config.source_mappings`). **Scope.**
+dis-ui-server `repos/stores.py` + its isolation tests + this entry; no DDL.

@@ -34,8 +34,11 @@ from pydantic import BaseModel
 
 from dis_core.errors import (
     AuthTokenError,
+    MappingStateConflictError,
+    MappingTemplateNameConflictError,
     MirrorSyncError,
     OpsRoleRequiredError,
+    ResourceNotFoundError,
     RlsContextError,
     TenantScopeError,
 )
@@ -159,6 +162,29 @@ def _probe_router() -> APIRouter:
     @router.get("/raise/rls-context")
     async def raise_rls() -> None:
         raise RlsContextError("probe rls failure", database="wrong_db", role="some_role")
+
+    # Slice 14b error-family probes: the envelope mapping for the data endpoints.
+    @router.get("/raise/resource-not-found")
+    async def raise_not_found() -> None:
+        raise ResourceNotFoundError(
+            "probe not found", resource="mapping_template", identifier="x", tenant_id=TENANT_A
+        )
+
+    @router.get("/raise/template-name-conflict")
+    async def raise_name_conflict() -> None:
+        raise MappingTemplateNameConflictError(
+            "probe name conflict", tenant_id=TENANT_A, source_id="src", template_name="sales"
+        )
+
+    @router.get("/raise/mapping-state-conflict")
+    async def raise_state_conflict() -> None:
+        raise MappingStateConflictError(
+            "probe state conflict",
+            template_id="x",
+            tenant_id=TENANT_A,
+            expected="DRAFT, STAGED or ACTIVE",
+            actual="DEPRECATED",
+        )
 
     @router.get("/raise/unmapped")
     async def raise_unmapped() -> None:
