@@ -120,7 +120,7 @@ export function SourcesIndex() {
                   <TableCell>
                     <span className="flex items-center justify-end gap-2">
                       <Link
-                        to={`/sources/${source.source_id}/mappings`}
+                        to={`/sources/${source.source_id}/templates`}
                         className={buttonVariants({ variant: 'outline', size: 'sm' })}
                       >
                         Mappings

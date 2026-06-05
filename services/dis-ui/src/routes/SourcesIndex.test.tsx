@@ -34,9 +34,10 @@ describe('SourcesIndex', () => {
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
     expect(await screen.findByRole('heading', { name: 'Manage sources' })).toBeInTheDocument()
     expect(screen.getByText('Manual CSV Upload')).toBeInTheDocument()
+    // T2: the Manage-sources "Mappings" affordance now leads to the templates list.
     expect(screen.getByRole('link', { name: 'Mappings' })).toHaveAttribute(
       'href',
-      '/sources/manual_csv_upload/mappings',
+      '/sources/manual_csv_upload/templates',
     )
   })
 

@@ -20,6 +20,8 @@ import { Shadow } from './Shadow'
 import { SourceCreate } from './SourceCreate'
 import { SourceEdit } from './SourceEdit'
 import { SourcesIndex } from './SourcesIndex'
+import { SourceTemplates } from './SourceTemplates'
+import { TemplateDetail } from './TemplateDetail'
 import { StyleReference } from '../_style/StyleReference'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
@@ -46,6 +48,9 @@ export function AppRoutes() {
           <Route path="/sources/new" element={<SourceCreate />} />
           <Route path="/sources/:sourceId/edit" element={<SourceEdit />} />
           <Route path="/sources/:sourceId/mappings" element={<MappingVersions />} />
+          {/* Template-aware mapping surface (T2, D68): templates list + template detail. */}
+          <Route path="/sources/:sourceId/templates" element={<SourceTemplates />} />
+          <Route path="/sources/:sourceId/templates/:templateId" element={<TemplateDetail />} />
           <Route path="/sources/:sourceId/shadow" element={<Shadow />} />
           <Route path="/upload" element={<SampleUpload />} />
           <Route path="/upload/:sampleId/review" element={<MappingReview />} />
