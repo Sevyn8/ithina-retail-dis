@@ -76,9 +76,9 @@
   --color-source-square: var(--source-square);
   --color-source-other: var(--source-other);
 
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-geist-sans);
+  --font-heading: var(--font-inter-sans);
 
   --radius-sm: 0.125rem;
   --radius: 0.25rem;
@@ -102,9 +102,10 @@
 }
 
 :root {
-  /* Geist font families, loaded via @fontsource in main.tsx (the DIS UI cannot use
-     next/font). The @theme font tokens above resolve through these. */
-  --font-geist-sans: 'Geist Sans', system-ui, sans-serif;
+  /* Font families, loaded via @fontsource in main.tsx (the DIS UI cannot use next/font).
+     The @theme font tokens above resolve through these. T7: Inter is the app-wide sans
+     face (matching the Ithina console); Geist Mono stays for code/monospace. */
+  --font-inter-sans: 'Inter', system-ui, sans-serif;
   --font-geist-mono: 'Geist Mono', ui-monospace, monospace;
 
   /* Light theme (default). System preference + user override via next-themes. */

@@ -26,9 +26,13 @@ describe('design-system tokens (index.css)', () => {
     expect(css).toContain('@utility text-micro')
   })
 
-  it('binds the Geist font variables the @theme font tokens resolve through', () => {
-    expect(css).toContain("--font-geist-sans: 'Geist Sans'")
+  it('binds the font variables the @theme font tokens resolve through (T7: Inter sans, Geist Mono)', () => {
+    // T7: Inter is the app-wide sans face; the sans/heading tokens resolve through it.
+    expect(css).toContain("--font-inter-sans: 'Inter'")
+    expect(css).toContain('--font-sans: var(--font-inter-sans)')
+    expect(css).toContain('--font-heading: var(--font-inter-sans)')
+    // Geist Mono stays for code/monospace.
     expect(css).toContain("--font-geist-mono: 'Geist Mono'")
-    expect(css).toContain('--font-sans: var(--font-geist-sans)')
+    expect(css).toContain('--font-mono: var(--font-geist-mono)')
   })
 })

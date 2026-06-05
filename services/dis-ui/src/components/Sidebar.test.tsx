@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
@@ -20,10 +20,10 @@ const opsSnapshot: AuthSnapshot = {
 }
 
 // Inject an ops-flagged item so the gate is exercised without registering a real
-// ops surface this slice.
+// ops surface this slice. T7: items carry a section (grouping is visual only).
 const ITEMS: NavItem[] = [
-  { label: 'Sources', to: '/sources' },
-  { label: 'Ops Fleet', to: '/ops/fleet', ops: true },
+  { label: 'Sources', to: '/sources', section: 'DATA' },
+  { label: 'Ops Fleet', to: '/ops/fleet', ops: true, section: 'OPERATIONS' },
 ]
 
 describe('Sidebar nav gating', () => {
@@ -100,6 +100,64 @@ describe('Sidebar nav gating', () => {
     const addIdx = links.findIndex((l) => l.textContent === 'Add Source')
     expect(createIdx).toBeGreaterThanOrEqual(0)
     expect(addIdx).toBe(createIdx + 1)
+  })
+
+  it('renders the brand header (Ithina wordmark + DATA PLATFORM subtitle + placeholder mark)', () => {
+    renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    expect(screen.getByText('Ithina')).toBeInTheDocument()
+    expect(screen.getByText('DATA PLATFORM')).toBeInTheDocument()
+    // the placeholder mark is isolated (BrandMark); it carries the swap-point markers
+    const mark = screen.getByTestId('brand-mark')
+    expect(mark).toHaveAttribute('data-placeholder', 'ithina-logo')
+  })
+
+  it('groups the tenant nav into OVERVIEW / DATA / MONITORING sections (no OPERATIONS)', () => {
+    renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    expect(screen.getByRole('heading', { name: 'OVERVIEW' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'DATA' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'MONITORING' })).toBeInTheDocument()
+    // OPERATIONS is ops-gated: its header auto-hides for a tenant (no visible items).
+    expect(screen.queryByRole('heading', { name: 'OPERATIONS' })).not.toBeInTheDocument()
+  })
+
+  it('places each item under the right section header (DOM order)', () => {
+    const { container } = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    // The DATA header is immediately followed by its three items, then MONITORING.
+    const order = Array.from(container.querySelectorAll('h2, a')).map((el) => el.textContent)
+    const dataIdx = order.indexOf('DATA')
+    const monIdx = order.indexOf('MONITORING')
+    expect(dataIdx).toBeGreaterThanOrEqual(0)
+    expect(monIdx).toBeGreaterThan(dataIdx)
+    expect(order.slice(dataIdx + 1, monIdx)).toEqual(['Create Template', 'Add Source', 'Ingest Data'])
+    // OVERVIEW (Dashboard) precedes DATA.
+    expect(order.indexOf('OVERVIEW')).toBeLessThan(dataIdx)
+  })
+
+  it('shows the OPERATIONS section (header + items) only for an ops snapshot', () => {
+    const tenantView = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    expect(screen.queryByRole('heading', { name: 'OPERATIONS' })).not.toBeInTheDocument()
+    tenantView.unmount()
+    renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
+    expect(screen.getByRole('heading', { name: 'OPERATIONS' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ops Fleet' })).toBeInTheDocument()
+  })
+
+  it('renders thin-stroke icons on nav items', () => {
+    const { container } = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    // thin icons: strokeWidth 1.5 (lucide default is 2)
+    const thin = container.querySelectorAll('svg[stroke-width="1.5"]')
+    expect(thin.length).toBeGreaterThan(0)
+  })
+
+  it('mounts under the dark theme class', () => {
+    const { container } = renderWithProviders(
+      <div className="dark">
+        <Sidebar />
+      </div>,
+      { snapshot: tenantSnapshot },
+    )
+    expect(within(container).getByText('Ithina')).toBeInTheDocument()
+    expect(within(container).getByRole('heading', { name: 'DATA' })).toBeInTheDocument()
   })
 
   it('collapses and expands', async () => {
