@@ -51,7 +51,7 @@ variable "secret_env" {
 }
 
 variable "allow_public" {
-  description = "If true, grant roles/run.invoker to allUsers (public). Blocked by domain-restricted-sharing org policy; in that case keep false and front with IAP or an LB."
+  description = "If true, grant roles/run.invoker to allUsers (public), matching the ithina-retail-admin pattern (public Cloud Run + app-level JWT/CORS auth). PREREQUISITE: the project needs an iam.allowedPolicyMemberDomains exemption (allowAll, set at the project level the same way ithina-retail-admin has it); without that exemption the allUsers grant is rejected by the org default. Leave false until the exemption is in place, then flip to true."
   type        = bool
   default     = false
 }

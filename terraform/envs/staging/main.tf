@@ -99,10 +99,14 @@ module "dis_ui_server" {
   cloudsql_connection_name = module.cloud_sql.connection_name
 
   env = {
-    ENV            = "staging"
-    DIS_DB_NAME    = var.dis_db_name
-    DIS_DB_USER    = var.dis_db_user
-    CLOUDSQL_CONN  = module.cloud_sql.connection_name
+    ENV           = "staging"
+    DIS_DB_NAME   = var.dis_db_name
+    DIS_DB_USER   = var.dis_db_user
+    CLOUDSQL_CONN = module.cloud_sql.connection_name
+    # CORS points at the frontend URL (admin pattern, 14c explicit origins).
+    CORS_ALLOWED_ORIGINS = var.dis_ui_url
+    # App-level auth is STUB until real OIDC (D25).
+    AUTH_CLIENT_MODE = "STUB"
   }
 
   secret_env = {
@@ -110,8 +114,9 @@ module "dis_ui_server" {
     JWT_JWKS        = "dis-jwt-jwks"
   }
 
-  # Staging demo access. If domain-restricted-sharing org policy blocks public
-  # invokers, set false and front with IAP / an LB.
+  # Public Cloud Run + app-level JWT/CORS auth, matching ithina-retail-admin.
+  # REQUIRES the project-level iam.allowedPolicyMemberDomains exemption (allowAll);
+  # keep false until set, then flip to true.
   allow_public = true
 }
 
@@ -130,6 +135,9 @@ module "dis_ui" {
     VITE_API_BASE = var.dis_ui_server_url
   }
 
+  # Public Cloud Run + app-level JWT/CORS auth, matching ithina-retail-admin.
+  # REQUIRES the project-level iam.allowedPolicyMemberDomains exemption (allowAll);
+  # keep false until set, then flip to true.
   allow_public = true
 }
 

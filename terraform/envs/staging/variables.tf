@@ -171,6 +171,12 @@ variable "dis_ui_server_url" {
   default     = ""
 }
 
+variable "dis_ui_url" {
+  description = "Public URL of the dis-ui frontend, used for dis-ui-server's CORS_ALLOWED_ORIGINS allowlist (14c: explicit origins only, no wildcard). Known after the frontend deploys; set on a second apply."
+  type        = string
+  default     = ""
+}
+
 ###############################################################################
 # SFTPGo
 ###############################################################################

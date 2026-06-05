@@ -19,7 +19,25 @@ These satisfy the strictest common org constraints, so a policy check should req
 - Uniform bucket-level access on all buckets.
 - Least-privilege service accounts per service.
 
-If your org-policy check at org 395217984150 surfaces anything unusual (CMEK requirement, domain-restricted sharing blocking public Cloud Run invokers, OS Login), tell me and we adjust.
+## Org-policy reality (checked) and the access pattern
+
+The org-policy check on org 395217984150 is done. Two defaults are enforced and shape the access design:
+
+- `iam.allowedPolicyMemberDomains` = customer-id-only by default, so public Cloud Run (an allUsers run.invoker grant) is blocked.
+- `compute.restrictProtocolForwardingCreationForTypes` = INTERNAL-only by default, so external load balancer forwarding is blocked.
+
+Decision: copy the ithina-retail-admin pattern (public Cloud Run + app-level JWT and CORS auth, enabled via a project-level exemption). The IAP/LB/domain idea is dropped.
+
+Two project-level exemptions are required on `ithina-retail-dis` before a full apply:
+
+1. `iam.allowedPolicyMemberDomains` -> allowAll (for public Cloud Run).
+2. `compute.restrictProtocolForwardingCreationForTypes` -> allow EXTERNAL (for the external SFTP LB).
+
+Until (1) is set, keep `allow_public = false`. Until (2) is set, the external SFTP forwarding rule is rejected.
+
+Access control is app-level: the frontend calls dis-ui-server over its public URL, and dis-ui-server enforces JWT (`AUTH_CLIENT_MODE=STUB` until real OIDC, D25) plus CORS scoped to the frontend URL.
+
+NOTE: while auth is STUB, public staging is effectively open. Do not place sensitive data there until real OIDC lands.
 
 ## The schema seam (do not change)
 
