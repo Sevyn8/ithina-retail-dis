@@ -130,7 +130,12 @@ class ConsumerPipeline:
             trace_id=trace_id,
             bronze_id=fetched.bronze.bronze_id,
             mapping_version_id=loaded.mapping_version_id,
-            event_data={"target_model": loaded.target_model.__name__, "source_id": event.source_id},
+            event_data={
+                "target_model": loaded.target_model.__name__,
+                "source_id": event.source_id,
+                # Slice 8a (D71): the template the lookup keyed on, additive.
+                "template_id": str(event.template_id),
+            },
         )
 
         # 3. Sale path: the store row's tax_treatment (a data read, not identity

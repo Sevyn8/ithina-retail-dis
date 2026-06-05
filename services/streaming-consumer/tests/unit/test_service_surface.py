@@ -60,16 +60,20 @@ def test_no_raw_runtime_or_value_errors_raised() -> None:
     assert offenders == []
 
 
-def test_mapping_lookup_stays_template_unaware_until_slice_8a() -> None:
-    # Slice 8 / D71 hard limit: the carry is ENVELOPE-ONLY. The active-mapping
-    # lookup keys on (tenant, source) with NO template_id predicate until
-    # Slice 8a deliberately amends it (which updates this pin). The gate this
-    # guards: a second ACTIVE template under one source must not ship before
-    # the lookup is template-keyed, or .first() picks an arbitrary mapping.
+def test_mapping_lookup_is_template_keyed() -> None:
+    # Slice 8a (D71 closed): the INVERSE of the retired Slice 8 pin
+    # (test_mapping_lookup_stays_template_unaware_until_slice_8a). The
+    # active-mapping lookup now keys on (tenant, source, template); the live
+    # uq_csm_active_per_source index — (tenant_id, source_id, template_id)
+    # WHERE status='ACTIVE' — then guarantees at most one row, so a second
+    # ACTIVE template under one source resolves exactly, never by .first()
+    # luck. The behavioural proof is the two-ACTIVE-templates integration test
+    # (tests/integration/test_template_lookup.py); this pin guards the
+    # predicate's presence in the source.
     mapping_source = (_SRC / "pipeline" / "mapping.py").read_text()
-    assert "template_id" not in mapping_source, (
-        "pipeline/mapping.py mentions template_id — that is the Slice 8a change; "
-        "Slice 8 carries the field on the envelope only (D71)"
+    assert "AND template_id = CAST(:template_id AS uuid)" in mapping_source, (
+        "pipeline/mapping.py lost the template_id predicate — the lookup must "
+        "stay template-keyed (Slice 8a, D71)"
     )
 
 

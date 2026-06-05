@@ -81,7 +81,7 @@ def _event() -> IngressReadyEvent:
         tenant_id=PRIMARY_TENANT.uuid,
         store_id=PRIMARY_STORE.uuid,
         source_id="sc_pos_v1",
-        template_id=new_uuid7(),  # carried, not consumed (Slice 8 / D71)
+        template_id=new_uuid7(),  # immaterial: this test fabricates LoadedMapping, no lookup runs
         bronze_ref=new_uuid7(),
         gcs_uri=(
             f"gs://test/tenant/{PRIMARY_TENANT.uuid}/source/sc_pos_v1/yyyy=2026/mm=06/dd=05/{trace}.csv"

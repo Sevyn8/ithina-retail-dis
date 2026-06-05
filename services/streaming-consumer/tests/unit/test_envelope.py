@@ -43,8 +43,8 @@ def test_good_payload_parses() -> None:
     event = parse_ingress_ready(json.dumps(_good_payload()).encode())
     assert event.schema_version == 1
     assert event.source_id == "sc_pos_v1"
-    # Parsed, NOT consumed (Slice 8 / D71): the lookup stays template-unaware
-    # until Slice 8a — a regression test in test_service_surface pins that.
+    # Consumed since Slice 8a (D71 closed): keys the active-mapping lookup —
+    # test_service_surface pins the predicate; test_template_lookup proves it.
     assert str(event.template_id) == "019e98c9-df80-7649-98cd-83fb6293777a"
     assert event.replay is False  # absent -> the contract default
     assert event.received_ts.tzinfo is not None
@@ -57,7 +57,11 @@ def test_good_payload_parses() -> None:
         ("tenant_id", "not-a-uuid"),
         ("schema_version", 2),  # const: 1
         ("source_id", ""),  # min length
-        ("template_id", None),  # required since Slice 8 (D71 carry)
+        # Required since Slice 8; since 8a this reject IS the template_id-absent
+        # policy (D71): contract-reject + terminal ack, BEFORE the template-keyed
+        # lookup — no consumer fallback exists. Recovery is Slice 12 replay from
+        # bronze (D73).
+        ("template_id", None),
         ("template_id", "not-a-uuid"),
         ("bronze_ref", None),
     ],

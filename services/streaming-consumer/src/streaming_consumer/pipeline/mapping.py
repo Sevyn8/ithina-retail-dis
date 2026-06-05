@@ -1,11 +1,16 @@
 """Mapping config load (per-lookup side-input, D6) + routing + engine apply.
 
-- **Active selection:** ``SELECT … WHERE tenant_id AND source_id AND
-  status='ACTIVE'`` — the live partial unique index ``uq_csm_active_per_source``
-  guarantees at most one ACTIVE per (tenant, source), so "latest active" is simply
-  "the active". An absent active mapping raises ``MappingConfigError`` (required
-  value, code-quality rule 4 — never a silent fallback). STAGED/shadow reads are
-  out of scope (no ``staging.*`` schema exists).
+- **Active selection (template-keyed since Slice 8a, D71):** ``SELECT … WHERE
+  tenant_id AND source_id AND template_id AND status='ACTIVE'`` — the live
+  partial unique index ``uq_csm_active_per_source`` is
+  ``(tenant_id, source_id, template_id) WHERE status='ACTIVE'`` (one ACTIVE per
+  template under a source, D68), so the keyed lookup returns at most one row
+  genuinely, not by ``.first()`` luck. ``template_id`` is read off the
+  ``ingress.ready`` envelope (required field; an absent value never reaches this
+  lookup — it fails the envelope contract-reject first). An absent ACTIVE mapping
+  for the named template raises ``MappingConfigError`` (required value,
+  code-quality rule 4 — never a silent fallback). STAGED/shadow reads are out of
+  scope for this consumer (the next slice's promote/shadow path).
 - **Refresh mechanism:** per-lookup, no cache (Slice 10 plan §4). Zero staleness;
   one indexed SELECT per chunk is invisible at beta volume. ``mapping.changed``
   event-driven refresh (D6) is DEFERRED; trigger: sustained chunk rates where the
@@ -178,7 +183,11 @@ def route_target_model(source: SourceMapping, *, tenant_id: str, trace_id: str) 
 
 
 async def load_active_mapping(engine: AsyncEngine, event: IngressReadyEvent) -> LoadedMapping:
-    """Per-lookup load of the ACTIVE mapping for (tenant, source); loud when absent."""
+    """Per-lookup load of the ACTIVE mapping for (tenant, source, template); loud when absent.
+
+    The ``template_id`` predicate (Slice 8a, D71) plus ``uq_csm_active_per_source``
+    make this at most one row — ``.first()`` is exact, never arbitrary.
+    """
     async with rls_session(engine, event.tenant_id) as conn:
         row = (
             await conn.execute(
@@ -187,15 +196,21 @@ async def load_active_mapping(engine: AsyncEngine, event: IngressReadyEvent) -> 
                     "pre_validation_suite_ref, post_validation_suite_ref "
                     "FROM config.source_mappings "
                     "WHERE tenant_id = CAST(:tenant_id AS uuid) AND source_id = :source_id "
+                    "AND template_id = CAST(:template_id AS uuid) "
                     "AND status = 'ACTIVE'"
                 ),
-                {"tenant_id": str(event.tenant_id), "source_id": event.source_id},
+                {
+                    "tenant_id": str(event.tenant_id),
+                    "source_id": event.source_id,
+                    "template_id": str(event.template_id),
+                },
             )
         ).first()
     if row is None:
         raise MappingConfigError(
-            f"no ACTIVE mapping for source_id={event.source_id!r}; the mapping config "
-            "is a required value (code-quality rule 4)",
+            f"no ACTIVE mapping for source_id={event.source_id!r} "
+            f"template_id={event.template_id}; the mapping config is a required "
+            "value (code-quality rule 4)",
             tenant_id=str(event.tenant_id),
             trace_id=str(event.trace_id),
         )

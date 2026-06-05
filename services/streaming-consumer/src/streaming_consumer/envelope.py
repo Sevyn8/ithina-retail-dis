@@ -40,12 +40,12 @@ class IngressReadyEvent(BaseModel):
     tenant_id: UUID
     store_id: UUID
     source_id: str = Field(min_length=1)
-    # PARSED, NOT CONSUMED (Slice 8 / D71): the mapping template the payload was
-    # uploaded against. The field exists here only because the contract requires
-    # it and this model is extra="forbid" + drift-guarded; the mapping lookup
-    # stays template-UNAWARE until Slice 8a (the hard gate: no second ACTIVE
-    # template per source ships before 8a). Do not thread this into
-    # pipeline/mapping.py in this slice.
+    # CONSUMED since Slice 8a (D71 closed): the mapping template the payload was
+    # uploaded against, required by the contract. It keys the active-mapping
+    # lookup (pipeline/mapping.py), so the consumer applies the exact template's
+    # rules — a second ACTIVE template per source is safe. Absent is structurally
+    # unreachable downstream: a message without it fails THIS model's parse
+    # (contract-reject, terminally acked) before any pipeline stage runs.
     template_id: UUID
     bronze_ref: UUID
     gcs_uri: str = Field(min_length=1)

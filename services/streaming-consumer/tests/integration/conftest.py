@@ -308,6 +308,7 @@ def seed_chunk(
     store_uuid: UUID | None = None,
     tenant_uuid: UUID | None = None,
     event_store_uuid: UUID | None = None,
+    template_id: UUID | None = None,
 ) -> SeededChunk:
     """Play the 9b worker: land the object + bronze row, return the envelope.
 
@@ -315,6 +316,14 @@ def seed_chunk(
     keeps a mirror-valid store — bronze carries its own composite store FK):
     the malformed-producer construction the canonical no-orphan FK (D39) is the
     last line of defense against.
+
+    ``template_id`` overrides the envelope's template (the unknown-template
+    negative path, or a second-template chunk). When omitted, the source's real
+    ACTIVE 'default' template is resolved from the DB — since Slice 8a the
+    lookup is template-KEYED (D71), so the happy path must name the template
+    the ``consumer_mappings`` fixture actually seeded; a source with none (a
+    negative-path tenant/source) gets a minted id, immaterial because such a
+    chunk fails before or at the mapping load anyway.
     """
     from dis_testing.fixtures import PRIMARY_STORE, PRIMARY_TENANT
     from streaming_consumer.envelope import IngressReadyEvent
@@ -324,6 +333,20 @@ def seed_chunk(
     trace_id = new_uuid7()
     bronze_ref = new_uuid7()
     cleanup.traces.append(trace_id)
+
+    if template_id is None:
+        # The same adopt-existing select the consumer_mappings fixture uses:
+        # the live 'default' template id is backfill-minted, not pinned.
+        with dis_admin.connect() as conn:
+            existing = conn.execute(
+                text(
+                    "SELECT template_id FROM config.source_mappings "
+                    "WHERE tenant_id = CAST(:tenant_id AS uuid) AND source_id = :source_id "
+                    "AND template_name = 'default' AND status = 'ACTIVE' LIMIT 1"
+                ),
+                {"tenant_id": str(tenant), "source_id": source_id},
+            ).scalar()
+        template_id = UUID(str(existing)) if existing else new_uuid7()
 
     object_key = build_object_path(
         tenant_id=tenant,
@@ -362,9 +385,9 @@ def seed_chunk(
         tenant_id=tenant,
         store_id=event_store_uuid or store,
         source_id=source_id,
-        # Carried, not consumed (Slice 8 / D71): the lookup stays keyed on
-        # (tenant, source) until Slice 8a, so the value is immaterial here.
-        template_id=new_uuid7(),
+        # Consumed since Slice 8a (D71): keys the active-mapping lookup —
+        # resolved/overridden above.
+        template_id=template_id,
         bronze_ref=bronze_ref,
         gcs_uri=gcs_uri,
         received_ts=BASE_TS,
