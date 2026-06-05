@@ -142,9 +142,13 @@ CREATE TABLE canonical.store_sku_current_position (
         PRIMARY KEY (id),
 
     -- ---------- Natural key ----------
-    CONSTRAINT uq_sscp_natural
-        UNIQUE NULLS NOT DISTINCT
-        (tenant_id, store_id, sku_id, sku_variant, sku_lot_batch),
+    -- The natural key lives as the COALESCE-sentinel unique index
+    -- uq_sscp_natural_key (below, M-HOTKEY/0004): PG15 cannot arbitrate
+    -- ON CONFLICT against a NULLS NOT DISTINCT constraint when key segments
+    -- are NULL, and the streaming consumer's hot upsert must be atomic under
+    -- N autoscaled instances (D58 split). The two sentinel CHECKs below make
+    -- '' engine-impossible, so the COALESCE key's uniqueness domain equals
+    -- the retired NND constraint's.
 
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_sscp_tenant
@@ -160,6 +164,14 @@ CREATE TABLE canonical.store_sku_current_position (
         REFERENCES config.source_mappings (mapping_version_id),
 
     -- ---------- Check constraints ----------
+    -- Sentinel guards for the natural-key index (M-HOTKEY/0004): the COALESCE
+    -- sentinel '' is never a legitimate value, enforced by engine rule.
+    CONSTRAINT ck_sscp_sku_variant_not_empty
+        CHECK (sku_variant <> ''),
+
+    CONSTRAINT ck_sscp_sku_lot_batch_not_empty
+        CHECK (sku_lot_batch <> ''),
+
     CONSTRAINT ck_sscp_current_retail_price_non_negative
         CHECK (current_retail_price >= 0),
 
@@ -201,6 +213,15 @@ CREATE TABLE canonical.store_sku_current_position (
 -- ----------------------------------------------------------------------------
 -- Indexes (beyond PK and UNIQUE which auto-create)
 -- ----------------------------------------------------------------------------
+
+-- The natural key + the ON CONFLICT arbiter (M-HOTKEY/0004). COALESCE('')
+-- sentinel because PG15 cannot arbitrate ON CONFLICT against a NULLS NOT
+-- DISTINCT index when key segments are NULL; '' is engine-impossible via the
+-- two sentinel CHECKs, so this uniqueness domain equals the retired
+-- uq_sscp_natural. Concurrency-safe under N consumer instances (D58 split).
+CREATE UNIQUE INDEX uq_sscp_natural_key
+    ON canonical.store_sku_current_position
+    (tenant_id, store_id, sku_id, COALESCE(sku_variant, ''), COALESCE(sku_lot_batch, ''));
 
 CREATE INDEX ix_sscp_tenant_store
     ON canonical.store_sku_current_position (tenant_id, store_id);

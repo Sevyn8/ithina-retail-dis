@@ -2,8 +2,10 @@
 
 Field shapes derived by introspecting the live ithina_dis_db schema (plan mode).
 Key load-bearing facts:
-- PK ``(id)``; natural key ``uq_sscp_natural`` NULLS NOT DISTINCT on
-  ``(tenant_id, store_id, sku_id, sku_variant, sku_lot_batch)``. Not partitioned.
+- PK ``(id)``; natural key ``uq_sscp_natural_key``: a unique COALESCE-sentinel
+  expression index on ``(tenant_id, store_id, sku_id, COALESCE(sku_variant,''),
+  COALESCE(sku_lot_batch,''))`` — the ON CONFLICT arbiter (M-HOTKEY/0004; ''
+  is engine-impossible via the sentinel CHECKs). Not partitioned.
 - FKs: ``(tenant_id) -> identity_mirror.tenants``; composite
   ``(tenant_id, store_id) -> identity_mirror.stores`` (post-D36 store keying);
   ``(mapping_version_id) -> config.source_mappings``.
