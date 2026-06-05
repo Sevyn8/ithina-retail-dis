@@ -22,11 +22,17 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from dis_core.logging import configure_logging, get_logger
 from dis_ui_server.api import api_router
 from dis_ui_server.catalog import build_field_catalog
-from dis_ui_server.config import API_PREFIX, SERVICE_NAME, UiServerConfig
+from dis_ui_server.config import (
+    API_PREFIX,
+    SERVICE_NAME,
+    UiServerConfig,
+    cors_allowed_origins_from_env,
+)
 from dis_ui_server.db import create_engine_from_config
 from dis_ui_server.errors_http import register_error_handlers
 from dis_ui_server.handlers import health
@@ -62,6 +68,20 @@ def create_app(extra_api_routers: Sequence[APIRouter] = ()) -> FastAPI:
     """
     configure_logging()  # idempotent
     app = FastAPI(title=SERVICE_NAME, lifespan=_lifespan)
+    # CORS for the browser-served dis-ui SPA (Slice 14c). Explicit origins only
+    # (no wildcard exists anywhere); allow_credentials=False because auth is the
+    # Authorization: Bearer header, never cookies (dis-ui client.ts + contract
+    # §2.1 "No cookies, no CSRF surface") — the Authorization header itself is
+    # granted via allow_headers. Pure ASGI middleware: it wraps the §2.3 error
+    # envelopes too (a browser can read a 4xx body), and adds nothing when no
+    # Origin header is present (probes and curl traffic are byte-unchanged).
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(cors_allowed_origins_from_env()),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
     register_error_handlers(app)
     app.include_router(health.router)  # probes at the root, per infra convention
     app.include_router(api_router)  # the /api/v1 base for all UI data endpoints

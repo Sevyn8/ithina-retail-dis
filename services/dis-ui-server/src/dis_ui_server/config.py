@@ -30,8 +30,16 @@ from dataclasses import dataclass
 from dis_core.errors import DisError
 
 _POSTGRES_URL = "POSTGRES_URL"
+_CORS_ALLOWED_ORIGINS = "CORS_ALLOWED_ORIGINS"
 
 SERVICE_NAME = "dis-ui-server"
+
+# The browser-served dis-ui SPA's dev origin (Slice 14c, confirmed live: dis-ui
+# runs Vite with NO server.port override and its README pins
+# "pnpm dev - dev server on http://localhost:5173"). NEVER a wildcard: a
+# permissive dev posture must not be expressible by default; deployed origins
+# are set per environment via CORS_ALLOWED_ORIGINS.
+_DEFAULT_CORS_ORIGINS: tuple[str, ...] = ("http://localhost:5173",)
 
 # Every UI data endpoint mounts under this prefix (durable invariant, recorded
 # in this service's CLAUDE.md); health probes stay at the root. The contract's
@@ -57,3 +65,30 @@ class UiServerConfig:
                 "tenant-scoped readiness probe or any later data endpoint"
             )
         return cls(postgres_url=postgres_url)
+
+
+def cors_allowed_origins_from_env() -> tuple[str, ...]:
+    """The CORS origin allow-list, comma-separated from ``CORS_ALLOWED_ORIGINS``.
+
+    Resolved at APP-BUILD time in ``create_app`` — not in the lifespan like
+    ``UiServerConfig.from_env`` — because Starlette middleware must be
+    registered before startup, while the lifespan-resolves-config posture is
+    test-pinned for the crashloop-on-missing-POSTGRES_URL split. Same mechanism
+    (env read in this module), different resolution point; safe at import
+    because the value has a sanctioned default (the slice contract mandates the
+    confirmed dis-ui dev origin) and so can never abort an import.
+
+    Unset → the dev default. Set-but-empty is an ambiguous declaration and
+    raises (code-quality rule 4): unset it for the default, or list explicit
+    origins.
+    """
+    raw = os.environ.get(_CORS_ALLOWED_ORIGINS)
+    if raw is None:
+        return _DEFAULT_CORS_ORIGINS
+    origins = tuple(origin.strip() for origin in raw.split(",") if origin.strip())
+    if not origins:
+        raise DisError(
+            f"{_CORS_ALLOWED_ORIGINS} is set but contains no origins; unset it for "
+            "the dev default or list explicit comma-separated origins"
+        )
+    return origins
