@@ -1,6 +1,17 @@
-# `services/streaming-consumer/` — *v1.0*
+# `services/streaming-consumer/` — *v1.0 target; Slice 10 (happy path) built*
 
 The ELT pipeline. Reads `ingress.ready`, fetches the chunk from bronze + GCS, looks up the active mapping, validates identity, runs pre-mapping validation, applies the mapping (rename → normalize → cast → derive), runs post-mapping validation, and atomically writes the canonical row (hot upsert + event insert in one Cloud SQL transaction) or routes failures to quarantine. The largest service in DIS by code volume. For a directory-by-directory walkthrough see `build-guide.md`.
+
+> **Build state (Slice 10).** This README describes the v1.0 TARGET. Built now: the
+> happy path — intake, bronze/GCS fetch, per-lookup mapping load + routing, both
+> Pandera gates, the four sub-stages, `mapping_version_id` stamping, the atomic
+> dual-write (D30/D63/D64), read-time-dedup posture (D33/D38/D65), per-stage
+> fire-and-forget audit (D42), and the minimal failure disposition (audit-and-nack).
+> NOT built yet: the quarantine publish + per-row routing (Slice 11),
+> `ingress.resubmit`/replay (Slice 12), the Identity Service `validate()` + D28
+> fallback (Slice 13 — identity arrives resolved on the event; the composite FK is
+> the enforcement, D39), the circuit breaker + `pipeline.dlq` (D27, carried), STAGED
+> shadow reads, and BQ audit. The service `CLAUDE.md` carries the built invariants.
 
 **Purpose.** Transform raw chunks into canonical rows with full audit, RLS enforcement, and tenant-scoped batching. The only service that writes to canonical schemas (other than daily-compute which writes signal_history).
 

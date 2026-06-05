@@ -4,33 +4,38 @@ Loaded when Claude Code works in `services/streaming-consumer/`. Service-specifi
 
 ## What this service is
 
-The ELT pipeline. Reads `ingress.ready`, fetches the chunk, applies mapping, validates, atomic dual-writes to canonical or routes failures to quarantine. The largest service in DIS by code volume.
+The ELT happy path (Slice 10). Consumes `ingress.ready`, fetches the bronze chunk, loads the active mapping per-lookup (D6), validates pre and post, applies the four `dis-mapping` sub-stages, stamps `mapping_version_id` (D22), and atomically dual-writes canonical (D30). Quarantine publish, per-row routing, B2 threshold: Slice 11. Replay (`ingress.resubmit`): Slice 12. Identity Service + D28 fallback: Slice 13. Circuit breaker + `pipeline.dlq`: D27, carried. For the EPE block see `README.md`; for the slice contract see `docs/slices/slice-10-streaming-consumer.md`.
 
-For the EPE block (purpose, entry, process, exit), file structure, and operational detail, see `README.md` in this directory. For the current build slice, see the slice doc in `docs/slices/`.
+**Status:** Slice 10 (happy path) built.
 
-**Status:** v1.0.
+## Invariants this service holds
 
-## Rules specific to this service
+- **Trust boundary:** identity and `trace_id` are READ off `ingress.ready` (D54); never re-resolved, never minted. The fetch cross-checks the path (D53) and the bronze row against the event; disagreement fails loud.
+- **Atomic dual-write at batch grain:** one `rls_session` transaction per ≤500 row-pair batch (architecture 4.6) covers the event INSERT and the hot upsert — either-or-neither (D30). A mid-batch failure rolls that batch back and the message nacks; earlier committed batches converge on redelivery via D33 read-time dedup + the D64 event-time-wins upsert. Transactional idempotency is deliberately NOT the mechanism.
+- **D33/D38 dedup key:** `source_id` from the envelope (cross-checked vs path + bronze); `source_event_id` = `transaction_id:line_item_seq` when the source supplies both, else `bronze_ref:chunk_row_index` (D65: redelivery-stable, NOT correction-collapsing for id-less sources).
+- **Hot merge (REVISED D63 — completeness-gated; D64, M-HOTKEY/0004):** projection registries + the load-time completeness classification live in `pipeline/mapping.py` (`LoadedMapping.hot_complete`, derived from the live hot NOT NULL + CHECK partition — PG validates NOT NULL on the INSERT candidate BEFORE arbitration, so only a complete candidate may ride ON CONFLICT). Two paths, both inside the per-batch `rls_session` transaction (D30) and in sorted COALESCE'd-natural-key order (the total order that removes the overlapping-batch deadlock hazard):
+  - **COMPLETE mapping** (none in production today; the future catalogue slice): the proven atomic `INSERT … ON CONFLICT (COALESCE list) DO UPDATE … WHERE event-time-wins`; arbiter `uq_sscp_natural_key` (`''` engine-impossible via the sentinel CHECKs). Creates or updates — the ONLY path that inserts; an insert-race loser takes the UPDATE branch (no error surfaces).
+  - **INCOMPLETE mapping** (every current production path): one conditional `UPDATE … WHERE <COALESCE-key> AND event-time-wins`; rowcount 0 → one READ-ONLY existence check → present = older-event no-op (counted in `hot_noops`, audited); absent = a D63 MISS. **NO INSERT exists on this path — the create-race cannot occur.** The miss does NOT abort the batch: the appended event rows COMMIT (history retained), then `write_chunk` raises loudly so the chunk nacks toward quarantine (Slice 11); redelivery re-appends (read-time dedup absorbs) until catalogue/position onboards.
+  - On BOTH paths the WHERE predicate is re-evaluated (EvalPlanQual) against the LOCKED current row, so an older event never overwrites a newer one in either arrival order; `>=` makes exact-tie redelivery idempotent. Proven live with two real writers per path (`test_concurrent_upsert.py`) plus the deadlock-vs-sort demonstration. Concurrency-safe under N autoscaled instances (D58 split).
+- **Minimal failure disposition = audit-and-nack:** validation/mapping/write failures emit a FAILURE audit (fire-and-forget) and NACK. Deterministic failures REDELIVER until Slice 11's quarantine lands — accepted interim posture: one FAILURE audit row per cycle (D44 tolerates), bounded by ack-deadline/retention, no data loss (bronze is the recoverable source, D5). The one ack-on-failure: an unparseable envelope (identity unknowable; redelivery identical).
+- **Missing event-date partition fails loud** (no DEFAULT partition exists; no rolling creator yet — registered gap): the INSERT errors, the batch rolls back, the message nacks.
+- **Audit (D42/D43/D44):** stages RECEIVED (intake+fetch), MAPPING_LOOKED_UP, PRE/POST_MAPPING_VALIDATED, MAPPING_EXECUTED, CANONICAL_WRITTEN; `IDENTITY_VALIDATED` never emitted (no identity call). Duplicate hits: ROW-scoped `CANONICAL_WRITTEN`, `outcome=SUCCESS`, detail in `event_data` (`duplicate`, `prior_trace_id`, `row_hash`, `dedup_key`). Hot `ingest_metadata` carries `source_event_id` (no first-class hot column) — write-shape aligned to the live column comment's key vocabulary.
+- **Routing is mapping-load-time:** the mapping's target set fits exactly one event model (provenance sets) or raises `MappingConfigError`. Non-NULL suite refs raise `SuiteDefinitionError` (NULL=default is the only supported state). An absent ACTIVE mapping raises — required value, no fallback.
+- **D60 struck:** no ordering key is set or consumed; a regression test guards the contracts.
 
-- Writes to: `canonical.store_sku_current_position` (hot upsert), `canonical.store_sku_sale_events` / `store_sku_change_events` (event insert), `audit_events` (BQ), Pub/Sub `quarantine` and `pipeline.dlq`. Do not write to other tables or topics from here.
-- Reads from: Bronze metadata + GCS payload, `config.source_mappings`, `identity_mirror` (fallback).
-- All Postgres access uses `libs/dis-rls`. No raw SQLAlchemy sessions.
-- All BigQuery access uses `libs/dis-core` BqClient.
-- All audit emission uses `libs/dis-core` audit helpers.
-- Atomic dual-write: hot upsert + event insert in ONE Cloud SQL transaction. See `decisions.md` D30.
-- Stamp `mapping_version_id` on every produced canonical row. See `decisions.md` D22.
-- Tenant-scoped batching: open one transaction per tenant batch; `SET LOCAL app.tenant_id` once per transaction.
-- Circuit-breaker on Cloud SQL health (`SELECT 1` with 100ms timeout) before each batch.
-- Replay: `mapping_version_id` defaults to the version on the row being replayed, not current ACTIVE.
-- Manual batching: ~500 rows per transaction.
-- Audit emission: INGRESS_EVENT-scoped event per stage + ROW-scoped events for failures only (Option B).
+## Writes / reads
+
+- Writes: `canonical.store_sku_current_position` (upsert), `canonical.store_sku_sale_events` / `store_sku_change_events` (append-only INSERT, no UNIQUE), `audit.events` (fire-and-forget, Phase-1 Cloud SQL). Nothing else; no Pub/Sub publish exists in Slice 10.
+- Reads: `bronze.data_ingress_events` (by `bronze_ref`), GCS via `dis-storage` only, `config.source_mappings` (ACTIVE, per-lookup), `identity_mirror.stores` (sale-path `tax_treatment` only — a data read; D39's FK is the existence enforcement).
+- All Postgres access via `libs/dis-rls` (hard rules 1/12); positive `current_database()` assertion at startup. No BigQuery in Slice 10. The subscription is provisioned by `tools/local/create_topics.py`, never by runtime code.
+
+## Test-tree exception (do not copy blindly)
+
+This service's `tests/`, `tests/unit/`, and `tests/integration/` carry `__init__.py` — a DELIBERATE exception to the repo's no-`__init__`-in-test-dirs convention. Reason: the integration tests share TYPED helpers from their conftest (`from .conftest import …`), which `mypy --strict` (the per-package 9d gate) cannot resolve without package context; the alternative was untyped `Any` factory fixtures. pytest importlib collection and the per-package mypy run are both unaffected (the package anchors at `tests/`, unique within this mypy invocation; other services' rootless test modules collide with nothing). A new service should default to the repo convention unless it has the same typed-shared-conftest need.
 
 ## References
 
-- `README.md` (this directory) — EPE block, file structure, behavioural detail.
-- Root `CLAUDE.md` — project-wide invariants.
-- `docs/architecture.md` §4 — module rationale.
-- `docs/decisions.md` — indexed decision register.
+`README.md` (EPE) · root `CLAUDE.md` · `docs/slices/slice-10-streaming-consumer.md` · `docs/decisions.md` D30/D33/D38/D42/D54/D60/D63/D64/D65.
 
 ## When uncertain
 

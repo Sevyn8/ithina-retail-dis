@@ -22,6 +22,7 @@ members = [
     "dis-validation",
     "ithina-dis",
     "mirror-sync-consumer",
+    "streaming-consumer",
 ]
 
 [[package]]
@@ -1640,6 +1641,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pyyaml" },
     { name = "ruff" },
+    { name = "streaming-consumer" },
     { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
@@ -1697,6 +1699,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=5" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", specifier = "==0.15.15" },
+    { name = "streaming-consumer", editable = "services/streaming-consumer" },
     { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
@@ -3217,6 +3220,43 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/25/44/ec35f1b6e83094b997da438a02c8c9b0ade2b1e84cfc48bd4656780760a6/starlette-1.2.1.tar.gz", hash = "sha256:9b9b5ebb992e67d6093741e63c2f59e4f6fff986f81163c087867bd7b924b3f6", size = 2701854, upload-time = "2026-05-31T01:07:51.847Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1c/54/196d0c1db10af76baa4f64894448505d60d3cdf70ef92cbb35f46a4e4c71/starlette-1.2.1-py3-none-any.whl", hash = "sha256:4de0082d08c8f6764a85a54cf1120d6939507a19905c7768acad2a9f875d2b89", size = 73350, upload-time = "2026-05-31T01:07:50.09Z" },
+]
+
+[[package]]
+name = "streaming-consumer"
+version = "0.0.0"
+source = { editable = "services/streaming-consumer" }
+dependencies = [
+    { name = "dis-audit" },
+    { name = "dis-canonical" },
+    { name = "dis-core" },
+    { name = "dis-mapping" },
+    { name = "dis-rls" },
+    { name = "dis-storage" },
+    { name = "dis-validation" },
+    { name = "google-cloud-pubsub" },
+    { name = "orjson" },
+    { name = "polars" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-audit", editable = "libs/dis-audit" },
+    { name = "dis-canonical", editable = "libs/dis-canonical" },
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-mapping", editable = "libs/dis-mapping" },
+    { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "dis-storage", editable = "libs/dis-storage" },
+    { name = "dis-validation", editable = "libs/dis-validation" },
+    { name = "google-cloud-pubsub", specifier = ">=2.23" },
+    { name = "orjson", specifier = ">=3.10" },
+    { name = "polars", specifier = ">=1.41,<2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
 ]
 
 [[package]]

@@ -86,6 +86,7 @@ dev = [
   "dis-validation",
   "mirror-sync-consumer",
   "csv-ingest-worker",
+  "streaming-consumer",
 
   # Import-graph contracts (slice-05): forbidden imports between the pure
   # pipeline libs and the I/O-bearing libs. Run via `make lint` (lint-imports).
@@ -216,6 +217,7 @@ members = [
   "libs/dis-validation",
   "services/mirror-sync-consumer",
   "services/csv-ingest-worker",
+  "services/streaming-consumer",
 ]
 
 [tool.uv.sources]
@@ -233,3 +235,4 @@ dis-mapping = { workspace = true }
 dis-validation = { workspace = true }
 mirror-sync-consumer = { workspace = true }
 csv-ingest-worker = { workspace = true }
+streaming-consumer = { workspace = true }

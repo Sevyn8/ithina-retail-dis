@@ -23,9 +23,11 @@ TOPICS = [
 ]
 
 # subscription id -> topic. The csv-ingest-worker pulls csv.received from here
-# (slice-9b; the worker's config pins the same name as a frozen constant).
+# (slice-9b) and the streaming consumer pulls ingress.ready (slice-10); each
+# service's config pins its own name as a frozen constant.
 SUBSCRIPTIONS = {
     "csv-ingest-worker.csv.received": "csv.received",
+    "streaming-consumer.ingress.ready": "ingress.ready",
 }
 
 
