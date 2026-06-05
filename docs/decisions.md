@@ -791,6 +791,53 @@ events; hot converges).
 
 **Cross-ref.** D33, D38, D64, Slice 10.
 
+### D66 csv-ingest-worker bronze dedup is single-instance-safe only — PARKED, resume after dis-ui-server
+
+**Status.** OPEN, parked. This is D58 split-(b), promoted to its own entry so it is not
+lost inside the D58 retraction note. Surfaced during Slice 10 when D58's single-instance
+assumption was retracted for the streaming consumer (autoscaling posture).
+
+**The gap.** The csv-ingest-worker (Slice 9b) enforces bronze idempotency with a 24h
+query-based check-then-act (SELECT for a prior bronze row within the window; if none, write
+the bronze row and publish ingress.ready; resume-and-mark on an unpublished prior). This was
+explicitly safe only under the single-worker assumption (D58). With single-instance
+retracted, if the WORKER autoscales, two instances can both run the SELECT, both see no
+prior, and both write a bronze row and both publish ingress.ready.
+
+**Severity (as currently understood, not yet verified).** Likely waste, not corruption: the
+streaming consumer's read-time dedup (D33) plus redelivery-stable keys (D65) should absorb a
+duplicate ingress.ready downstream, so canonical truth converges. The cost is duplicate
+bronze rows, duplicate publishes, double-processing, and a messy audit trail under
+concurrency. Confirm this severity when resuming; do not assume the downstream absorption is
+complete without checking the duplicate's path.
+
+**This is NOT the canonical hot-key problem.** The Slice 10 fix (M-HOTKEY: COALESCE-sentinel
+arbiter index for a nullable composite natural key defeating PG15 ON CONFLICT) does NOT
+transfer here. The worker's issue is query-based idempotency (a check-then-act race), not
+NULLS-NOT-DISTINCT arbitration. Different mechanism, different fix.
+
+**First task when resuming (all derive-from-live, plan mode).** Introspect
+bronze.data_ingress_events: what the dedup key actually is, whether any UNIQUE constraint
+exists on it, and exactly how the worker's 24h-window query + resume-and-mark is coded. Only
+then choose the fix.
+
+**Candidate fixes (no choice made here).**
+1. Add a UNIQUE constraint on the bronze dedup key so a second concurrent write fails loud —
+   the database backstop the canonical path got via uq_sscp_natural_key. Likely needs its
+   own migration.
+2. Advisory lock on the dedup key around the check-then-act, so concurrent workers serialize
+   on the same key.
+3. Accept the duplicate at the worker and lean entirely on the consumer's D33 read-time
+   dedup to absorb it — cheapest, but duplicate bronze rows and duplicate publishes become
+   normal under autoscale (audit/cost consequence).
+
+**Scope when taken up.** A worker-hardening slice of its own (touches the shipped, pushed
+csv-ingest-worker — plan→approve→execute→gate, and a migration gate of its own if fix 1).
+Trigger: before the worker is deployed with >1 instance OR autoscaling is enabled for it.
+Sequencing: parked behind the dis-ui-server service work.
+
+**Cross-ref.** D58 (retraction + split), D5 (bronze recoverable source), D33/D65 (downstream
+absorption), M-HOTKEY/Slice 10 (the DIFFERENT problem this is not), Slice 9b (the worker).
 
 ### Slice 10 register notes: D42 and D60 closed; carried limits named `RESOLVED/CARRIED`
 
@@ -951,3 +998,18 @@ single-instance-or-fixed-dedup obligation now attaches to **csv-ingest-worker** 
 (transaction boundary unchanged), D63/D64 (semantics unchanged, now concurrency-proven),
 the PG15 implementation note (superseded — see its addendum), M-HOTKEY/0004, Slice 10
 Part 3.
+
+### D67 dis-ui-server uses the SQLAlchemy ORM/declarative layer; other services use Core/text `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 13a, registered in plan mode, number assigned at the commit
+gate).
+
+**Decision.** dis-ui-server uses SQLAlchemy's ORM/declarative layer, justified by its CRUD
+and system-of-record nature (`config.source_mappings` and later mapping/onboarding writes),
+where the stream/transform/worker services use Core/text. Load-bearing constraint: every
+ORM model executes only through the dis-rls `rls_session` (hard rule 1), never a raw
+`AsyncSession` or a second engine. The layer choice is the deviation; the through-dis-rls
+constraint is what preserves the foundation rule.
+
+**Cross-refs.** D26 (BFF), hard rule 1 (RLS via dis-rls). **Scope.** dis-ui-server + this
+entry; no DDL.
