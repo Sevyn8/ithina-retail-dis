@@ -80,9 +80,9 @@ export function SampleUpload() {
   return (
     <section className="max-w-2xl">
       <header className="mb-4">
-        <h1 className="text-display">Upload a CSV</h1>
+        <h1 className="text-display">Create Template</h1>
         <p className="text-caption text-muted-foreground">
-          Upload a sample of your sales data. We map it, you review, it goes live.
+          Upload a sample of your data; we map it, you review, it goes live as a template.
         </p>
       </header>
 

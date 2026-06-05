@@ -68,6 +68,9 @@ const INVENTORY_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-0000000000a2'
 // A draft-only template (never activated): no active version, so a recurring batch cannot
 // reuse it. Exercises the active-version precondition (T4 FM3).
 const PRICING_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-0000000000a3'
+// A template under a SECOND source, so the flat "Ingest Data" list (T5) spans more than one
+// source and source context is meaningful (two templates can share a name across sources).
+const ORDERS_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-0000000000b1'
 
 const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
   t_acme9k2l1mn4: [
@@ -243,6 +246,47 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
             rename: { item_code: 'sku_id' },
             normalize: {},
             cast: {},
+            derive: {},
+          },
+        },
+      ],
+    },
+    {
+      template_id: ORDERS_TEMPLATE_ID,
+      source_id: 'square_pos',
+      template_name: 'Orders',
+      latest_version: 1,
+      active_version: 1,
+      staged_version: null,
+      draft_version: null,
+      versions_count: 1,
+      created_at: '2026-05-29T09:00:00Z',
+      latest_version_created_at: '2026-05-29T09:00:00Z',
+      versions: [
+        {
+          mapping_version_id: 51,
+          version: 1,
+          status: 'active',
+          field_count: 4,
+          transform_count: 2,
+          predecessor_version_id: null,
+          created_at: '2026-05-29T09:00:00Z',
+          created_by_user_id: null,
+          activated_at: '2026-05-29T09:05:00Z',
+          deprecated_at: null,
+          mapping_rules: {
+            version: 1,
+            rename: {
+              sku: 'sku_id',
+              sold_at: 'source_sale_timestamp',
+              qty: 'quantity',
+              price: 'unit_sale_price',
+            },
+            normalize: {
+              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%Y-%m-%dT%H:%M:%S', timezone: 'UTC' } }],
+              unit_sale_price: [{ op: 'parse_decimal', args: { decimal_separator: '.', thousands_separator: ',' } }],
+            },
+            cast: { quantity: { type: 'integer' } },
             derive: {},
           },
         },

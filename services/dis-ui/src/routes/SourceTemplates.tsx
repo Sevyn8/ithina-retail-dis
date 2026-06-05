@@ -93,23 +93,24 @@ export function SourceTemplates() {
                       >
                         View
                       </Link>
-                      {/* T4: reuse the active mapping for a new batch. Gated on an active
-                          version existing (cannot reuse a never-activated mapping). */}
+                      {/* T5/T4-real: ingest a batch against this template's active mapping.
+                          Gated on an active version existing (cannot ingest against a
+                          never-activated template; the server also rejects with 409). */}
                       {template.active_version !== null ? (
                         <Link
                           to={`/sources/${sourceId}/templates/${template.template_id}/upload`}
                           className={buttonVariants({ variant: 'default', size: 'sm' })}
                         >
-                          Upload new batch
+                          Ingest data
                         </Link>
                       ) : (
                         <button
                           type="button"
                           disabled
-                          title="No active version to reuse yet"
+                          title="No active version to ingest against yet"
                           className={buttonVariants({ variant: 'default', size: 'sm' })}
                         >
-                          Upload new batch
+                          Ingest data
                         </button>
                       )}
                     </div>

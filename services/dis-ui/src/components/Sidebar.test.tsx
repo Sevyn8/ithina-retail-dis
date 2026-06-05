@@ -79,6 +79,15 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Query' })).toBeInTheDocument()
   })
 
+  it('renders the renamed tenant nav labels (Create Template, Ingest Data) and not the old ones', () => {
+    renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
+    expect(screen.getByRole('link', { name: 'Ingest Data' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Create Template' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Upload' })).not.toBeInTheDocument()
+    // The old "Sources" top-level nav item is gone (source CRUD is reached from Ingest Data).
+    expect(screen.queryByRole('link', { name: 'Sources' })).not.toBeInTheDocument()
+  })
+
   it('collapses and expands', async () => {
     const user = userEvent.setup()
     renderWithProviders(<Sidebar items={ITEMS} />, { snapshot: tenantSnapshot })

@@ -71,30 +71,30 @@ export function TemplateDetail() {
           ) : (
             <StatusBadge tone="neutral">No active version</StatusBadge>
           )}
-          {/* T4: a recurring batch reuses the active mapping. The action is gated on an
-              active version existing - you cannot reuse a mapping that was never activated. */}
+          {/* T5/T4-real: ingest a batch against this template's active mapping. Gated on an
+              active version existing - you cannot ingest against a never-activated template. */}
           {active !== null ? (
             <Link
               to={`/sources/${template.source_id}/templates/${template.template_id}/upload`}
               className={buttonVariants({ variant: 'default', size: 'sm' })}
             >
-              Upload new batch
+              Ingest data
             </Link>
           ) : (
             <button
               type="button"
               disabled
-              title="No active version to reuse yet"
+              title="No active version to ingest against yet"
               className={buttonVariants({ variant: 'default', size: 'sm' })}
             >
-              Upload new batch
+              Ingest data
             </button>
           )}
         </div>
       </header>
       {active === null ? (
         <p className="text-caption text-muted-foreground">
-          No active version to reuse yet. Activate a mapping before uploading a batch.
+          No active version yet. Activate a mapping before ingesting a batch.
         </p>
       ) : null}
 

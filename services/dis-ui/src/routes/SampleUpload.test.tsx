@@ -15,7 +15,7 @@ const tenantSnapshot: AuthSnapshot = {
 describe('SampleUpload', () => {
   it('renders the demo-data banner on the upload step (R8)', async () => {
     renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
-    await screen.findByRole('heading', { name: 'Upload a CSV' })
+    await screen.findByRole('heading', { name: 'Create Template' })
     expect(screen.getByText(/Demo data\./)).toBeInTheDocument()
     expect(screen.getByText(/not parsed yet/)).toBeInTheDocument()
   })
@@ -27,7 +27,7 @@ describe('SampleUpload', () => {
 
     // Step 1 of the journey rail (selector updated for the R3 flow; the create->navigate
     // DATA behavior is unchanged).
-    expect(await screen.findByRole('heading', { name: 'Upload a CSV' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Create Template' })).toBeInTheDocument()
     await user.type(screen.getByLabelText(/source name/i), 'POS-CSV-Main')
     await user.click(screen.getByRole('button', { name: /analyze sample/i }))
 

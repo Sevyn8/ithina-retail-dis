@@ -19,7 +19,7 @@ const tenant: AuthSnapshot = {
 describe('CSV journey (one guided flow)', () => {
   it('renders the four-step journey rail with the shared labels', async () => {
     renderWithProviders(<AppRoutes />, { snapshot: tenant, initialEntries: ['/upload'] })
-    await screen.findByRole('heading', { name: 'Upload a CSV' })
+    await screen.findByRole('heading', { name: 'Create Template' })
     const rail = screen.getByRole('list', { name: 'Progress' })
     for (const label of CSV_JOURNEY_STEPS) {
       expect(within(rail).getByText(label)).toBeInTheDocument()
@@ -31,7 +31,7 @@ describe('CSV journey (one guided flow)', () => {
     renderWithProviders(<AppRoutes />, { snapshot: tenant, initialEntries: ['/upload'] })
 
     // Upload
-    await screen.findByRole('heading', { name: 'Upload a CSV' })
+    await screen.findByRole('heading', { name: 'Create Template' })
     await user.type(screen.getByLabelText(/source name/i), 'POS-CSV-Main')
     await user.click(screen.getByRole('button', { name: /analyze sample/i }))
 
@@ -62,6 +62,6 @@ describe('CSV journey (one guided flow)', () => {
       </div>,
       { snapshot: tenant, initialEntries: ['/upload'] },
     )
-    expect(await within(container).findByRole('heading', { name: 'Upload a CSV' })).toBeInTheDocument()
+    expect(await within(container).findByRole('heading', { name: 'Create Template' })).toBeInTheDocument()
   })
 })

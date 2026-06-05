@@ -28,8 +28,11 @@ export type NavItem = {
 // is the first such destination.
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard },
-  { label: 'Sources', to: '/sources', icon: Database },
-  { label: 'Upload', to: '/upload', icon: Upload },
+  // T5 IA: "Ingest Data" is the flat template list (/ingest) with a per-row ingest action;
+  // source CRUD stays at /sources, reachable via its "Manage sources" link. "Create Template"
+  // is the onboarding journey (/upload): a new source + its first mapping template.
+  { label: 'Ingest Data', to: '/ingest', icon: Database },
+  { label: 'Create Template', to: '/upload', icon: Upload },
   { label: 'Quarantine', to: '/quarantine', icon: ShieldAlert },
   { label: 'Audit', to: '/audit', icon: FileSearch },
   { label: 'Notifications', to: '/notifications', icon: Bell },
