@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from dis_core.errors import (
+    AuthTokenError,
     CsvIngestError,
     CustomerMasterReadError,
     DisError,
@@ -23,9 +24,11 @@ from dis_core.errors import (
     MappingError,
     MappingInputError,
     MirrorSyncError,
+    OpsRoleRequiredError,
     PreflightFailedError,
     SuiteDefinitionError,
     SuiteDriftError,
+    TenantScopeError,
     ValidationSuiteError,
 )
 
@@ -157,6 +160,36 @@ def test_preflight_failed_error_preserves_reason_and_detail() -> None:
     assert err.reason == "not_csv"
     assert err.detail == "duckdb sniff failed at byte 0"
     assert err.tenant_id == "ten"
+
+
+def test_auth_seam_errors_root_at_dis_error() -> None:
+    # Slice 13a: the dis-ui-server auth seam raises only DisError-rooted errors,
+    # mapped to 401/403 by the service's exception handlers (contract §2.3).
+    assert issubclass(AuthTokenError, DisError)
+    assert issubclass(TenantScopeError, DisError)
+    assert issubclass(OpsRoleRequiredError, DisError)
+
+
+def test_auth_token_error_preserves_reason() -> None:
+    err = AuthTokenError("token expired", reason="expired")
+    assert err.reason == "expired"
+    assert err.message == "token expired"
+
+
+def test_tenant_scope_error_preserves_tenant_id() -> None:
+    # A platform user (tenant_id None) hitting a tenant endpoint is the canonical
+    # raiser; the field stays None then, and carries the tenant where one exists.
+    assert TenantScopeError("token carries no tenant_id").tenant_id is None
+    err = TenantScopeError(
+        "resource belongs to another tenant",
+        tenant_id="019e89f9-dbd5-7703-8221-ae6b811599bb",
+    )
+    assert err.tenant_id == "019e89f9-dbd5-7703-8221-ae6b811599bb"
+
+
+def test_ops_role_required_error_message() -> None:
+    err = OpsRoleRequiredError("dis:ops role required")
+    assert err.message == "dis:ops role required"
 
 
 def test_errors_module_is_leaf_level() -> None:

@@ -449,3 +449,58 @@ class PreflightFailedError(CsvIngestError):
         super().__init__(message, tenant_id=tenant_id, trace_id=trace_id)
         self.reason = reason
         self.detail = detail
+
+
+# -- dis-ui-server auth-seam errors (Slice 13a) ---------------------------------
+# Raised by the dis-ui-server auth dependency chain (API_CONTRACT.md §2.1/§2.3) and
+# mapped by its FastAPI exception handlers to 401/403 + the §2.3 error envelope.
+# The seam is the SOLE source of tenant_id (never a body / query / unverified
+# header), so these errors are the only way a request without a verified scope
+# proceeds — by not proceeding. None ever carries a token value or a claim payload
+# (hard rule 2 posture: a raw bearer token is credential material, never context).
+
+
+class AuthTokenError(DisError):
+    """The bearer token is missing, expired, malformed, or carries bad claims.
+
+    Maps to HTTP 401 (contract §2.3). ``reason`` is a short machine-stable code
+    (e.g. ``missing_bearer``, ``expired``, ``bad_claims``) — never the token
+    itself and never raw claim values.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.reason = reason
+
+
+class TenantScopeError(DisError):
+    """A tenant-scoped endpoint was called without a tenant in the verified token.
+
+    Maps to HTTP 403 (contract §2.3). Also covers a resource that belongs to
+    another tenant. ``tenant_id`` is the verified token's tenant where one exists
+    (``None`` for a platform user hitting a tenant endpoint).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tenant_id = tenant_id
+
+
+class OpsRoleRequiredError(DisError):
+    """An ops endpoint was called without the ``dis:ops`` role. Maps to HTTP 403."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
