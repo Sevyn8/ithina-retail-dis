@@ -698,6 +698,216 @@ event-written (e.g. pre-seeded catalogue rows); the column is nullable by design
 **Cross-ref.** D38 (shared prerequisite migration), D30, D33, architecture 2.3.1, Slice 10.
 
 
+### D63 Sales for a first-seen SKU fail loud; catalogue/position onboards before sales `SETTLED`
+
+**Decision.** When the streaming consumer processes a sale-event chunk for a SKU with no
+existing `store_sku_current_position` hot row, the hot-table INSERT arm of the dual-write
+cannot satisfy the hot-only NOT NULL catalogue columns (`product_name`,
+`product_category`, `currency`, etc.). The v1.0 posture is fail loud: the NOT NULL
+violation rolls back the whole batch (D30 either-or-neither), the chunk goes to the
+minimal failure disposition (Slice 10), on to quarantine (Slice 11), and is replayed
+(Slice 12) once catalogue/position has onboarded. No hot-side no-op or skip path is
+introduced. This makes catalogue/position-before-sales a v1.0 onboarding-order invariant:
+sales for an unseen SKU quarantine until that SKU's position data lands.
+
+**Post-mapping validation projection.** The post-mapping canonical-shape suite validates
+each event chunk against its per-event-model projection (sale: `current_retail_price`,
+`unit_cost`, `currency`, `promo_identifier`, plus the natural-key triple), not one
+monolithic all-columns canonical model, so a sale chunk is never failed merely for lacking
+hot-only catalogue columns. The fail-loud is the genuine first-seen-SKU case, not a
+validation artifact.
+
+**Alternatives.** (1) Update-only for event chunks: ON CONFLICT update projected columns
+when the hot row exists; when absent, insert the event row and record a hot-side no-op.
+Rejected: invents a skip path the architecture does not describe and weakens the "both
+land" reading of D30. (2) Defer to operator review. Resolved here instead.
+
+**Why.** Faithful to the project-wide no-silent-fallback posture (code-quality rule 4) and
+to architecture 2.3.2 (UPSERT unconditionally). The recovery path is already built (failure
+disposition, quarantine, replay); first-seen-SKU sales are not lost, they wait.
+
+**Tradeoff acknowledged.** A tenant that sends sales before onboarding catalogue/position
+sees those sales quarantine until catalogue lands. A deliberate ordering constraint
+surfaced to onboarding, not a silent drop.
+
+**REVISED (service-amendment gate, operator-ratified): hot-row creation is
+COMPLETENESS-gated, not event-type-gated.** PostgreSQL validates NOT NULL on the INSERT
+candidate tuple BEFORE conflict arbitration (verified live, role-independent), so the
+"INSERT arm fails NOT NULL" mechanism above cannot exist for event projections at all —
+they can never ride an `INSERT … ON CONFLICT` statement, even for a seen SKU. The
+ratified posture:
+
+- The discriminator is derived from the live hot schema (NOT NULL + CHECK partition):
+  the consumer injects `id`/`tenant_id`/`store_id`/`trace_id`/`tax_treatment`/
+  `mapping_version_id`/`dis_channel` regardless of event; the projection must supply
+  `sku_id` (the natural key, universal) plus `product_name`, `product_category`,
+  `current_retail_price`, `unit_cost`, `currency`, honouring the presence-pairing CHECKs
+  (`promo_identifier ⇒ promo_price`; expiry triple all-or-none). **Complete** = the
+  assembled candidate satisfies every NOT NULL and CHECK, resolved PER MAPPING at load
+  (`LoadedMapping.hot_complete`); value-level violations remain loud at write.
+- **COMPLETE mapping** (none exists in production today; the future catalogue slice):
+  the proven atomic `INSERT … ON CONFLICT (COALESCE key) DO UPDATE … WHERE
+  event-time-wins` — creates or updates; the only path that inserts.
+- **INCOMPLETE mapping** (every current path): one conditional UPDATE with the
+  event-time-wins predicate; rowcount 0 → one READ-ONLY existence check → present =
+  older-event no-op (audited); absent = a D63 miss. **The miss does not abort the batch
+  transaction: the appended event rows COMMIT (history retained), then the sink raises
+  loudly so the chunk nacks toward quarantine (Slice 11).** No INSERT exists on this
+  path under any concurrency. Redelivery re-appends events (read-time dedup absorbs)
+  until catalogue/position onboards, then the merge succeeds.
+
+The original "rolls back the whole batch" wording above is superseded for the
+first-seen case: a D63 miss is a defined disposition (history retained, hot pending),
+not a write failure; genuine in-transaction failures (CHECKs, partitions, infra) still
+roll back both sides (D30 unchanged).
+
+**Cross-ref.** D30, D33, D58 split, D64, M-HOTKEY/0004, Slice 10 (the completeness
+classification + two-path merge), Slice 11 (quarantine), Slice 12 (replay).
+
+
+### D65 Id-less-source `source_event_id` fallback is redelivery-stable, NOT correction-collapsing `SETTLED` (limitation registered)
+
+**Decision.** When a source supplies no native event identifier — all change events (the
+live schema carries no source event-id column for them) and any sale row missing
+`transaction_id`/`line_item_seq` — the consumer derives
+`source_event_id = bronze_ref || ':' || chunk_row_index`. Properties, stated plainly:
+
+- **Redelivery dedups:** the same `ingress.ready` redelivered re-reads the same bronze
+  object, so each row reproduces its `source_event_id` and the D33 window collapses the
+  replay at read.
+- **A re-uploaded correction does NOT collapse:** a corrected file is a new bronze object,
+  so its rows carry different keys; two distinct events survive the read-time window for
+  these sources. The hot table still converges (event-time-wins, D64), so current truth is
+  correct; the event-history read shows both rows.
+- This is the honest semantics when a source asserts no event identity — DIS does not
+  invent correlation the source never claimed.
+
+**Trigger to revisit.** A concrete source that supplies no native event id but requires
+correction-collapse at the event-history read.
+
+**Evidence.** `services/streaming-consumer/tests/integration/test_read_time_dedup.py::test_idless_correction_documented`
+proves the accepted behavior (a distinct-bronze correction yields two non-collapsing
+events; hot converges).
+
+**Cross-ref.** D33, D38, D64, Slice 10.
+
+
+### Slice 10 register notes: D42 and D60 closed; carried limits named `RESOLVED/CARRIED`
+
+**D42 → RESOLVED (the `event_data` JSONB path; no DDL).** A dedup-key hit emits a
+ROW-scoped `CANONICAL_WRITTEN` audit event with `outcome = SUCCESS` (the append-only
+insert genuinely landed; the live CHECK vocabulary is honoured) and the duplicate detail
+in `event_data`: `{"duplicate": "DUPLICATE_NOOP"|"DUPLICATE_OVERWRITTEN",
+"prior_trace_id", "row_hash", "dedup_key": {store_id, source_id, source_event_id}}`.
+`row_hash` is sha256 over the orjson-serialized, key-sorted mapping-produced payload.
+NOOP-versus-OVERWRITTEN is decided by comparing the new row's hash against the prior
+latest row's payload re-hashed the same way. **Carried, not addressed:** the drift-guard
+type-narrowing limit (a narrowed column type passes dis-audit's name-set match and is
+caught only at INSERT, then swallowed by fire-and-forget) — fixing it means per-column
+type reconciliation in `libs/dis-audit`, outside Slice 10's blast radius; trigger: the
+next slice touching the dis-audit reconciliation. **Also registered:** dis-audit's closed
+`Stage` enum has no consumer-fetch member; intake+fetch audit under `RECEIVED`
+(`service_name` disambiguates); `IDENTITY_VALIDATED` is never emitted (no identity call
+exists, D28).
+
+**D60 → RESOLVED (STRIKE).** The "Used as the Pub/Sub ordering key." sentence is struck
+from `tenant_id` in BOTH `contracts/pubsub/csv.received.schema.json` and
+`ingress.ready.schema.json` (description-only; `schema_version` stays 1, the
+never-deployed-draft posture per D52; the 9b drift guards compare field sets, not
+descriptions — verified, no producer/consumer/test code change). Why strike, not
+implement: no correctness property needs ordering (canonical truth is event-time-based —
+D33 read-time dedup, D64 event-time-wins; the redelivery and out-of-order proofs in the
+Slice 10 suite pass without it); implementing would amend a shipped service (9b's
+publisher), require ordering-enabled subscriptions, and accept per-key serialized publish
+throughput for a guarantee the worker hop (nack/redelivery, D59 resume) already breaks.
+A regression test asserts neither contract mentions an ordering key.
+
+**PG15 ON CONFLICT limitation (Slice 10 implementation note on D64; D30 NOT reopened).**
+Verified empirically on the live 15.17: an ON CONFLICT arbiter over the NULLS NOT DISTINCT
+hot natural key does NOT detect a conflict when key values are NULL (both the column-list
+and ON CONSTRAINT forms take the INSERT arm); the NND unique index still enforces
+uniqueness on write. The D64 conditional upsert is therefore implemented as a conditional
+UPDATE (`IS NOT DISTINCT FROM` key predicate + the event-time-wins condition), an
+existence check, then a plain INSERT — all three statements INSIDE the same per-batch
+`rls_session` transaction as the event-table insert, so D30's either-or-neither holds
+unchanged at the batch grain (this note changes the upsert MECHANISM only, never the
+transaction boundary or D30 itself). Concurrency rests on the v1.0
+single-consumer-instance assumption (the D58 posture family); a racing duplicate still
+hits the unique index (`uq_sscp_natural` enforcement with NULL segments is proven on the
+live engine by `test_nnd_unique_index_enforces_on_null_segments`; the CONCURRENT
+two-transaction variant was demonstrated live in the Slice 10 adversarial pass — the
+second writer blocks on the speculative index entry, raises on the first's commit, and
+rolls back whole, one row surviving), fails the batch loudly, rolls back whole, and
+redelivery converges — never a silent double-write. **The single-instance assumption is
+UNENFORCED at runtime:** no deploy config, lock, or subscription setting limits the
+consumer to one instance (a Pub/Sub subscription actively permits many pullers), and
+Slice 10 deliberately adds no deploy config. It is a DEPLOY-TIME OBLIGATION owned by the
+slice that first deploys or horizontally scales the consumer (the reserved `deploy/`
+tree): max-one-instance, or revisit this note and D58 together with a real concurrency
+guard. Until then a second instance degrades safely (loud batch failures + redelivery),
+never silently.
+
+**SUPERSEDED (M-HOTKEY/0004 + the completeness-gated two-path merge — see the D58 split
+entry and REVISED D63).** The deployment posture is autoscaling, so the read-modify-write
+mechanism this note describes is RETIRED. Migration 0004 replaced `uq_sscp_natural` with
+the COALESCE-sentinel arbiter index `uq_sscp_natural_key` (+ sentinel CHECKs), restoring
+`INSERT … ON CONFLICT DO UPDATE` arbitration for all key shapes including NULL segments.
+A second live finding then shaped the service side: **PostgreSQL validates NOT NULL on
+the INSERT candidate BEFORE arbitration**, so only a COMPLETE candidate may ride the
+ON CONFLICT statement. The Slice 10 service amendment therefore implements the
+completeness-gated two-path merge (REVISED D63): complete mappings (future catalogue
+path) use the proven atomic ON CONFLICT statement; incomplete mappings (all current
+paths) use a conditional UPDATE whose rowcount-0 case is a READ-ONLY check → older-event
+no-op or a D63 miss (event history committed, loud raise after) — NO INSERT exists on
+the incomplete path, so the create-race that doomed the read-modify-write cannot occur.
+Both paths: per-batch sorted-key order, one rls_session transaction (D30 unchanged),
+EvalPlanQual re-evaluation of the event-time-wins predicate against the locked current
+row (D64 unchanged, concurrency-proven per path). The deploy-time single-instance
+obligation above is RESCINDED for streaming-consumer ONLY; a
+single-instance-or-fixed-dedup obligation attaches to csv-ingest-worker instead (the
+D58 split entry, item (b)). `test_nnd_unique_index_enforces_on_null_segments` retires
+with the mechanism it proved.
+
+**Carried scope limits (Slice 10).** (1) Non-NULL `pre/post_validation_suite_ref`
+(`module:ClassName`) is unsupported — raises `SuiteDefinitionError`; NULL=default is the
+only live state; trigger: the first mapping needing an authored suite. (2) `mapping.changed`
+event-driven refresh deferred (D6): the mapping read is per-lookup, zero-staleness;
+trigger: measured per-chunk SELECT cost or an operator latency requirement. (3) Within-batch
+dedup-key repeats are not flagged as duplicates in audit — the duplicate-detect SELECT
+reads only PRIOR COMMITTED rows, so two same-key rows inside ONE batch both insert
+(append-only, correct) with no DUPLICATE_* ROW event between them; the audit duplicate
+rate therefore undercounts within-file repeats that land in the same ≤500-row batch.
+Bounded: cross-BATCH repeats within one chunk ARE flagged (each batch commits before the
+next opens), and the read-time window still collapses within-batch peers (identical
+transaction-stable `last_updated_at`; the uuidv7 `id DESC` tie-break makes the LAST-built
+row the survivor, deterministically). Hot-side within-batch natural-key repeats carry no
+such gap at all: `_group_hot` merges them in memory before any SQL, exactly one
+UPDATE-or-INSERT per key per batch — no NND collision, no silent overwrite (column-scoped
+event-time-wins applied in the merge). (4) The rolling event-partition creator remains a registered gap
+(M-D38/D64 gate); out-of-window writes error loudly (no DEFAULT partition) into the
+failure disposition. (5) A `StreamingConsumerError` family in dis-core is a registered
+want (the service reuses `DisError`/`EventContractError`/`EventPathMismatchError`;
+dis-core was outside the slice blast radius); trigger: the next dis-core-touching slice.
+(6) `CHANGE_HOT_PROJECTION` has NO register anchor: the change-event
+`(event_category, attribute_name) → hot column` pairs (PRICE/current_retail_price,
+COST/unit_cost, INVENTORY/stock_qty, CATALOGUE/product_name, STATUS/sku_status) are a
+consumer convention authored in `pipeline/mapping.py` — unlike the sale projection,
+which D63 pins. End-to-end exercised only for `(INVENTORY, stock_qty)`; the other four
+are registry-image-asserted only, and a unit test enforces that every pair is an
+IDENTITY mapping (attribute X → hot column X), so a typo'd pair fails loudly rather
+than mis-routing an UPDATE. Owner of the anchor: the first slice with an independent
+reader of the registry (the quarantine console, Slice 11, or mapping authoring,
+Slice 14) registers or amends the pairs. (7) **Production enablement of the complete
+create-path:** no current production mapping carries the catalogue NOT NULL columns
+(`product_name`, `product_category`, …), so every live source classifies INCOMPLETE
+and hot-row creation is unreachable in production today — the mechanism is built
+(REVISED D63), the enablement is not. Enablement = a source authored to carry the
+discriminating columns (with registry/routing support for catalogue targets) or a
+revisit of the hot NOT NULL set; owner: onboarding / Slice 14.
+
+**Cross-ref.** D30, D33, D38, D42, D44, D58, D60, D63, D64, D65, Slice 10/11.
+
+
 ### D58 single-instance posture under autoscaling: SPLIT (M-HOTKEY) — consumer SOLVED; worker bronze dedup a NOW-LIVE OPEN gap
 
 **Posture change.** The deployment posture is AUTOSCALING (multiple instances per
