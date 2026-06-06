@@ -20,3 +20,5 @@ dbt/target/
 dbt/dbt_packages/
 dbt/logs/
 docs/workflow.md
+tfplan
+*.tfplan
