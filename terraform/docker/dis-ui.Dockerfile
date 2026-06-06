@@ -4,12 +4,19 @@
 # fallback (all routes -> index.html) so client-side routing works. Cloud Run
 # serves this container.
 #
-# VITE_API_BASE is a BUILD-time var for Vite (baked into the bundle). Pass it
-# as a build arg; the Terraform sets it as a runtime env on Cloud Run too, but
-# Vite needs it at build time, so the build arg is what matters for the bundle.
+# BUILD-TIME vars (Vite bakes import.meta.env.VITE_* into the static JS at build,
+# NOT at runtime). The UI reads exactly two, so they MUST be passed as build args
+# and baked here; a runtime Cloud Run env var does nothing for an already-built SPA:
+#   VITE_DIS_UI_SERVER_MODE      'real' calls dis-ui-server; anything else is fixtures.
+#   VITE_DIS_UI_SERVER_BASE_URL  the dis-ui-server base URL (required when mode=real).
+# The mode defaults to 'fixture' so a plain, un-parameterized build is never
+# accidentally broken-real. The old VITE_API_BASE arg was DEAD (the UI never read it).
 #
 # Build from services/dis-ui (the frontend package root):
-#   docker build -f ../../docker/dis-ui.Dockerfile --build-arg VITE_API_BASE=URL -t IMAGE .
+#   docker build -f ../../docker/dis-ui.Dockerfile \
+#     --build-arg VITE_DIS_UI_SERVER_MODE=real \
+#     --build-arg VITE_DIS_UI_SERVER_BASE_URL=https://dis-ui-server-XXXX.run.app \
+#     -t IMAGE .
 
 FROM node:20-slim AS build
 WORKDIR /app
@@ -22,8 +29,12 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-ARG VITE_API_BASE=""
-ENV VITE_API_BASE=${VITE_API_BASE}
+# Build-time Vite vars (ARG -> ENV -> baked by `vite build`). Mode defaults to
+# 'fixture' (safe); staging passes 'real' + the base URL via cloudbuild substitutions.
+ARG VITE_DIS_UI_SERVER_MODE="fixture"
+ARG VITE_DIS_UI_SERVER_BASE_URL=""
+ENV VITE_DIS_UI_SERVER_MODE=${VITE_DIS_UI_SERVER_MODE}
+ENV VITE_DIS_UI_SERVER_BASE_URL=${VITE_DIS_UI_SERVER_BASE_URL}
 RUN pnpm build
 
 # --- serve ---

@@ -37,6 +37,8 @@ Until (1) is set, keep `allow_public = false`. Until (2) is set, the external SF
 
 Access control is app-level: the frontend calls dis-ui-server over its public URL, and dis-ui-server enforces JWT (`AUTH_CLIENT_MODE=STUB` until real OIDC, D25) plus CORS scoped to the frontend URL.
 
+For the hosted frontend to actually CALL dis-ui-server (rather than run its built-in fixtures), the dis-ui IMAGE must be BUILT in real mode. The UI reads two Vite vars, `VITE_DIS_UI_SERVER_MODE` and `VITE_DIS_UI_SERVER_BASE_URL`, which are BUILD-TIME only (baked into the static bundle by `vite build`); a Cloud Run runtime env does nothing for an already-built SPA. So build the image with the cloudbuild substitutions `_DIS_UI_SERVER_MODE=real` and `_DIS_UI_SERVER_BASE_URL=<dis-ui-server URL>` (= the deployed dis-ui-server URL, `var.dis_ui_server_url`). The default build is `fixture` (safe); without `_DIS_UI_SERVER_MODE=real` the hosted app serves fixtures. The previous `VITE_API_BASE` build/runtime var was dead and has been removed (the UI never read it).
+
 NOTE: while auth is STUB, public staging is effectively open. Do not place sensitive data there until real OIDC lands.
 
 ## The schema seam (do not change)
@@ -50,7 +52,7 @@ Terraform creates the Cloud SQL instance and database ONLY. The schema is owned 
 3. Apply the durable layer first (project-services, network, service-accounts, cloud-sql, buckets, pubsub, secrets, artifact-registry). You can target these with -target during early applies if you want to bring them up before the service layer.
 4. Set the Secret Manager secret VALUES out of band (gcloud or console). Terraform creates the secret containers only; values never go in HCL or state.
 5. Run Alembic migrations against the new Cloud SQL instance. Confirm RLS is on.
-6. Build and push images to Artifact Registry (dis-ui-server has a Dockerfile; csv-ingest-worker, streaming-consumer, mirror-sync-consumer need Dockerfiles written first).
+6. Build and push images to Artifact Registry (dis-ui-server has a Dockerfile; csv-ingest-worker, streaming-consumer, mirror-sync-consumer need Dockerfiles written first). For the dis-ui frontend, pass the real-mode build-time vars so the hosted app calls the backend: `_DIS_UI_SERVER_MODE=real` and `_DIS_UI_SERVER_BASE_URL=<dis-ui-server URL>` (known after dis-ui-server deploys, so this is the second build). Omitting them builds a safe fixture-mode bundle.
 7. Apply the service layer (the cloud-run-service instances and the sftpgo-vm).
 
 ## Layout

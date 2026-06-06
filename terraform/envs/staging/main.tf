@@ -130,10 +130,17 @@ module "dis_ui" {
   image                 = var.image_dis_ui
   service_account_email = module.service_accounts.emails["ui-frontend"]
 
-  env = {
-    # The frontend's API base. Set dis_ui_server_url after dis-ui-server deploys.
-    VITE_API_BASE = var.dis_ui_server_url
-  }
+  # NO runtime env for the frontend: the UI's mode and API base are BUILD-TIME Vite
+  # vars (VITE_DIS_UI_SERVER_MODE + VITE_DIS_UI_SERVER_BASE_URL) baked into the static
+  # bundle when the dis-ui IMAGE is built, not read at Cloud Run runtime. So making the
+  # hosted frontend call the real backend is an image-BUILD concern, not a Terraform env:
+  # build the dis-ui image with the cloudbuild substitutions
+  #   _DIS_UI_SERVER_MODE=real
+  #   _DIS_UI_SERVER_BASE_URL=<dis-ui-server URL>   (= var.dis_ui_server_url, known after
+  #                                                   dis-ui-server deploys; second build)
+  # (see terraform/docker/cloudbuild.yaml + dis-ui.Dockerfile). The previous runtime
+  # VITE_API_BASE env here was dead: the UI never read it, and a runtime var cannot
+  # change an already-built SPA. var.dis_ui_server_url now feeds that build substitution.
 
   # Public Cloud Run + app-level JWT/CORS auth, matching ithina-retail-admin.
   # REQUIRES the project-level iam.allowedPolicyMemberDomains exemption (allowAll);

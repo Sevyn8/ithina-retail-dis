@@ -26,8 +26,10 @@ own package root with pnpm-lock.yaml).
 - Python version: assumed 3.12. Confirm against the root pyproject.toml.
 - uv workspace package names: the `--package NAME` flags assume the package
   names match the service dirs. Confirm against pyproject.toml.
-- The frontend VITE_API_BASE is a BUILD-time var (baked into the Vite bundle),
-  so it must be passed as a build arg, not just a runtime env.
+- The frontend mode + API base are BUILD-time Vite vars (baked into the bundle),
+  so they must be passed as build args, not runtime env: VITE_DIS_UI_SERVER_MODE
+  ('fixture' default, 'real' for staging) and VITE_DIS_UI_SERVER_BASE_URL (the
+  dis-ui-server URL). The old VITE_API_BASE was dead (the UI never read it).
 
 ## Build all images (Cloud Build)
 
@@ -35,7 +37,7 @@ From the repo root:
 
 ```
 gcloud builds submit --config docker/cloudbuild.yaml \
-  --substitutions=_REGION=asia-south1,_REPO=dis-images,_API_BASE=https://dis-ui-server-XXXX.run.app .
+  --substitutions=_REGION=asia-south1,_REPO=dis-images,_DIS_UI_SERVER_MODE=real,_DIS_UI_SERVER_BASE_URL=https://dis-ui-server-XXXX.run.app .
 ```
 
 This builds and pushes all five images tagged with the commit short SHA and
@@ -48,6 +50,9 @@ URIs (by SHA for reproducibility) and apply the service layer.
 # a worker (from repo root)
 docker build -f docker/csv-ingest-worker.Dockerfile -t LOCAL/csv-ingest-worker .
 
-# the frontend (from repo root, context is the frontend dir)
-docker build -f docker/dis-ui.Dockerfile --build-arg VITE_API_BASE=URL -t LOCAL/dis-ui services/dis-ui
+# the frontend (from repo root, context is the frontend dir). Omit the args for a
+# safe fixture-mode bundle; pass both for a real-mode bundle that calls dis-ui-server.
+docker build -f docker/dis-ui.Dockerfile \
+  --build-arg VITE_DIS_UI_SERVER_MODE=real \
+  --build-arg VITE_DIS_UI_SERVER_BASE_URL=URL -t LOCAL/dis-ui services/dis-ui
 ```
