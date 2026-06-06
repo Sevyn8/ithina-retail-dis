@@ -40,6 +40,7 @@ from dis_ui_server.db import create_engine_from_config
 from dis_ui_server.errors_http import register_error_handlers
 from dis_ui_server.handlers import health
 from dis_ui_server.publisher import PubsubPublisher
+from dis_ui_server.suggest.gemini_client import GeminiSuggester
 
 _log = get_logger(SERVICE_NAME)
 
@@ -63,6 +64,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # label-vs-derivation drift raises FieldCatalogDriftError HERE, aborting
     # startup — crashloop is the correct signal, never a half-true catalog.
     app.state.field_catalog = build_field_catalog()
+    # Mapping-suggestion producer. GEMINI_API_KEY is OPTIONAL: unset -> None ->
+    # the suggester returns the mechanical fallback (no crashloop). Construction is
+    # I/O-free (the google-genai client is built lazily on the first LLM call), and
+    # it holds no resource to dispose, so there is no shutdown step for it.
+    app.state.gemini = GeminiSuggester(api_key=config.gemini_api_key)
     _log.bind(stage="startup").info("dis-ui-server started")
     try:
         yield

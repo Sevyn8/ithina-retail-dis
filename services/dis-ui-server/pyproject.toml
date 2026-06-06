@@ -46,6 +46,11 @@ dependencies = [
   # anyio.to_thread (root-CLAUDE.md async pattern). Declared explicitly —
   # imported directly, never ridden transitively off starlette.
   "anyio>=4",
+  # Mapping-suggestion endpoint: the Gemini Developer API client (api_key=). The
+  # import is lazy (only the LLM path needs it); with no GEMINI_API_KEY the
+  # endpoint uses the mechanical fallback. The blocking call runs off the loop via
+  # anyio.to_thread, the same pattern as the GCS/Pub/Sub clients above.
+  "google-genai>=1.75.0",
 ]
 
 [build-system]

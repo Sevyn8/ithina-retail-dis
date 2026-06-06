@@ -14,6 +14,13 @@ three auth-seam errors; the streaming-consumer precedent applies):
   ``gcs_uri`` against, so producer and consumer cannot drift).
 - ``PUBSUB_PROJECT_ID`` — the Pub/Sub project for the ``csv.received`` publish.
 
+OPTIONAL env (NOT in the required-or-crashloop set):
+
+- ``GEMINI_API_KEY``: the Gemini Developer API key for the mapping-suggestion
+  endpoint, sourced in deployment from the ``dis-gemini-api-key`` secret. UNSET
+  is a normal state: the suggester falls back to the mechanical matcher, so a
+  missing key must NEVER abort startup (it is read with no raise).
+
 Resolution happens inside the app lifespan, NOT at import time: a missing
 required value aborts startup loudly (crashloop is the correct signal for
 misconfiguration), while a present-but-unreachable database must NOT block
@@ -37,6 +44,7 @@ _POSTGRES_URL = "POSTGRES_URL"
 _CORS_ALLOWED_ORIGINS = "CORS_ALLOWED_ORIGINS"
 _GCS_BUCKET_BRONZE = "GCS_BUCKET_BRONZE"
 _PUBSUB_PROJECT_ID = "PUBSUB_PROJECT_ID"
+_GEMINI_API_KEY = "GEMINI_API_KEY"  # OPTIONAL: unset -> mechanical fallback, never crashloop
 
 SERVICE_NAME = "dis-ui-server"
 
@@ -77,6 +85,7 @@ class UiServerConfig:
     postgres_url: str
     gcs_bucket_bronze: str
     pubsub_project_id: str
+    gemini_api_key: str | None = None  # OPTIONAL (see module docstring); never required
 
     @classmethod
     def from_env(cls) -> UiServerConfig:
@@ -98,10 +107,14 @@ class UiServerConfig:
             raise DisError(
                 f"{_PUBSUB_PROJECT_ID} is not set; the CSV upload cannot publish {CSV_RECEIVED_TOPIC!r}"
             )
+        # OPTIONAL: read with no raise. Unset -> None -> the suggester uses the
+        # mechanical fallback; a missing key must never abort startup (FM1).
+        gemini_api_key = os.environ.get(_GEMINI_API_KEY) or None
         return cls(
             postgres_url=postgres_url,
             gcs_bucket_bronze=gcs_bucket_bronze,
             pubsub_project_id=pubsub_project_id,
+            gemini_api_key=gemini_api_key,
         )
 
 
