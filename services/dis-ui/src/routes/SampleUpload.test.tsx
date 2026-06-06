@@ -31,11 +31,39 @@ describe('SampleUpload', () => {
     expect(screen.getByText(/parsed and profiled in your browser/)).toBeInTheDocument()
   })
 
-  it('disables Analyze until a CSV file is selected (no-file empty state)', async () => {
+  it('removes the source-kind dropdown and the New/Existing attach toggle (source-controls simplification)', async () => {
     renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
     await screen.findByRole('heading', { name: 'Create Template' })
-    expect(screen.getByRole('button', { name: /analyze sample/i })).toBeDisabled()
-    expect(screen.getByText(/Select a CSV file to analyze/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Source kind')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /New source/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Existing source/ })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Existing source')).not.toBeInTheDocument()
+  })
+
+  it('derives the Source id from the Source name, keeps it editable, and validates the pattern', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
+    await screen.findByRole('heading', { name: 'Create Template' })
+    const sourceId = screen.getByLabelText('Source id') as HTMLInputElement
+    // derived from the source name
+    await user.type(screen.getByLabelText(/source name/i), 'POS CSV Main')
+    expect(sourceId.value).toBe('pos_csv_main')
+    // editable + pattern-validated: an invalid id surfaces an error
+    await user.clear(sourceId)
+    await user.type(sourceId, 'Bad Id!')
+    expect(screen.getByRole('alert')).toHaveTextContent(/lowercase letters, digits, and underscores/i)
+  })
+
+  it('disables Analyze until a valid file AND a valid source id are present', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
+    await screen.findByRole('heading', { name: 'Create Template' })
+    const analyze = screen.getByRole('button', { name: /analyze sample/i })
+    expect(analyze).toBeDisabled() // no file, no id
+    await user.upload(screen.getByLabelText('CSV file'), sampleFile())
+    expect(analyze).toBeDisabled() // file but no source id yet
+    await user.type(screen.getByLabelText('Source id'), 'manual_csv_upload')
+    expect(analyze).toBeEnabled()
   })
 
   it('parses a real CSV and advances to Review mapping with the real columns', async () => {
@@ -47,11 +75,9 @@ describe('SampleUpload', () => {
     await user.type(screen.getByLabelText(/source name/i), 'POS-CSV-Main')
     await user.click(screen.getByRole('button', { name: /analyze sample/i }))
 
-    // Lands on Review mapping with the REAL parsed columns (no demo).
     expect(await screen.findByRole('heading', { name: 'Review mapping' })).toBeInTheDocument()
     expect(screen.getAllByText('item_code').length).toBeGreaterThan(0)
     expect(screen.getAllByText('txn_date').length).toBeGreaterThan(0)
-    // Local fixture mode -> mechanical fallback suggestions, honestly labeled.
     expect(screen.getByText('Suggestions: basic match')).toBeInTheDocument()
   })
 })

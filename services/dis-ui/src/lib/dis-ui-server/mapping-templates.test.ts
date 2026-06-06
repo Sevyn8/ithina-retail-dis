@@ -9,6 +9,7 @@ import {
   getMappingTemplate,
   getMappingTemplates,
   patchMappingTemplate,
+  promoteMappingTemplate,
 } from './mapping-templates'
 import type { SourceMappingRules } from './mapping-templates'
 
@@ -237,5 +238,88 @@ describe('mapping-templates create/patch fixture mode (T10)', () => {
     const detail = await patchMappingTemplate('tmpl-1', { template_name: 'Renamed' })
     expect(detail.template_name).toBe('Renamed')
     expect(detail.versions[0].status).toBe('draft')
+  })
+})
+
+// T(create/promote): promotion is fixture-synth locally and honest-pending in real mode.
+describe('promoteMappingTemplate', () => {
+  const RULES: SourceMappingRules = {
+    version: 1,
+    rename: { item_code: 'sku_id' },
+    normalize: {},
+    cast: {},
+    derive: {},
+  }
+
+  it('fixture mode synthesizes DRAFT -> STAGED -> ACTIVE (demo transitions)', async () => {
+    const draft = await createMappingTemplate({
+      source_id: 'manual_csv_upload',
+      template_name: 'Sales',
+      mapping_rules: RULES,
+    })
+    expect(draft.draft_version).toBe(1)
+    expect(draft.active_version).toBeNull()
+
+    const staged = await promoteMappingTemplate(draft, 'staged')
+    expect(staged.staged_version).toBe(1)
+    expect(staged.draft_version).toBeNull()
+    expect(staged.versions[0].status).toBe('staged')
+
+    const active = await promoteMappingTemplate(staged, 'active')
+    expect(active.active_version).toBe(1)
+    expect(active.staged_version).toBeNull()
+    expect(active.versions[0].status).toBe('active')
+  })
+
+  describe('real mode (mocked fetch)', () => {
+    const draft = {
+      template_id: '0190ac10-5a00-7000-8a00-0000000000a1',
+      source_id: 'manual_csv_upload',
+      template_name: 'Sales',
+      ingestion_mode: 'file' as const,
+      latest_version: 1,
+      active_version: null,
+      staged_version: null,
+      draft_version: 1,
+      versions_count: 1,
+      created_at: '2026-06-06T00:00:00Z',
+      latest_version_created_at: '2026-06-06T00:00:00Z',
+      versions: [],
+    }
+
+    beforeEach(() => {
+      vi.stubEnv('VITE_DIS_UI_SERVER_MODE', 'real')
+      vi.stubEnv('VITE_DIS_UI_SERVER_BASE_URL', 'http://test.local')
+      writeToken('tok-123')
+    })
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      vi.unstubAllGlobals()
+      clearToken()
+    })
+
+    it('POSTs to the provisional /stage path; a 404 rejects (honest-pending, never fakes STAGED)', async () => {
+      const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+        async () => ({ ok: false, status: 404, json: async () => ({ error: { code: 'not_found' } }) }) as unknown as Response,
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      await expect(promoteMappingTemplate(draft, 'staged')).rejects.toBeInstanceOf(DisUiServerHttpError)
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'http://test.local/api/v1/mapping-templates/0190ac10-5a00-7000-8a00-0000000000a1/stage',
+      )
+      expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    })
+
+    it('a real 2xx advances the lifecycle (once the endpoint ships)', async () => {
+      const RESP = { ...draft, staged_version: 1, draft_version: null }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+          async () => ({ ok: true, status: 200, json: async () => RESP }) as unknown as Response,
+        ),
+      )
+      const staged = await promoteMappingTemplate(draft, 'staged')
+      expect(staged.staged_version).toBe(1)
+    })
   })
 })

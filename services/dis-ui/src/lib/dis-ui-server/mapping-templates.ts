@@ -481,6 +481,55 @@ export async function patchMappingTemplate(
   )
 }
 
+// The lifecycle transition target for promotion (create/promote flow). 'staged' = DRAFT to
+// STAGED, 'active' = STAGED to ACTIVE.
+export type PromoteTo = 'staged' | 'active'
+
+// Fixture-mode synthesis of a promotion: advance the held detail's single version to the new
+// status and move the lineage pointers. Clearly a demo transition (real mode never synthesizes;
+// see promoteMappingTemplate). active stamps activated_at.
+function synthPromotedDetail(current: MappingTemplateDetail, to: PromoteTo): MappingTemplateDetail {
+  const nextStatus = to === 'staged' ? 'staged' : 'active'
+  const versions = current.versions.map((v) =>
+    v.version === current.latest_version
+      ? {
+          ...v,
+          status: nextStatus as TemplateStatus,
+          activated_at: to === 'active' ? '2026-06-06T00:00:00Z' : v.activated_at,
+        }
+      : v,
+  )
+  return {
+    ...current,
+    versions,
+    draft_version: null,
+    staged_version: to === 'staged' ? current.latest_version : null,
+    active_version: to === 'active' ? current.latest_version : current.active_version,
+  }
+}
+
+// Promote a template along the lifecycle (DRAFT -> STAGED -> ACTIVE). REAL mode POSTs to the
+// PROVISIONAL endpoint path (/stage, /activate) - these endpoints are NOT yet built on
+// dis-ui-server (pending Sanjeev; the path shape is unconfirmed), so a real call is expected to
+// fail (404) until they ship: the caller treats any error as honest "not yet available" and
+// MUST NOT display STAGED/ACTIVE without a real 2xx (FM1, no fake ACTIVE). FIXTURE mode
+// synthesizes the transition so the full flow is walkable locally (clearly a demo transition).
+export async function promoteMappingTemplate(
+  current: MappingTemplateDetail,
+  to: PromoteTo,
+): Promise<MappingTemplateDetail> {
+  if (isRealMode()) {
+    const path = to === 'staged' ? 'stage' : 'activate'
+    return normalizeDetail(
+      await postJson<RawMappingTemplateDetail>(
+        `/api/v1/mapping-templates/${encodeURIComponent(current.template_id)}/${path}`,
+        {},
+      ),
+    )
+  }
+  return synthPromotedDetail(current, to)
+}
+
 const TEMPLATES_KEY = ['dis-ui-server', 'mapping-templates'] as const
 
 export function useMappingTemplates(snapshot: AuthSnapshot | null, sourceId: string | null) {

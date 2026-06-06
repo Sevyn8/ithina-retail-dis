@@ -26,6 +26,8 @@ const LLM_SEED: SampleAnalysis = {
   status: 'ready',
   source: 'llm',
   model: 'gemini-2.5-flash',
+  source_id: 'manual_csv_upload',
+  template_name: 'Sales',
   row_count: 2,
   sample_rows: [
     { item_code: 'A123', qty: '12', txn_date: '03-12-2025', pos_terminal: 'T-2A' },
@@ -132,14 +134,35 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(screen.getAllByText('A123').length).toBeGreaterThan(0)
   })
 
-  it('approves to staged on Go live', async () => {
+  it('Go-live creates a DRAFT with honest "Created (draft)" copy (not staged)', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     await declareRequiredRules(user)
     await user.click(screen.getByRole('button', { name: /continue to preview/i }))
     await user.click(await screen.findByRole('button', { name: /go live/i }))
-    expect(await screen.findByRole('status')).toHaveTextContent(/approved to staged \(version 1\)/i)
+    const status = await screen.findByRole('status')
+    // Decision (d): honest DRAFT copy, never "staged".
+    expect(status).toHaveTextContent(/Created \(draft\)/i)
+    expect(status).toHaveTextContent(/Sales/)
+    expect(status).not.toHaveTextContent(/staged/i)
+  })
+
+  it('fixture mode promotes DRAFT -> STAGED -> ACTIVE via synth (demo-marked)', async () => {
+    const user = userEvent.setup()
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    await declareRequiredRules(user)
+    await user.click(screen.getByRole('button', { name: /continue to preview/i }))
+    await user.click(await screen.findByRole('button', { name: /go live/i }))
+    await screen.findByRole('status')
+    expect(screen.getByText(/Demo transition \(fixture mode\)/)).toBeInTheDocument()
+    // DRAFT -> STAGED
+    await user.click(screen.getByRole('button', { name: 'Stage' }))
+    await user.click(await screen.findByRole('button', { name: 'Activate' }))
+    // STAGED -> ACTIVE: honest active state, no further promote button.
+    expect(await screen.findByText(/New files for this source are now processed/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Activate' })).not.toBeInTheDocument()
   })
 
   it('shows a clean empty state (not an error) for an unknown sample id', async () => {

@@ -39,7 +39,7 @@ const RESPONSE: MappingSuggestionResponse = {
 
 describe('onboarding analyzed-sample store (T11)', () => {
   it('round-trips an analysis through the in-memory store', async () => {
-    const analysis: SampleAnalysis = assembleAnalysis(PARSED, RESPONSE, 'smp_local_1')
+    const analysis: SampleAnalysis = assembleAnalysis(PARSED, RESPONSE, 'smp_local_1', 'manual_csv_upload', 'Sales')
     putSampleAnalysis(analysis)
     const got = await getSample('smp_local_1')
     expect(got).not.toBeNull()
@@ -57,9 +57,11 @@ describe('onboarding analyzed-sample store (T11)', () => {
 
 describe('assembleAnalysis (merge parse + suggestions)', () => {
   it('merges the profile and suggestions, carries the source/model/rows', () => {
-    const analysis = assembleAnalysis(PARSED, RESPONSE, 'smp_local_1')
+    const analysis = assembleAnalysis(PARSED, RESPONSE, 'smp_local_1', 'manual_csv_upload', 'Sales')
     expect(analysis.source).toBe('llm')
     expect(analysis.model).toBe('gemini-2.5-flash')
+    expect(analysis.source_id).toBe('manual_csv_upload')
+    expect(analysis.template_name).toBe('Sales')
     expect(analysis.row_count).toBe(1)
     expect(analysis.sample_rows).toHaveLength(1)
     const byCol = Object.fromEntries(analysis.columns.map((c) => [c.source_col, c]))

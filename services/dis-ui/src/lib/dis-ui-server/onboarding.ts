@@ -37,6 +37,10 @@ export type SampleAnalysis = {
   // Honesty flag from the suggestion source: "llm" (AI) vs "fallback" (basic name match).
   source: SuggestionSource
   model?: string | null
+  // The operator-supplied source id (load-bearing) and template name, carried from the upload
+  // step so Go-live can build the createMappingTemplate body without re-prompting.
+  source_id: string
+  template_name: string
   columns: SampleColumn[]
   sample_rows: Record<string, string>[] // first 10 parsed rows, for the review preview
   row_count: number // true number of data rows
@@ -82,6 +86,8 @@ export function assembleAnalysis(
   parsed: ParsedCsv,
   response: MappingSuggestionResponse,
   sampleId: string,
+  sourceId: string,
+  templateName: string,
 ): SampleAnalysis {
   const byColumn = new Map(response.suggestions.map((s) => [s.source_column, s]))
   const columns: SampleColumn[] = parsed.columns.map((profile) => {
@@ -103,6 +109,8 @@ export function assembleAnalysis(
     status: 'ready',
     source: response.source,
     model: response.model ?? null,
+    source_id: sourceId,
+    template_name: templateName,
     columns,
     sample_rows: parsed.sample_rows,
     row_count: parsed.row_count,

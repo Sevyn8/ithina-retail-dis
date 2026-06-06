@@ -2,47 +2,54 @@ import { Sparkles, UploadCloud } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
-import { useAuth } from '../auth/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { DemoDataBanner } from '../components/DemoDataBanner'
 import { ProgressRail } from '@/components/ui/progress-rail'
-import { cn } from '@/lib/utils'
 import { parseCsvFile } from '../lib/onboarding/analyze-csv'
 import { getMappingSuggestions } from '../lib/dis-ui-server/mapping-suggestions'
 import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
 import { assembleAnalysis, nextSampleId, putSampleAnalysis } from '../lib/dis-ui-server/onboarding'
-import { deriveSourceId, makeSourceDraft, useSources } from '../lib/dis-ui-server/sources'
+import { deriveSourceId } from '../lib/dis-ui-server/sources'
 import { CSV_JOURNEY_STEPS, CSV_JOURNEY_STEP_INDEX } from './csv-journey'
 
-// Upload (CSV journey step 1), on the shared 4-step rail. T11: the uploaded CSV is parsed
-// CLIENT-SIDE (Papa Parse) into a real column profile, per-column suggestions come from the
-// mapping-suggestions endpoint (real mode) or the mechanical stand-in (fixture mode), and the
-// assembled analysis is stored for the Review step. No demo data: an upload is required.
+// The server-validated source_id shape (createMappingTemplate / MappingTemplateCreate). The id
+// is load-bearing: it is the template's source_id, set here and carried to Go-live. There is no
+// source registry to pick from yet, so the operator supplies it (derived from the source name,
+// editable). Attach-to-existing and the source-kind dropdown were removed: no registry exists,
+// and this is the CSV journey (kind is implicitly CSV; the connector picker owns source type).
+const SOURCE_ID_RE = /^[a-z0-9_]{1,128}$/
+
+// Upload (CSV journey step 1), on the shared 4-step rail. The uploaded CSV is parsed
+// CLIENT-SIDE (Papa Parse) into a real column profile; per-column suggestions come from the
+// mapping-suggestions endpoint (real) or the mechanical stand-in (fixture); the assembled
+// analysis is stored for the Review step. An upload AND a valid source id are required.
 export function SampleUpload() {
   const navigate = useNavigate()
-  const { snapshot } = useAuth()
-  const sources = useSources(snapshot)
   const fields = useTemplateMappingFields()
 
   const [file, setFile] = useState<File | null>(null)
   const [label, setLabel] = useState('')
-  const [sourceKind, setSourceKind] = useState('csv')
-  const [attachTo, setAttachTo] = useState<'new' | 'existing'>('new')
-  // UI-only: the source-instance choice is captured but not part of the analyze profile.
-  const [existingSourceId, setExistingSourceId] = useState('')
+  const [sourceId, setSourceId] = useState('')
+  const [sourceIdEdited, setSourceIdEdited] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
 
-  // The new source this attach-to-new flow declares, built via the SHARED SourceDraft builder.
-  const newSourceDraft = makeSourceDraft({
-    source_id: deriveSourceId(label),
-    name: label,
-    type: sourceKind,
-    store: '',
-  })
+  // The source id tracks the source name (deriveSourceId) until the operator edits it directly.
+  function onLabelChange(next: string): void {
+    setLabel(next)
+    if (!sourceIdEdited) {
+      setSourceId(deriveSourceId(next))
+    }
+  }
+  function onSourceIdChange(next: string): void {
+    setSourceId(next)
+    setSourceIdEdited(true)
+  }
+
+  const sourceIdValid = SOURCE_ID_RE.test(sourceId)
+  const sourceIdError = sourceId.length > 0 && !sourceIdValid
 
   async function analyze(): Promise<void> {
     setSubmitError(null)
@@ -50,19 +57,22 @@ export function SampleUpload() {
       setSubmitError('Select a CSV file to analyze.')
       return
     }
+    if (!sourceIdValid) {
+      setSubmitError('Enter a valid source id (lowercase letters, digits, underscores).')
+      return
+    }
     setAnalyzing(true)
     try {
       // 1) real client-side parse -> column profile + sample rows + true row count.
       const parsed = await parseCsvFile(file)
       // 2) per-column suggestions: endpoint (real) or mechanical stand-in (fixture).
-      const sourceId = attachTo === 'existing' ? existingSourceId || null : newSourceDraft.source_id || null
       const response = await getMappingSuggestions(
         { columns: parsed.columns, source_id: sourceId, template_name: label || null },
         fields.data ?? [],
       )
-      // 3) assemble + hand off to Review.
+      // 3) assemble (carrying source_id + template_name for Go-live) + hand off to Review.
       const sampleId = nextSampleId()
-      putSampleAnalysis(assembleAnalysis(parsed, response, sampleId))
+      putSampleAnalysis(assembleAnalysis(parsed, response, sampleId, sourceId, label || sourceId))
       navigate(`/upload/${sampleId}/review`)
     } catch {
       setSubmitError('Could not analyze the CSV. Please check the file and try again.')
@@ -124,77 +134,32 @@ export function SampleUpload() {
             id="source-name"
             type="text"
             value={label}
-            onChange={(e) => setLabel(e.target.value)}
+            onChange={(e) => onLabelChange(e.target.value)}
             className="mt-1"
           />
         </div>
 
         <div>
-          <Label htmlFor="source-kind">Source kind</Label>
-          <Select
-            id="source-kind"
-            value={sourceKind}
-            onChange={(e) => setSourceKind(e.target.value)}
-            className="mt-1"
-          >
-            <option value="csv">CSV</option>
-            <option value="json">JSON</option>
-          </Select>
-        </div>
-
-        <fieldset>
-          <legend className="text-label mb-2 text-muted-foreground">Attach to</legend>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              aria-pressed={attachTo === 'new'}
-              onClick={() => setAttachTo('new')}
-              className={cn(
-                'rounded-md border p-3 text-left text-sm transition-colors',
-                attachTo === 'new'
-                  ? 'border-primary bg-primary/5 font-medium'
-                  : 'border-border hover:bg-muted',
-              )}
-            >
-              New source
-              <span className="block text-caption text-muted-foreground">Start a fresh source.</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={attachTo === 'existing'}
-              onClick={() => setAttachTo('existing')}
-              className={cn(
-                'rounded-md border p-3 text-left text-sm transition-colors',
-                attachTo === 'existing'
-                  ? 'border-primary bg-primary/5 font-medium'
-                  : 'border-border hover:bg-muted',
-              )}
-            >
-              Existing source
-              <span className="block text-caption text-muted-foreground">Attach to a source.</span>
-            </button>
-          </div>
-          {attachTo === 'new' && newSourceDraft.source_id.length > 0 ? (
-            <p className="mt-2 text-caption text-muted-foreground">
-              New source id: <span className="font-mono">{newSourceDraft.source_id}</span>
+          <Label htmlFor="source-id">Source id</Label>
+          <Input
+            id="source-id"
+            type="text"
+            value={sourceId}
+            onChange={(e) => onSourceIdChange(e.target.value)}
+            placeholder="e.g. manual_csv_upload"
+            aria-invalid={sourceIdError}
+            className="mt-1 font-mono"
+          />
+          {sourceIdError ? (
+            <p role="alert" className="mt-1 text-caption text-danger">
+              Lowercase letters, digits, and underscores only (1 to 128 characters).
             </p>
-          ) : null}
-          {attachTo === 'existing' ? (
-            <Select
-              aria-label="Existing source"
-              value={existingSourceId}
-              onChange={(e) => setExistingSourceId(e.target.value)}
-              className="mt-3"
-            >
-              <option value="">Select a source</option>
-              {(sources.data ?? []).map((source) => (
-                <option key={source.source_id} value={source.source_id}>
-                  {source.name}
-                </option>
-              ))}
-            </Select>
-          ) : null}
-        </fieldset>
+          ) : (
+            <p className="mt-1 text-caption text-muted-foreground">
+              The template's source id. Derived from the source name; edit if needed.
+            </p>
+          )}
+        </div>
 
         {submitError !== null ? (
           <p role="alert" className="text-sm text-danger">
@@ -203,7 +168,11 @@ export function SampleUpload() {
         ) : null}
 
         <div className="flex gap-3">
-          <Button type="button" onClick={() => void analyze()} disabled={file === null || analyzing}>
+          <Button
+            type="button"
+            onClick={() => void analyze()}
+            disabled={file === null || !sourceIdValid || analyzing}
+          >
             <Sparkles aria-hidden="true" />
             {analyzing ? 'Analyzing sample...' : 'Analyze sample'}
           </Button>

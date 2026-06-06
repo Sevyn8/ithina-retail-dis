@@ -16,12 +16,16 @@ import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
-  approveSample,
   dryRunSample,
   patchSampleMapping,
   useSample,
 } from '../lib/dis-ui-server/onboarding'
-import type { ApproveResult, DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
+import type { DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
+import { DisUiServerHttpError } from '../lib/dis-ui-server/client'
+import { isRealMode } from '../lib/dis-ui-server/mode'
+import { createMappingTemplate, promoteMappingTemplate } from '../lib/dis-ui-server/mapping-templates'
+import type { MappingTemplateDetail, PromoteTo } from '../lib/dis-ui-server/mapping-templates'
+import { assembleMappingRules } from '../lib/onboarding/assemble-mapping-rules'
 import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
 import type { FieldDatatype, FieldSection, TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
 import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
@@ -40,6 +44,34 @@ type Override = { proposed_canonical: string; authoritative: boolean }
 
 // The three sub-steps the review route runs behind the shared journey rail.
 type JourneyStep = 'review' | 'preview' | 'golive'
+
+// Map a create failure to a user-facing message (createMappingTemplate throws
+// DisUiServerHttpError in real mode; the server's codes are mapped per the contract).
+function createErrorMessage(err: unknown): string {
+  if (err instanceof DisUiServerHttpError) {
+    if (err.status === 409 || err.code === 'mapping_template_name_conflict') {
+      return 'A template with that name already exists for this source. Choose a different name.'
+    }
+    if (err.status === 400 || err.code === 'mapping_config') {
+      return 'The mapping rules were rejected. Check the field mappings and format rules.'
+    }
+    if (err.status === 403) {
+      return 'You are not authorized to create a template for this tenant.'
+    }
+  }
+  return 'Could not create the template. Please try again.'
+}
+
+// The lifecycle position of a created template, from its version pointers.
+function lifecycleStatus(detail: MappingTemplateDetail): 'draft' | 'staged' | 'active' {
+  if (detail.active_version !== null) {
+    return 'active'
+  }
+  if (detail.staged_version !== null) {
+    return 'staged'
+  }
+  return 'draft'
+}
 
 // High-confidence columns are auto-mapped and shown calmly; the rest are pulled out for
 // the operator's judgment. The threshold is the existing >=0.70 confidence band.
@@ -83,8 +115,14 @@ export function MappingReview() {
   // must declare it before proceeding.
   const [localeRules, setLocaleRules] = useState<Record<string, LocaleDeclaration>>({})
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
-  const [approved, setApproved] = useState<ApproveResult | null>(null)
+  // The created template (DRAFT) returned by Go-live; its lifecycle pointers advance as the
+  // operator promotes (fixture synth; real mode only on a real 2xx, never faked).
+  const [created, setCreated] = useState<MappingTemplateDetail | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  // Promotion is honest-pending in real mode (the stage/activate endpoints do not exist yet):
+  // this message is shown when a real promote call fails, and the lifecycle is NOT advanced.
+  const [promoteError, setPromoteError] = useState<string | null>(null)
+  const [promoting, setPromoting] = useState(false)
   // Per-column UI expanders (T8): the format-rule "more examples" reveal, and the auto-mapped
   // row's "change" reveal of the canonical select. Keyed by source_col; default collapsed.
   const [showAllExamples, setShowAllExamples] = useState<Record<string, boolean>>({})
@@ -191,13 +229,56 @@ export function MappingReview() {
     }
   }
 
+  // Go-live: assemble the full mapping_rules from the wizard state, then CREATE the template
+  // for real (mode-aware: real POST / fixture synth). The result is a DRAFT (decision a); the
+  // success copy says "Created (draft)" (decision d), never "staged".
   async function goLive(): Promise<void> {
     setActionError(null)
+    const assembled = assembleMappingRules(
+      analysis.columns.map((column) => ({
+        source_col: column.source_col,
+        proposed_canonical: overrideFor(column).proposed_canonical,
+        rule_kind: ruleKindFor(column),
+        locale: localeRules[column.source_col],
+      })),
+    )
+    if (!assembled.ok) {
+      setActionError(assembled.error)
+      return
+    }
     try {
-      setApproved(await approveSample(sampleId as string))
+      const detail = await createMappingTemplate({
+        source_id: analysis.source_id,
+        template_name: analysis.template_name,
+        mapping_rules: assembled.rules,
+      })
+      setCreated(detail)
+      setPromoteError(null)
       setStep('golive')
+    } catch (err) {
+      setActionError(createErrorMessage(err))
+    }
+  }
+
+  // Promote the created template along the lifecycle. FIXTURE mode synthesizes the transition
+  // (demo) and advances the displayed lifecycle. REAL mode POSTs to the provisional endpoint;
+  // it does not exist yet, so any error is honest-pending and the lifecycle is NOT advanced
+  // (FM1: never display STAGED/ACTIVE without a real 2xx, no fake ACTIVE).
+  async function promote(to: PromoteTo): Promise<void> {
+    if (created === null) {
+      return
+    }
+    setPromoteError(null)
+    setPromoting(true)
+    try {
+      const next = await promoteMappingTemplate(created, to)
+      setCreated(next)
     } catch {
-      setActionError('Approve failed.')
+      setPromoteError(
+        'Promotion is not yet available. The template was created as a draft; staging and activation ship with dis-ui-server.',
+      )
+    } finally {
+      setPromoting(false)
     }
   }
 
@@ -616,26 +697,77 @@ export function MappingReview() {
         </>
       ) : null}
 
-      {step === 'golive' && approved !== null ? (
-        <Card>
-          <CardContent className="flex flex-col gap-3">
-            <p role="status" className="text-body-strong text-success">
-              Mapping approved to staged (version {approved.mapping_version}) for {approved.source_id}.
-            </p>
-            <p className="text-caption text-muted-foreground">
-              Future files for this source flow through this mapping once it is promoted to active.
-            </p>
-            <div>
-              <Link
-                to={`/sources/${approved.source_id}/mappings`}
-                className={buttonVariants({ variant: 'outline', size: 'sm' })}
-              >
-                View source mappings
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
+      {step === 'golive' && created !== null
+        ? (() => {
+            const status = lifecycleStatus(created)
+            const version =
+              created.active_version ?? created.staged_version ?? created.draft_version ?? created.latest_version
+            return (
+              <Card>
+                <CardContent className="flex flex-col gap-3">
+                  {/* Decision (d): honest DRAFT copy, never "staged". */}
+                  <p role="status" className="text-body-strong text-success">
+                    Created (draft): {created.template_name} v{version} for {created.source_id}.
+                  </p>
+                  <p className="text-caption text-muted-foreground">
+                    The template was created as a draft. Promote it to staged, then active; new files
+                    for this source are processed through the active version.
+                  </p>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-label text-muted-foreground">Lifecycle</span>
+                    <StatusBadge
+                      tone={status === 'active' ? 'success' : status === 'staged' ? 'warning' : 'neutral'}
+                    >
+                      {status}
+                    </StatusBadge>
+                  </div>
+
+                  {/* Provisional two-step promote (pending-Sanjeev). Honesty guard (FM1): real
+                      mode has no stage/activate endpoint yet, so a promote attempt is
+                      honest-pending and the lifecycle is NOT advanced without a real 2xx; fixture
+                      mode synthesizes the transition (a clearly-marked demo). No fake ACTIVE. */}
+                  {status !== 'active' ? (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex gap-3">
+                        {status === 'draft' ? (
+                          <Button type="button" disabled={promoting} onClick={() => void promote('staged')}>
+                            Stage
+                          </Button>
+                        ) : (
+                          <Button type="button" disabled={promoting} onClick={() => void promote('active')}>
+                            Activate
+                          </Button>
+                        )}
+                      </div>
+                      {!isRealMode() ? (
+                        <p className="text-caption text-muted-foreground">Demo transition (fixture mode).</p>
+                      ) : null}
+                      {promoteError !== null ? (
+                        <p role="alert" className="text-caption text-warning">
+                          {promoteError}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="text-caption text-success">
+                      Active. New files for this source are now processed through this mapping.
+                    </p>
+                  )}
+
+                  <div>
+                    <Link
+                      to={`/sources/${created.source_id}/templates/${created.template_id}`}
+                      className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                    >
+                      View template
+                    </Link>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })()
+        : null}
     </section>
   )
 }

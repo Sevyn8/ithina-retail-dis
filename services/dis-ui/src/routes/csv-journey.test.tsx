@@ -56,11 +56,18 @@ describe('CSV journey (one guided flow)', () => {
     await screen.findByRole('heading', { name: 'Preview' })
     await user.click(screen.getByRole('button', { name: /go live/i }))
 
-    // Go live: honest staged-activation state, no ingestion metrics
+    // Go live: create-as-DRAFT with honest "Created (draft)" copy (decision a+d), no fake
+    // "staged", no ingestion metrics. The source id is derived from the source name.
     const status = await screen.findByRole('status')
-    expect(status).toHaveTextContent(/approved to staged \(version 1\)/i)
-    expect(status).toHaveTextContent(/manual_csv_upload/)
+    expect(status).toHaveTextContent(/Created \(draft\)/i)
+    expect(status).toHaveTextContent(/pos_csv_main/)
+    expect(status).not.toHaveTextContent(/staged/i)
     expect(screen.queryByText(/rows ingested|ingestion|throughput|events\/day/i)).not.toBeInTheDocument()
+
+    // Promote: fixture mode synthesizes DRAFT -> STAGED -> ACTIVE (demo transitions).
+    await user.click(screen.getByRole('button', { name: 'Stage' }))
+    await user.click(await screen.findByRole('button', { name: 'Activate' }))
+    expect(await screen.findByText(/New files for this source are now processed/)).toBeInTheDocument()
   })
 
   it('renders the journey under the dark theme class (both modes)', async () => {
