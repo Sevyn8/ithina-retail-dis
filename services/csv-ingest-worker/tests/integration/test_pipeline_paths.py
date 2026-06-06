@@ -334,7 +334,8 @@ async def test_published_prior_redelivery_is_full_noop(
             {"tid": event.trace_id},
         ).scalar()
     assert count == 1  # no second bronze row
-    assert ("RECEIVED", "SKIPPED") in _audit_stages(dis_admin, event.trace_id)
+    # Slice 30c (the D42 revision): the dedup no-op's outcome IS the kind.
+    assert ("RECEIVED", "DUPLICATE_NOOP") in _audit_stages(dis_admin, event.trace_id)
 
 
 async def test_unpublished_prior_redelivery_resumes_and_marks(

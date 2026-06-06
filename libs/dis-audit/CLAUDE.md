@@ -13,7 +13,7 @@ For interfaces, types, file structure, see `README.md`.
 ## Rules specific to this lib (Slice 6)
 
 - **Derive the model from the live `audit.events`, not from D14/§8/the DDL/the BQ shape.**
-  `AuditEvent` has one field per live column (23); the integration test reconciles the field
+  `AuditEvent` has one field per live column (24 since Slice 30c); the integration test reconciles the field
   set against `information_schema.columns` both directions as the drift guard.
 - **`event_date` is derived from `event_timestamp` (UTC date), never caller-set** — so the live
   `ck_audit_events_event_date_matches` CHECK can't be violated. `id` and `_loaded_at` are
@@ -29,8 +29,13 @@ For interfaces, types, file structure, see `README.md`.
   mismatch is logged as **error worth alerting**, not absorbed as routine. Duplicates are tolerated
   (`decisions.md` D44); no dedup key.
 - **`Stage` is a closed owned enum** (all Phase-1 stages; Phase-3 stages excluded). `EventScope` /
-  `Outcome` mirror the live CHECK vocab exactly. `DUPLICATE_*` outcomes and `prior_trace_id` are
-  **not** in the schema — they live in `event_data` JSONB, deferred to Slice 10 (`decisions.md` D42).
+  `Outcome` mirror the live CHECK vocab exactly. `DUPLICATE_NOOP`/`DUPLICATE_OVERWRITTEN` are
+  first-class `Outcome` members and `prior_trace_id` is a live column since Slice 30c (the D42
+  REVISION: Slice 10's deliberate event_data-JSONB resolution superseded for console
+  queryability); they REFINE SUCCESS (the append-only insert landed, D33). `row_hash`/`dedup_key`
+  stay in `event_data`. `FailureCode` (Slice 30b, D79) is the closed failure vocabulary. The
+  drift guard checks the full column shape (type/nullability/length) against
+  `schema_contract.EXPECTED_COLUMNS`, not just names (Slice 30c).
 - **BigQuery seam is inert** (import-safe, no I/O, imports no `google-cloud-bigquery`), behind
   `dis-core` `BqClient` (hard rule 8). No method body fleshed out. Mirrors the Slice 3 stub.
 - **Depends on `dis-core` + `dis-rls` only.** Never `dis-mapping`/`dis-validation`/`dis-canonical`;

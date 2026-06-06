@@ -5,8 +5,9 @@ CLOSED enum — the worker adds no members. The mapping for this service:
 
 - intake / path cross-check / preflight outcome → ``Stage.RECEIVED``
   (preflight detail rides ``event_data``; there is deliberately no PREFLIGHT member)
-- the idempotent no-op → ``Stage.RECEIVED`` + ``Outcome.SKIPPED``
-  (``prior_trace_id`` rides ``event_data``, the D42 pattern)
+- the idempotent no-op → ``Stage.RECEIVED`` + ``Outcome.DUPLICATE_NOOP`` with
+  ``prior_trace_id`` as a COLUMN (Slice 30c, the D42 revision); the resume
+  publish → ``Outcome.RETRIED`` (a retry-completion made legible)
 - the PII gate → ``Stage.PII_TOKENIZED``
 - the bronze write → ``Stage.BRONZE_WRITTEN``
 - the ``ingress.ready`` publish → ``Stage.INGRESS_PUBLISHED``
@@ -46,6 +47,7 @@ class WorkerAudit:
         tenant_id: UUID,
         trace_id: UUID,
         bronze_id: UUID | None = None,
+        prior_trace_id: UUID | None = None,
         row_count: int | None = None,
         duration_ms: int | None = None,
         event_data: dict[str, Any] | None = None,
@@ -63,6 +65,7 @@ class WorkerAudit:
             event = AuditEvent(
                 event_timestamp=now_utc(),
                 trace_id=trace_id,
+                prior_trace_id=prior_trace_id,
                 tenant_id=tenant_id,
                 data_ingress_event_id=bronze_id,
                 service_name=SERVICE_NAME,

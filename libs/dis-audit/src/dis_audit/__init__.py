@@ -21,19 +21,23 @@ from dis_audit.bigquery_writer import BigQueryAuditWriter
 from dis_audit.event import AuditEvent
 from dis_audit.failure_codes import FailureCode, failure_code_for
 from dis_audit.postgres_writer import PostgresAuditWriter
+from dis_audit.schema_contract import EXPECTED_COLUMNS, ColumnSpec, diff_schema
 from dis_audit.stages import EventScope, Outcome, Stage
 from dis_audit.writer import AuditBackend, AuditWriter, select_writer
 
 __all__ = [
+    "EXPECTED_COLUMNS",
     "AuditBackend",
     "AuditEvent",
     "AuditWriter",
     "BigQueryAuditWriter",
+    "ColumnSpec",
     "EventScope",
     "FailureCode",
     "Outcome",
     "PostgresAuditWriter",
     "Stage",
+    "diff_schema",
     "failure_code_for",
     "select_writer",
 ]

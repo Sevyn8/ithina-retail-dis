@@ -41,11 +41,18 @@ def test_event_scope_membership() -> None:
 
 
 def test_outcome_membership() -> None:
-    # Exactly the four live CHECK values — NOT DUPLICATE_NOOP / DUPLICATE_OVERWRITTEN
-    # (those are not representable in the live outcome column; see decisions.md D42).
-    assert {o.value for o in Outcome} == {"SUCCESS", "FAILURE", "SKIPPED", "RETRIED"}
-    assert "DUPLICATE_NOOP" not in {o.value for o in Outcome}
-    assert "DUPLICATE_OVERWRITTEN" not in {o.value for o in Outcome}
+    # Exactly the six live CHECK values. FLIPPED by Slice 30c (the D42 revision):
+    # DUPLICATE_NOOP / DUPLICATE_OVERWRITTEN are first-class members — promoted
+    # from event_data for console queryability, superseding the Slice-10 JSONB
+    # resolution. They refine SUCCESS (the append-only insert landed, D33).
+    assert {o.value for o in Outcome} == {
+        "SUCCESS",
+        "FAILURE",
+        "SKIPPED",
+        "RETRIED",
+        "DUPLICATE_NOOP",
+        "DUPLICATE_OVERWRITTEN",
+    }
 
 
 def test_stage_is_closed_phase1_set() -> None:

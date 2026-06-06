@@ -1,11 +1,14 @@
-"""AC10: audit is fire-and-forget; the D42 duplicate representation is emitted.
+"""AC10: audit is fire-and-forget; the duplicate COLUMN representation is emitted.
 
 - An injected audit-writer failure (raises on every write) does NOT stop the
   data path: the chunk still lands (logged, never raised — hard rule 11).
 - The duplicate path (a redelivered chunk) emits ROW-scoped CANONICAL_WRITTEN
-  events whose ``event_data`` carries the D42 representation: the
-  ``DUPLICATE_NOOP``/``DUPLICATE_OVERWRITTEN`` distinction, ``prior_trace_id``,
-  ``row_hash``, and the dedup key — within the live outcome CHECK (SUCCESS).
+  events whose OUTCOME is the kind — ``DUPLICATE_NOOP``/``DUPLICATE_OVERWRITTEN``
+  (refining SUCCESS: the append-only insert landed, D33) — with
+  ``prior_trace_id`` as a COLUMN; ``row_hash`` and the dedup key stay in
+  ``event_data``. This is Slice 30c's D42 REVISION (the Slice-10 JSONB shape
+  superseded for console queryability) — the flipped assertions here are the
+  deliberate change, not a regression.
 - Duplicate audit rows are tolerated (D44): the second delivery re-emits the
   same stages under the same trace; both sets exist.
 """
@@ -70,7 +73,7 @@ async def test_audit_failure_never_blocks_the_data_path(
     assert rows == 1  # the data path completed despite every audit write failing
 
 
-async def test_duplicate_path_emits_d42_event_data(
+async def test_duplicate_path_sets_outcome_and_prior_trace_columns(
     pipeline: ConsumerPipeline,
     dis_admin: Engine,
     storage: StorageClient,
@@ -78,6 +81,8 @@ async def test_duplicate_path_emits_d42_event_data(
     stack_env: dict[str, str],
     consumer_mappings: dict[str, int],
 ) -> None:
+    """FLIPPED by Slice 30c (the D42 revision): formerly asserted the Slice-10
+    event_data-JSONB shape; now asserts the column promotion."""
     sku = f"AU-{new_uuid7().hex[:10]}"
     txn = f"T-{new_uuid7().hex[:8]}"
     seed_hot_row(dis_admin, cleanup, sku_id=sku, mapping_version_id=consumer_mappings[SALE_SOURCE_ID])
@@ -109,10 +114,10 @@ async def test_duplicate_path_emits_d42_event_data(
         duplicate_rows = (
             conn.execute(
                 text(
-                    "SELECT trace_id, event_data FROM audit.events "
+                    "SELECT trace_id, outcome, prior_trace_id, event_data FROM audit.events "
                     "WHERE event_scope = 'ROW' AND stage = 'CANONICAL_WRITTEN' "
-                    "AND outcome = 'SUCCESS' AND trace_id = ANY(:traces) "
-                    "AND event_data ? 'duplicate'"
+                    "AND outcome IN ('DUPLICATE_NOOP', 'DUPLICATE_OVERWRITTEN') "
+                    "AND trace_id = ANY(:traces)"
                 ),
                 {"traces": [chunk.trace_id, correction.trace_id]},
             )
@@ -127,18 +132,22 @@ async def test_duplicate_path_emits_d42_event_data(
             {"t": str(chunk.trace_id)},
         ).scalar_one()
 
-    by_kind = {row["event_data"]["duplicate"]: row for row in duplicate_rows}
-    assert "DUPLICATE_NOOP" in by_kind, "redelivery did not emit the NOOP detail"
-    assert "DUPLICATE_OVERWRITTEN" in by_kind, "the correction did not emit OVERWRITTEN"
+    by_kind = {row["outcome"]: row for row in duplicate_rows}
+    assert "DUPLICATE_NOOP" in by_kind, "redelivery did not set the NOOP outcome column"
+    assert "DUPLICATE_OVERWRITTEN" in by_kind, "the correction did not set OVERWRITTEN"
 
-    noop = by_kind["DUPLICATE_NOOP"]["event_data"]
-    assert noop["prior_trace_id"] == str(chunk.trace_id)
-    assert noop["dedup_key"]["source_event_id"] == f"{txn}:1"
-    assert noop["dedup_key"]["source_id"] == SALE_SOURCE_ID
-    assert "row_hash" in noop
+    noop = by_kind["DUPLICATE_NOOP"]
+    assert str(noop["prior_trace_id"]) == str(chunk.trace_id)  # the COLUMN, not JSONB
+    assert noop["event_data"]["dedup_key"]["source_event_id"] == f"{txn}:1"
+    assert noop["event_data"]["dedup_key"]["source_id"] == SALE_SOURCE_ID
+    assert "row_hash" in noop["event_data"]  # NOT promoted — stays in event_data
+    # The old JSONB keys are GONE (promoted, not duplicated).
+    assert "duplicate" not in noop["event_data"]
+    assert "prior_trace_id" not in noop["event_data"]
 
-    overwritten = by_kind["DUPLICATE_OVERWRITTEN"]["event_data"]
-    assert overwritten["prior_trace_id"] == str(chunk.trace_id)
+    overwritten = by_kind["DUPLICATE_OVERWRITTEN"]
+    assert str(overwritten["prior_trace_id"]) == str(chunk.trace_id)
+    assert "duplicate" not in overwritten["event_data"]
 
     # D44: the redelivery re-emitted CANONICAL_WRITTEN under the same trace —
     # duplicate audit rows exist and are tolerated, not prevented.

@@ -27,7 +27,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 import dis_testing.fixtures as fx
-from dis_audit import AuditEvent, EventScope, Outcome, PostgresAuditWriter, Stage
+from dis_audit import (
+    EXPECTED_COLUMNS,
+    AuditEvent,
+    EventScope,
+    Outcome,
+    PostgresAuditWriter,
+    Stage,
+    diff_schema,
+)
 from dis_core.ids import new_uuid7
 from dis_core.timestamps import now_utc
 from dis_rls import create_rls_engine
@@ -89,25 +97,31 @@ async def _read_row_by_trace(engine: AsyncEngine, tenant_id: str, trace_id: str)
     return dict(row) if row is not None else None
 
 
-# ---- AC2: model field set matches the live audit.events columns, both directions --------
-async def test_model_matches_live_columns(engine: AsyncEngine) -> None:
+# ---- AC2 (HARDENED, Slice 30c): the live schema matches the frozen contract at FULL
+# shape grain — names both directions PLUS type, nullability, and character length.
+# Pre-30c this guard was a column-NAME-set match only, so a type narrowing or a
+# nullability flip passed the guard and died silently at INSERT under fire-and-forget
+# (the D45 silent-loss class). The pure diff_schema is narrowing-proven in the lib's
+# unit tests; here it runs against the REAL information_schema.
+async def test_live_schema_matches_contract_full_shape(engine: AsyncEngine) -> None:
     async with engine.connect() as conn:
-        live = {
-            r[0]
+        live_rows = [
+            (r[0], r[1], r[2], r[3])
             for r in (
                 await conn.execute(
                     text(
-                        "SELECT column_name FROM information_schema.columns "
+                        "SELECT column_name, data_type, is_nullable, character_maximum_length "
+                        "FROM information_schema.columns "
                         "WHERE table_schema='audit' AND table_name='events'"
                     )
                 )
             ).all()
-        }
-    model = AuditEvent.db_column_names()
-    assert model == live, (
-        f"audit-event model drifted from live audit.events. "
-        f"missing in model: {live - model}; extra in model: {model - live}"
-    )
+        ]
+    diffs = diff_schema(live_rows, EXPECTED_COLUMNS)
+    assert not diffs, "audit.events drifted from the dis-audit schema contract:\n" + "\n".join(diffs)
+    # And the model agrees with the contract's column-name set (model <-> contract
+    # <-> live tie transitively; the model carries no type info to compare).
+    assert AuditEvent.db_column_names() == set(EXPECTED_COLUMNS)
 
 
 # ---- AC6: Outcome / EventScope membership equals the live CHECK vocab --------------------
@@ -130,8 +144,10 @@ async def _check_vocab(engine: AsyncEngine, conname: str) -> set[str]:
 async def test_outcome_vocab_matches_live_check(engine: AsyncEngine) -> None:
     live = await _check_vocab(engine, "ck_audit_events_outcome_vocab")
     assert {o.value for o in Outcome} == live
-    # The D33 duplicate outcomes are NOT representable in the live column (decisions.md D42).
-    assert "DUPLICATE_NOOP" not in live and "DUPLICATE_OVERWRITTEN" not in live
+    # FLIPPED by Slice 30c (the D42 revision): the D33 duplicate outcomes are now
+    # first-class in the live CHECK — promoted from event_data for console
+    # queryability, superseding the Slice-10 JSONB resolution.
+    assert "DUPLICATE_NOOP" in live and "DUPLICATE_OVERWRITTEN" in live
 
 
 async def test_event_scope_vocab_matches_live_check(engine: AsyncEngine) -> None:

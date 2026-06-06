@@ -51,6 +51,9 @@ class AuditEvent(BaseModel):
 
     # ---- Correlation / identity ----
     trace_id: UUID
+    # The PRIOR delivery's trace on a duplicate/dedup row (Slice 30c, the D42
+    # revision: promoted from event_data JSONB for console queryability).
+    prior_trace_id: UUID | None = None
     tenant_id: UUID | None = None
     data_ingress_event_id: UUID | None = None
 
@@ -118,6 +121,7 @@ class AuditEvent(BaseModel):
             "event_timestamp": self.event_timestamp,
             "event_date": self.event_date,
             "trace_id": self.trace_id,
+            "prior_trace_id": self.prior_trace_id,
             "tenant_id": self.tenant_id,
             "data_ingress_event_id": self.data_ingress_event_id,
             "service_name": self.service_name,

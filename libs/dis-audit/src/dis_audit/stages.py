@@ -12,11 +12,14 @@ constraint. :class:`EventScope` and :class:`Outcome` mirror the live CHECK vocab
 exactly (introspected from ``ck_audit_events_event_scope_vocab`` /
 ``ck_audit_events_outcome_vocab``); the integration drift guard asserts that match.
 
-Note on duplicate outcomes (``decisions.md`` D42): D33 / architecture §2.3.3 speak of
-``DUPLICATE_NOOP`` / ``DUPLICATE_OVERWRITTEN`` outcomes and a ``prior_trace_id``. The
-live ``outcome`` CHECK permits only the four values below and there is no
-``prior_trace_id`` column, so those are **not** outcome members here; the duplicate
-detail lives in the ``event_data`` JSONB and is wired by Slice 10. See D42.
+Note on duplicate outcomes (the D42 REVISION, Slice 30c): Slice 10 deliberately
+resolved D42 by keeping the duplicate detail (``DUPLICATE_*``, ``prior_trace_id``,
+``row_hash``, ``dedup_key``) in ``event_data`` JSONB within the then-4-value CHECK.
+Slice 30c supersedes that resolution — the audit/quarantine consoles query by the
+duplicate distinction — so ``DUPLICATE_NOOP`` / ``DUPLICATE_OVERWRITTEN`` are now
+first-class :class:`Outcome` members mirroring the live 6-value CHECK, and
+``prior_trace_id`` is a live column. The pair REFINES SUCCESS (the append-only
+insert genuinely landed, D33); ``row_hash``/``dedup_key`` stay in ``event_data``.
 """
 
 from __future__ import annotations
@@ -36,12 +39,19 @@ class EventScope(StrEnum):
 
 
 class Outcome(StrEnum):
-    """A stage's result for one scope. Mirrors ``ck_audit_events_outcome_vocab`` exactly."""
+    """A stage's result for one scope. Mirrors ``ck_audit_events_outcome_vocab`` exactly.
+
+    The DUPLICATE_* pair (Slice 30c, the D42 revision) refines SUCCESS: a dedup-key
+    hit's append-only insert genuinely landed (D33); the kind is queryable as the
+    outcome instead of an ``event_data`` key.
+    """
 
     SUCCESS = "SUCCESS"
     FAILURE = "FAILURE"
     SKIPPED = "SKIPPED"
     RETRIED = "RETRIED"
+    DUPLICATE_NOOP = "DUPLICATE_NOOP"
+    DUPLICATE_OVERWRITTEN = "DUPLICATE_OVERWRITTEN"
 
 
 class Stage(StrEnum):

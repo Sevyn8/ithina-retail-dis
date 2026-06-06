@@ -264,21 +264,18 @@ class IngestPipeline:
         log = _log.bind(stage="idempotency", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
         if prior.processing_status == "FAILED" or prior.is_published:
             # Same content + session + tenant already concluded → no second bronze
-            # row, no second publish; return the PRIOR trace_id. The event_data
-            # shape is the D42 JSONB representation — unchanged in Slice 30b; the
-            # DUPLICATE_* outcome + prior_trace_id column promotion is Slice 30c.
+            # row, no second publish; return the PRIOR trace_id. Slice 30c (the
+            # D42 revision): the duplicate kind is the OUTCOME and the prior
+            # trace is a COLUMN — queryable, not event_data keys.
             await self.audit.emit(
                 stage=Stage.RECEIVED,
-                outcome=Outcome.SKIPPED,
+                outcome=Outcome.DUPLICATE_NOOP,
                 tenant_id=event.tenant_id,
                 trace_id=event.trace_id,
+                prior_trace_id=prior.trace_id,
                 bronze_id=prior.bronze_id,
                 duration_ms=lap.lap(),
-                event_data={
-                    "duplicate": True,
-                    "prior_trace_id": str(prior.trace_id),
-                    "prior_status": prior.processing_status,
-                },
+                event_data={"prior_status": prior.processing_status},
             )
             log.info("duplicate within dedup window; no-op")
             return IngestOutcome(
@@ -299,7 +296,9 @@ class IngestPipeline:
             await mark_published(conn, bronze_id=prior.bronze_id, published_at=now_utc())
         await self.audit.emit(
             stage=Stage.INGRESS_PUBLISHED,
-            outcome=Outcome.SUCCESS,
+            # Slice 30c: the resume IS a retry-completion (the lost publish,
+            # completed on redelivery) — RETRIED makes it legible as one.
+            outcome=Outcome.RETRIED,
             tenant_id=event.tenant_id,
             trace_id=prior.trace_id,
             bronze_id=prior.bronze_id,

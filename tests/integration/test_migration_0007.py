@@ -505,14 +505,17 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         )
 
         # 0007 on a manifest-fresh database: drop-and-recreate from the SAME
-        # file — shape-identical, so manifest-as-source-of-truth holds.
+        # file — shape-identical, so manifest-as-source-of-truth holds. 0008
+        # (existence-gated ADD COLUMN + def-gated CHECK swap) is likewise a
+        # true no-op on the manifest-fresh shape, so the equality still pins
+        # both migrations' no-op property.
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0007"
+        assert head == "0008"
         assert _audit_shape(scratch_engine) == manifest_shape, (
-            "migration 0007 CHANGED a manifest-fresh database — the manifest no "
-            "longer carries the 0007 end state (drift self-healed by 0007)"
+            "migrations 0007/0008 CHANGED a manifest-fresh database — the manifest "
+            "no longer carries their end state (drift self-healed)"
         )
 
         # And the fresh end state equals the delta-path end state.

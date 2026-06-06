@@ -372,9 +372,14 @@ async def test_duplicate_with_published_prior_is_full_noop_returning_prior_trace
     assert outcome.trace_id == prior.trace_id  # the PRIOR trace, not the event's
     assert "insert" not in recorder.names()  # no second bronze row
     assert "publish" not in recorder.names()  # no second publish
-    skipped = [e for e in writer.events if e.outcome is Outcome.SKIPPED]
-    assert skipped and skipped[0].event_data is not None
-    assert skipped[0].event_data["prior_trace_id"] == str(prior.trace_id)
+    # FLIPPED by Slice 30c (the D42 revision): the kind is the OUTCOME and the
+    # prior trace is a COLUMN — no longer SKIPPED + event_data JSONB keys.
+    [noop] = [e for e in writer.events if e.outcome is Outcome.DUPLICATE_NOOP]
+    assert noop.prior_trace_id == prior.trace_id  # the column
+    assert noop.event_data is not None
+    assert noop.event_data["prior_status"] == "PUBLISHED"
+    assert "duplicate" not in noop.event_data  # the old JSONB keys are gone
+    assert "prior_trace_id" not in noop.event_data
 
 
 async def test_duplicate_with_failed_prior_is_noop_without_republish(
@@ -384,11 +389,14 @@ async def test_duplicate_with_failed_prior_is_noop_without_republish(
     # re-preflight, re-write, or publish.
     prior = _prior(processing_status="FAILED")
     recorder = _Recorder()
-    pipeline, _ = _wire(monkeypatch, recorder, prior=prior)
+    pipeline, writer = _wire(monkeypatch, recorder, prior=prior)
     outcome = await pipeline.process(_event())
     assert outcome.disposition == "duplicate_noop"
     assert "insert" not in recorder.names()
     assert "publish" not in recorder.names()
+    # Slice 30c: this path too sets the DUPLICATE_NOOP outcome + the column.
+    [noop] = [e for e in writer.events if e.outcome is Outcome.DUPLICATE_NOOP]
+    assert noop.prior_trace_id == prior.trace_id
 
 
 async def test_duplicate_with_unpublished_prior_resumes_publish_and_marks(
@@ -398,7 +406,7 @@ async def test_duplicate_with_unpublished_prior_resumes_publish_and_marks(
     # stamp published_at, write no second bronze row.
     prior = _prior()  # RECEIVED, published_at NULL
     recorder = _Recorder()
-    pipeline, _ = _wire(monkeypatch, recorder, prior=prior)
+    pipeline, writer = _wire(monkeypatch, recorder, prior=prior)
     outcome = await pipeline.process(_event())
     assert outcome.disposition == "duplicate_resumed"
     assert outcome.trace_id == prior.trace_id
@@ -410,6 +418,10 @@ async def test_duplicate_with_unpublished_prior_resumes_publish_and_marks(
     assert recorder.first("mark_published") == prior.bronze_id
     names = recorder.names()
     assert names.index("publish") < names.index("mark_published")
+    # Slice 30c: the resume is a retry-completion — legible as RETRIED.
+    [resumed] = [e for e in writer.events if e.stage is Stage.INGRESS_PUBLISHED]
+    assert resumed.outcome is Outcome.RETRIED
+    assert resumed.event_data is not None and resumed.event_data["resumed"] is True
 
 
 async def test_resume_against_pre_slice8_null_template_prior_cannot_wedge(

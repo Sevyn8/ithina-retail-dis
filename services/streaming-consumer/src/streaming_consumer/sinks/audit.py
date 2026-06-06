@@ -12,15 +12,16 @@ CLOSED enum — this consumer adds no members. The mapping for this service:
 - ``Stage.IDENTITY_VALIDATED`` is deliberately NEVER emitted: no Identity Service
   call exists (D28/Slice 13); the composite FK is the enforcement (D39).
 
-**D42 duplicate representation** (the resolution this slice records): a dedup-key
-hit emits a ROW-scoped ``CANONICAL_WRITTEN`` event with ``outcome=SUCCESS`` (the
-append-only insert genuinely landed) and the duplicate detail in ``event_data``::
+**Duplicate representation (the D42 REVISION, Slice 30c)**: a dedup-key hit emits
+a ROW-scoped ``CANONICAL_WRITTEN`` event whose ``outcome`` IS the kind —
+``DUPLICATE_NOOP`` | ``DUPLICATE_OVERWRITTEN`` (both refine SUCCESS: the
+append-only insert genuinely landed, D33) — with ``prior_trace_id`` as a
+first-class column. Slice 10's deliberate event_data-JSONB resolution is
+superseded for console queryability; the non-queried detail stays in
+``event_data``::
 
-    {"duplicate": "DUPLICATE_NOOP" | "DUPLICATE_OVERWRITTEN",
-     "prior_trace_id": …, "row_hash": …,
+    {"row_hash": …,
      "dedup_key": {"store_id": …, "source_id": …, "source_event_id": …}}
-
-The live outcome CHECK (SUCCESS/FAILURE/SKIPPED/RETRIED) is honoured; no DDL.
 
 Every event carries the known ``tenant_id`` (D43), the read ``trace_id``,
 ``mapping_version_id`` where known (D22 context), and the bronze id as the
@@ -57,6 +58,7 @@ class ConsumerAudit:
         trace_id: UUID,
         scope: EventScope = EventScope.INGRESS_EVENT,
         bronze_id: UUID | None = None,
+        prior_trace_id: UUID | None = None,
         mapping_version_id: int | None = None,
         row_count: int | None = None,
         rows_succeeded: int | None = None,
@@ -79,6 +81,7 @@ class ConsumerAudit:
             event = AuditEvent(
                 event_timestamp=now_utc(),
                 trace_id=trace_id,
+                prior_trace_id=prior_trace_id,
                 tenant_id=tenant_id,
                 data_ingress_event_id=bronze_id,
                 service_name=SERVICE_NAME,
@@ -114,19 +117,24 @@ class ConsumerAudit:
         bronze_id: UUID,
         mapping_version_id: int,
     ) -> None:
-        """One ROW-scoped duplicate event — the D42 ``event_data`` representation."""
+        """One ROW-scoped duplicate event — the column representation (D42 revision).
+
+        ``hit.kind`` is exactly the ``DUPLICATE_NOOP`` | ``DUPLICATE_OVERWRITTEN``
+        vocabulary, so the outcome IS the kind (both refine SUCCESS — the
+        append-only insert landed, D33). Only the queried-by fields are columns;
+        ``row_hash`` and ``dedup_key`` stay in ``event_data``.
+        """
         await self.emit(
             stage=Stage.CANONICAL_WRITTEN,
-            outcome=Outcome.SUCCESS,  # the append-only insert landed (D33)
+            outcome=Outcome(hit.kind),
             scope=EventScope.ROW,
             tenant_id=tenant_id,
             trace_id=trace_id,
+            prior_trace_id=hit.prior_trace_id,
             bronze_id=bronze_id,
             mapping_version_id=mapping_version_id,
             row_offset=hit.chunk_row_index,
             event_data={
-                "duplicate": hit.kind,
-                "prior_trace_id": str(hit.prior_trace_id),
                 "row_hash": hit.row_hash,
                 "dedup_key": {
                     "store_id": str(store_id),

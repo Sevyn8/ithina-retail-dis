@@ -193,6 +193,26 @@ for beta. The failure-audit shape defined here is the seam the quarantine work c
   *Slice 30c carries Tier 2: the D42 revision (DUPLICATE_* outcome CHECK + `prior_trace_id`
   column, duplicates emit JSONB until then), the drift-guard type/nullability hardening.*
 
+- `DONE` Slice 30c: Audit Tier 2 — the outcome vocabulary, `prior_trace_id`, and the drift-guard
+  hardening. **The D42 REVISION, registered as D80**: `DUPLICATE_NOOP`/`DUPLICATE_OVERWRITTEN`
+  promoted to first-class outcome values (the CHECK extends 4 → 6) and `prior_trace_id` to a
+  column, consciously superseding Slice 10's deliberate event_data-JSONB resolution — reason:
+  console queryability ("duplicate rate per tenant" / "what redelivered from what" are column
+  queries now). DUPLICATE_* refine SUCCESS (the insert landed, D33); `row_hash`/`dedup_key` stay
+  in event_data; the worker resume-publish is `RETRIED`. Migration 0008: ADDITIVE on the plain
+  30a table (real rows, no drop-recreate), a TRUE NO-OP on a manifest-fresh DB (gate-firing
+  proven by a stamp-rerun test), fresh == migrated (scratch-DB catalog equality), and a
+  REFUSE-LOUDLY downgrade (named message + count, rows untouched — assertion-pinned after the
+  adversarial pass caught the original test passing on alembic's banner). **The drift-guard
+  hardening, registered as D81 (its own entry — the D45 silent-loss class)**: the dis-audit
+  guard now checks type + nullability + length against the live schema via a pure fail-loud
+  diff, narrowing-proven synthetically; drift fails loud at the guard, not silently at INSERT
+  under fire-and-forget. The column promotion is mutation-test-enforced (outcome revert and
+  prior_trace_id revert each fail the flipped duplicate test). **The audit arc (30a de-partition
+  D77, 30b coverage D78/D79, 30c promotion D80/D81) is complete**; what remains of the audit
+  surface is owned elsewhere (the QUARANTINED emitter + DLQ by the quarantine work; BQ archive +
+  re-partition by Slice 21).
+
 Deferred / owned elsewhere (named so they are not lost):
 - The `QUARANTINED` audit emitter (the Stage enum has the value, nothing emits it) is owned by
   the quarantine work, not these slices.

@@ -77,6 +77,12 @@ CREATE TABLE audit.events (
 
     -- ---------- Correlation ----------
     trace_id                    UUID                                NOT NULL,
+    prior_trace_id              UUID                                NULL,
+        -- The PRIOR delivery's trace when this row records a duplicate/dedup
+        -- hit (outcome DUPLICATE_NOOP / DUPLICATE_OVERWRITTEN, or the worker's
+        -- dedup no-op). Promoted from event_data JSONB by Slice 30c — the D42
+        -- REVISION: the audit/quarantine consoles query "what redelivered from
+        -- what". NULL on non-duplicate rows.
 
     -- ---------- Identity ----------
     tenant_id                   UUID                                NULL,
@@ -97,7 +103,10 @@ CREATE TABLE audit.events (
 
     -- ---------- Outcome ----------
     outcome                     VARCHAR(32)  COLLATE "C"            NOT NULL,
-        -- SUCCESS, FAILURE, SKIPPED, RETRIED.
+        -- SUCCESS, FAILURE, SKIPPED, RETRIED, DUPLICATE_NOOP,
+        -- DUPLICATE_OVERWRITTEN. The DUPLICATE_* pair (Slice 30c, the D42
+        -- revision) REFINES SUCCESS: the append-only insert genuinely landed
+        -- (D33); the distinction is queryable rather than buried in event_data.
 
     -- ---------- Per-event metrics ----------
     row_count                   INTEGER                             NULL,
@@ -142,7 +151,8 @@ CREATE TABLE audit.events (
         CHECK (event_scope IN ('INGRESS_EVENT', 'ROW')),
 
     CONSTRAINT ck_audit_events_outcome_vocab
-        CHECK (outcome IN ('SUCCESS', 'FAILURE', 'SKIPPED', 'RETRIED')),
+        CHECK (outcome IN ('SUCCESS', 'FAILURE', 'SKIPPED', 'RETRIED',
+                           'DUPLICATE_NOOP', 'DUPLICATE_OVERWRITTEN')),
 
     CONSTRAINT ck_audit_events_row_count_non_negative
         CHECK (row_count IS NULL OR row_count >= 0),

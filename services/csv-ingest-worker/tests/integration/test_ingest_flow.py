@@ -191,14 +191,17 @@ async def test_end_to_end_csv_received_to_ingress_ready(
         e for e in map(json.loads, _drain(verify_client, verify_path)) if e["trace_id"] == str(trace_id)
     ] == []
     with dis_admin.connect() as conn:
-        skipped = conn.execute(
+        # Slice 30c (the D42 revision): the dedup no-op's outcome IS the kind,
+        # and the prior trace is a COLUMN.
+        noop = conn.execute(
             text(
                 "SELECT count(*) FROM audit.events "
-                "WHERE trace_id = :tid AND stage = 'RECEIVED' AND outcome = 'SKIPPED'"
+                "WHERE trace_id = :tid AND stage = 'RECEIVED' "
+                "AND outcome = 'DUPLICATE_NOOP' AND prior_trace_id IS NOT NULL"
             ),
             {"tid": trace_id},
         ).scalar()
-    assert skipped == 1
+    assert noop == 1
 
 
 async def test_absent_subscription_errors_never_skips(

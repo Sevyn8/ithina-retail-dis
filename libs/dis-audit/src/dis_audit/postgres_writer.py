@@ -29,19 +29,21 @@ from dis_rls import rls_session
 _SERVICE = "dis-audit"
 _log = get_logger(_SERVICE)
 
-# Static INSERT over the 21 caller-supplied columns; id and _loaded_at are server-defaulted
+# Static INSERT over the 22 caller-supplied columns; id and _loaded_at are server-defaulted
 # (uuidv7() / now()) and deliberately omitted so the DB stamps them. event_data is cast to
 # JSONB from a JSON string and client_ip to INET, matching the seeder's CAST precedent.
 _INSERT = text(
     """
     INSERT INTO audit.events (
-        event_timestamp, event_date, trace_id, tenant_id, data_ingress_event_id,
+        event_timestamp, event_date, trace_id, prior_trace_id, tenant_id,
+        data_ingress_event_id,
         service_name, service_version, stage, event_scope, outcome,
         row_count, rows_succeeded, rows_failed, duration_ms, row_offset,
         mapping_version_id, failure_code, failure_message, event_data,
         auth_principal, client_ip
     ) VALUES (
-        :event_timestamp, :event_date, :trace_id, :tenant_id, :data_ingress_event_id,
+        :event_timestamp, :event_date, :trace_id, :prior_trace_id, :tenant_id,
+        :data_ingress_event_id,
         :service_name, :service_version, :stage, :event_scope, :outcome,
         :row_count, :rows_succeeded, :rows_failed, :duration_ms, :row_offset,
         :mapping_version_id, :failure_code, :failure_message, CAST(:event_data AS JSONB),
