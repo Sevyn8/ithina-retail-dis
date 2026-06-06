@@ -16,10 +16,11 @@ three auth-seam errors; the streaming-consumer precedent applies):
 
 OPTIONAL env (NOT in the required-or-crashloop set):
 
-- ``GEMINI_API_KEY``: the Gemini Developer API key for the mapping-suggestion
-  endpoint, sourced in deployment from the ``dis-gemini-api-key`` secret. UNSET
-  is a normal state: the suggester falls back to the mechanical matcher, so a
-  missing key must NEVER abort startup (it is read with no raise).
+- ``GEMINI_VERTEX_PROJECT`` / ``GEMINI_VERTEX_LOCATION``: the Vertex AI project and
+  location for the mapping-suggestion endpoint. Auth is GCP-native (Application
+  Default Credentials from the Cloud Run service account), NOT an API key. BOTH
+  UNSET is a normal state: the suggester falls back to the mechanical matcher, so
+  missing config must NEVER abort startup (they are read with no raise).
 
 Resolution happens inside the app lifespan, NOT at import time: a missing
 required value aborts startup loudly (crashloop is the correct signal for
@@ -44,7 +45,9 @@ _POSTGRES_URL = "POSTGRES_URL"
 _CORS_ALLOWED_ORIGINS = "CORS_ALLOWED_ORIGINS"
 _GCS_BUCKET_BRONZE = "GCS_BUCKET_BRONZE"
 _PUBSUB_PROJECT_ID = "PUBSUB_PROJECT_ID"
-_GEMINI_API_KEY = "GEMINI_API_KEY"  # OPTIONAL: unset -> mechanical fallback, never crashloop
+# OPTIONAL (Vertex AI): both unset -> mechanical fallback, never crashloop.
+_GEMINI_VERTEX_PROJECT = "GEMINI_VERTEX_PROJECT"
+_GEMINI_VERTEX_LOCATION = "GEMINI_VERTEX_LOCATION"
 
 SERVICE_NAME = "dis-ui-server"
 
@@ -85,7 +88,9 @@ class UiServerConfig:
     postgres_url: str
     gcs_bucket_bronze: str
     pubsub_project_id: str
-    gemini_api_key: str | None = None  # OPTIONAL (see module docstring); never required
+    # OPTIONAL Vertex AI config (see module docstring); never required. Both unset -> fallback.
+    gemini_vertex_project: str | None = None
+    gemini_vertex_location: str | None = None
 
     @classmethod
     def from_env(cls) -> UiServerConfig:
@@ -107,14 +112,16 @@ class UiServerConfig:
             raise DisError(
                 f"{_PUBSUB_PROJECT_ID} is not set; the CSV upload cannot publish {CSV_RECEIVED_TOPIC!r}"
             )
-        # OPTIONAL: read with no raise. Unset -> None -> the suggester uses the
-        # mechanical fallback; a missing key must never abort startup (FM1).
-        gemini_api_key = os.environ.get(_GEMINI_API_KEY) or None
+        # OPTIONAL: read with no raise. Both unset -> the suggester uses the mechanical
+        # fallback; missing Vertex config must never abort startup (FM1/FM2).
+        gemini_vertex_project = os.environ.get(_GEMINI_VERTEX_PROJECT) or None
+        gemini_vertex_location = os.environ.get(_GEMINI_VERTEX_LOCATION) or None
         return cls(
             postgres_url=postgres_url,
             gcs_bucket_bronze=gcs_bucket_bronze,
             pubsub_project_id=pubsub_project_id,
-            gemini_api_key=gemini_api_key,
+            gemini_vertex_project=gemini_vertex_project,
+            gemini_vertex_location=gemini_vertex_location,
         )
 
 

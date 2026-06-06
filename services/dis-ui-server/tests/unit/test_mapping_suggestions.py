@@ -123,8 +123,9 @@ def test_handler_rejects_a_malformed_profile(suggest_client: TestClient, mint_to
 _COLUMNS = [ColumnProfile(name="qty", inferred_datatype="integer", null_pct=0.0, sample_values=["1"])]
 
 
-def test_suggester_falls_back_when_no_key() -> None:
-    source, model, suggestions = anyio.run(GeminiSuggester(None).suggest, _COLUMNS, CATALOG)
+def test_suggester_falls_back_when_vertex_unconfigured() -> None:
+    # Both project and location unset -> mechanical fallback (no Vertex call).
+    source, model, suggestions = anyio.run(GeminiSuggester(None, None).suggest, _COLUMNS, CATALOG)
     assert source == "fallback"
     assert model is None
     assert len(suggestions) == 1
@@ -132,7 +133,7 @@ def test_suggester_falls_back_when_no_key() -> None:
 
 
 def test_suggester_parses_a_clean_llm_response() -> None:
-    suggester = GeminiSuggester("a-key")
+    suggester = GeminiSuggester("a-project", "us-central1")
     suggester._call_model = lambda prompt: json.dumps(  # type: ignore[method-assign]
         {
             "suggestions": [
@@ -155,7 +156,7 @@ def test_suggester_parses_a_clean_llm_response() -> None:
 
 
 def test_suggester_nulls_a_non_catalog_target_and_drops_invented_alternatives() -> None:
-    suggester = GeminiSuggester("a-key")
+    suggester = GeminiSuggester("a-project", "us-central1")
     suggester._call_model = lambda prompt: json.dumps(  # type: ignore[method-assign]
         {
             "suggestions": [
@@ -176,7 +177,7 @@ def test_suggester_nulls_a_non_catalog_target_and_drops_invented_alternatives() 
 
 
 def test_suggester_falls_back_when_the_model_errors() -> None:
-    suggester = GeminiSuggester("a-key")
+    suggester = GeminiSuggester("a-project", "us-central1")
 
     def _boom(prompt: str) -> str:
         raise RuntimeError("model exploded")

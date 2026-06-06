@@ -46,10 +46,12 @@ dependencies = [
   # anyio.to_thread (root-CLAUDE.md async pattern). Declared explicitly —
   # imported directly, never ridden transitively off starlette.
   "anyio>=4",
-  # Mapping-suggestion endpoint: the Gemini Developer API client (api_key=). The
-  # import is lazy (only the LLM path needs it); with no GEMINI_API_KEY the
+  # Mapping-suggestion endpoint: the google-genai client in VERTEX AI mode
+  # (vertexai=True, project+location, ADC from the Cloud Run service account; no API
+  # key). The import is lazy (only the LLM path needs it); with no Vertex config the
   # endpoint uses the mechanical fallback. The blocking call runs off the loop via
-  # anyio.to_thread, the same pattern as the GCS/Pub/Sub clients above.
+  # anyio.to_thread, the same pattern as the GCS/Pub/Sub clients above. google-auth
+  # (ADC) rides transitively with google-genai.
   "google-genai>=1.75.0",
 ]
 

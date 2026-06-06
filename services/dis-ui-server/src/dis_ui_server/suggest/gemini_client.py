@@ -1,11 +1,15 @@
 """The Gemini-backed mapping suggester, with the mechanical fallback built in.
 
+Auth is Vertex AI / GCP-native: the suggester takes (project, location), constructs
+``genai.Client(vertexai=True, project=..., location=...)``, and authenticates via Application
+Default Credentials (the Cloud Run service account). There is no API key string.
+
 ``GeminiSuggester.suggest`` returns ``(source, model, suggestions)``:
 
-- No api key (None/empty), or any model error/timeout/parse failure -> the
-  mechanical ``fallback_matcher`` result with ``source="fallback"``. The frontend
-  must always receive suggestions, so LLM trouble degrades, never raises.
-- A key present and a clean structured response -> ``source="llm"``, with every
+- project/location unset, or any model error/timeout/parse failure -> the mechanical
+  ``fallback_matcher`` result with ``source="fallback"``. The frontend must always receive
+  suggestions, so missing config or LLM trouble degrades, never raises.
+- Vertex configured and a clean structured response -> ``source="llm"``, with every
   ``suggested_target`` and alternative VALIDATED against the catalog key set (the
   model cannot invent a field; invalid targets are nulled / dropped).
 
@@ -39,12 +43,17 @@ class GeminiSuggester:
 
     def __init__(
         self,
-        api_key: str | None,
+        project: str | None,
+        location: str | None,
         *,
         model: str = _DEFAULT_MODEL,
         timeout_s: float = _DEFAULT_TIMEOUT_S,
     ) -> None:
-        self._api_key = api_key
+        # Vertex AI (GCP-native) auth: no key string. project + location select the Vertex
+        # backend; credentials come from Application Default Credentials (the Cloud Run service
+        # account), not from a configured secret. Both unset -> mechanical fallback.
+        self._project = project
+        self._location = location
         self._model = model
         self._timeout_s = timeout_s
 
@@ -54,7 +63,7 @@ class GeminiSuggester:
         catalog: list[TemplateMappingField],
     ) -> tuple[SuggestionSource, str | None, list[Suggestion]]:
         """Return (source, model, suggestions); never raises on LLM trouble."""
-        if not self._api_key:
+        if not self._project or not self._location:
             return ("fallback", None, match_columns(columns, catalog))
         try:
             prompt = self._build_prompt(columns, catalog)
@@ -71,11 +80,17 @@ class GeminiSuggester:
     # -- the single network seam (lazy import; tests override this) -----------------
 
     def _call_model(self, prompt: str) -> str:
-        """Blocking Gemini call returning the raw JSON text. Lazy-imports the SDK."""
+        """Blocking Gemini call returning the raw JSON text. Lazy-imports the SDK.
+
+        Vertex AI mode: ``vertexai=True`` selects the Vertex backend with the given project +
+        location, authenticating via Application Default Credentials (the Cloud Run service
+        account). No API key. The generate_content + structured-output (response_mime_type) call
+        is identical to the developer-API path, so the prompt/parse/validation logic is unchanged.
+        """
         import google.genai as genai
         from google.genai import types
 
-        client = genai.Client(api_key=self._api_key)
+        client = genai.Client(vertexai=True, project=self._project, location=self._location)
         response = client.models.generate_content(
             model=self._model,
             contents=prompt,

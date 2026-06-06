@@ -64,11 +64,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # label-vs-derivation drift raises FieldCatalogDriftError HERE, aborting
     # startup — crashloop is the correct signal, never a half-true catalog.
     app.state.field_catalog = build_field_catalog()
-    # Mapping-suggestion producer. GEMINI_API_KEY is OPTIONAL: unset -> None ->
-    # the suggester returns the mechanical fallback (no crashloop). Construction is
-    # I/O-free (the google-genai client is built lazily on the first LLM call), and
-    # it holds no resource to dispose, so there is no shutdown step for it.
-    app.state.gemini = GeminiSuggester(api_key=config.gemini_api_key)
+    # Mapping-suggestion producer (Vertex AI / GCP-native auth, ADC from the Cloud Run service
+    # account; no API key). GEMINI_VERTEX_PROJECT/LOCATION are OPTIONAL: both unset -> the
+    # suggester returns the mechanical fallback (no crashloop). Construction is I/O-free (the
+    # google-genai client is built lazily on the first LLM call), and it holds no resource to
+    # dispose, so there is no shutdown step for it.
+    app.state.gemini = GeminiSuggester(
+        project=config.gemini_vertex_project,
+        location=config.gemini_vertex_location,
+    )
     _log.bind(stage="startup").info("dis-ui-server started")
     try:
         yield
