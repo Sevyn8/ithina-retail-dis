@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { SERVER_MODE } from './mode'
+import { getJson } from './client'
+import { isRealMode } from './mode'
 
 // Template mapping-fields catalog (T1): the canonical fields a mapping template may
 // target. Shaped EXACTLY to the real dis-ui-server contract
@@ -355,15 +356,12 @@ export const CATALOG_FIXTURE: TemplateMappingField[] = [
   },
 ]
 
-function ensureFixtureMode(fn: string): void {
-  if (SERVER_MODE === 'real') {
-    throw new Error(`real-mode ${fn} is not implemented (slice 13)`)
-  }
-}
-
-// GET /api/v1/template-mapping-fields. Tenant-independent; the fixture is returned as-is.
+// GET /api/v1/template-mapping-fields. Tenant-independent. Real mode calls the live
+// endpoint; fixture mode returns the inlined catalog as-is.
 export async function getTemplateMappingFields(): Promise<TemplateMappingField[]> {
-  ensureFixtureMode('getTemplateMappingFields()')
+  if (isRealMode()) {
+    return getJson<TemplateMappingField[]>('/api/v1/template-mapping-fields')
+  }
   return [...CATALOG_FIXTURE]
 }
 

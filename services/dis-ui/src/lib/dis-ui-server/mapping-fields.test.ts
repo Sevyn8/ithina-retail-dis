@@ -1,3 +1,6 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { clearToken, writeToken } from '../../auth/storage'
 import {
   CATALOG_FIXTURE,
   canonicalTargetKeys,
@@ -73,5 +76,29 @@ describe('template-mapping-fields catalog (fixture shaped to the real contract)'
     const keys = canonicalTargetKeys(CATALOG_FIXTURE)
     expect(new Set(keys).size).toBe(keys.length) // no duplicates
     expect(keys).toContain('sku_id') // appears in both sections, listed once
+  })
+})
+
+// T10: real-mode wiring (mocked fetch).
+describe('template-mapping-fields real mode (T10)', () => {
+  beforeEach(() => {
+    vi.stubEnv('VITE_DIS_UI_SERVER_MODE', 'real')
+    vi.stubEnv('VITE_DIS_UI_SERVER_BASE_URL', 'http://test.local')
+    writeToken('tok-123')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    clearToken()
+  })
+
+  it('GETs /api/v1/template-mapping-fields with a Bearer and parses the catalog', async () => {
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => ({ ok: true, status: 200, json: async () => CATALOG_FIXTURE }) as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+    const fields = await getTemplateMappingFields()
+    expect(fields).toEqual(CATALOG_FIXTURE)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://test.local/api/v1/template-mapping-fields')
+    expect((init as RequestInit).headers).toMatchObject({ authorization: 'Bearer tok-123' })
   })
 })

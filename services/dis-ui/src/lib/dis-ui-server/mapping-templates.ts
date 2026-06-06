@@ -1,15 +1,22 @@
 import { useQuery } from '@tanstack/react-query'
 
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
-import { SERVER_MODE } from './mode'
+import { getJson, patchJson, postJson } from './client'
+import { isRealMode } from './mode'
 
 // Mapping-template endpoints (slice 14b, D68): a mapping is a TEMPLATE - a version lineage
 // per (tenant, source, template_id). Shaped EXACTLY to the real contracts
 // (services/dis-ui-server/.../schemas/mapping_templates.py): list MappingTemplate at
 // GET /api/v1/mapping-templates[?source_id=], detail MappingTemplateDetail at
-// GET /api/v1/mapping-templates/{template_id} (throw-style 404 for unknown). Fixture mode
-// (default) returns the inlined fixtures; real mode is OPEN (slice 13) and throws. This
-// fixture MIRRORS the contract as of this commit; the live endpoint is truth at real mode.
+// GET /api/v1/mapping-templates/{template_id} (throw-style 404 for unknown), create at
+// POST /api/v1/mapping-templates, edit at PATCH /api/v1/mapping-templates/{template_id}.
+// Mode-aware (T10): real mode calls the live endpoints; fixture mode (default) returns the
+// inlined fixtures, so local dev + tests work with no backend.
+//
+// Contract diff (T10): the real MappingTemplate/Detail wire shape has NO `ingestion_mode`
+// (it is a UI-only provisional field, T8/D-flag: the real model would derive it from the
+// source connector type). The real branch defaults it to 'file' (today's only real grain is
+// file/CSV), keeping the UI type stable; the fixture carries explicit values.
 
 export type TemplateStatus = 'draft' | 'staged' | 'active' | 'deprecated'
 
@@ -70,6 +77,26 @@ export type MappingTemplate = {
 
 export type MappingTemplateDetail = MappingTemplate & {
   versions: MappingTemplateVersion[]
+}
+
+// Create/edit request bodies (T10), shaped to the real contracts
+// (schemas/mapping_templates.py:MappingTemplateCreate / MappingTemplatePatch). `mapping_rules`
+// travels as the raw D49 document (= SourceMappingRules). PATCH carries at least one field.
+export type MappingTemplateCreate = {
+  source_id: string
+  template_name: string
+  mapping_rules: SourceMappingRules
+}
+export type MappingTemplatePatch = {
+  template_name?: string
+  mapping_rules?: SourceMappingRules
+}
+
+// The real wire shapes OMIT the UI-only `ingestion_mode` (see header). Type the raw response
+// with it OPTIONAL so the real branch can default it; the fixture carries it explicitly.
+type RawMappingTemplate = Omit<MappingTemplate, 'ingestion_mode'> & { ingestion_mode?: IngestionMode }
+type RawMappingTemplateDetail = Omit<MappingTemplateDetail, 'ingestion_mode'> & {
+  ingestion_mode?: IngestionMode
 }
 
 // SEED, keyed by tenant. manual_csv_upload carries two templates (the D68 multi-template
@@ -315,11 +342,58 @@ function tenantTemplates(snapshot: AuthSnapshot): MappingTemplateDetail[] {
   return MAPPING_TEMPLATE_FIXTURES[snapshot.tenantId ?? ''] ?? []
 }
 
-function ensureFixtureMode(fn: string): void {
-  if (SERVER_MODE === 'real') {
-    throw new Error(`real-mode ${fn} is not implemented (slice 13)`)
+// Default the UI-only ingestion_mode when the real wire omits it (contract diff, header).
+function normalizeSummary(raw: RawMappingTemplate): MappingTemplate {
+  return { ...raw, ingestion_mode: raw.ingestion_mode ?? 'file' }
+}
+function normalizeDetail(raw: RawMappingTemplateDetail): MappingTemplateDetail {
+  return { ...raw, ingestion_mode: raw.ingestion_mode ?? 'file' }
+}
+
+// Fixture-mode synthesis (T10): build a v1 DRAFT detail from a create/edit request. No
+// mutable store - the fixture create/edit return a plausible DRAFT (there is no screen
+// consumer reading it back yet; real mode is the source of truth for writes).
+const FIXTURE_DRAFT_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-00000000fff1'
+function synthDraftDetail(
+  templateId: string,
+  sourceId: string,
+  templateName: string,
+  rules: SourceMappingRules,
+): MappingTemplateDetail {
+  const createdAt = '2026-06-06T00:00:00Z'
+  const version: MappingTemplateVersion = {
+    mapping_version_id: 9001,
+    version: 1,
+    status: 'draft',
+    mapping_rules: rules,
+    field_count: Object.keys(rules.rename).length,
+    transform_count:
+      Object.values(rules.normalize).reduce((n, specs) => n + specs.length, 0) +
+      Object.keys(rules.cast).length +
+      Object.values(rules.derive).reduce((n, specs) => n + specs.length, 0),
+    predecessor_version_id: null,
+    created_at: createdAt,
+    created_by_user_id: null,
+    activated_at: null,
+    deprecated_at: null,
+  }
+  return {
+    template_id: templateId,
+    source_id: sourceId,
+    template_name: templateName,
+    ingestion_mode: 'file',
+    latest_version: 1,
+    active_version: null,
+    staged_version: null,
+    draft_version: 1,
+    versions_count: 1,
+    created_at: createdAt,
+    latest_version_created_at: createdAt,
+    versions: [version],
   }
 }
+
+const EMPTY_RULES: SourceMappingRules = { version: 1, rename: {}, normalize: {}, cast: {}, derive: {} }
 
 function toSummary(detail: MappingTemplateDetail): MappingTemplate {
   // The list endpoint returns the lineage summary (no versions[]).
@@ -338,29 +412,73 @@ function toSummary(detail: MappingTemplateDetail): MappingTemplate {
   }
 }
 
-// GET /api/v1/mapping-templates[?source_id=] -> lineage summaries (own-tenant only).
+// GET /api/v1/mapping-templates[?source_id=] -> lineage summaries (own-tenant only). Real
+// mode calls the live endpoint (tenant scoped server-side); fixture mode filters the seed.
 export async function getMappingTemplates(
   snapshot: AuthSnapshot,
   sourceId?: string,
 ): Promise<MappingTemplate[]> {
-  ensureFixtureMode('getMappingTemplates()')
+  if (isRealMode()) {
+    const query = sourceId === undefined ? '' : `?source_id=${encodeURIComponent(sourceId)}`
+    const raw = await getJson<RawMappingTemplate[]>(`/api/v1/mapping-templates${query}`)
+    return raw.map(normalizeSummary)
+  }
   return tenantTemplates(snapshot)
     .filter((t) => sourceId === undefined || t.source_id === sourceId)
     .map(toSummary)
 }
 
-// GET /api/v1/mapping-templates/{template_id} -> detail. Throw-style 404 for unknown
-// (matches the real handler's ResourceNotFoundError; the screen renders an error state).
+// GET /api/v1/mapping-templates/{template_id} -> detail. Throw-style 404 for unknown (real:
+// getJson throws DisUiServerHttpError; fixture: throws). The screen renders an error state.
 export async function getMappingTemplate(
   snapshot: AuthSnapshot,
   templateId: string,
 ): Promise<MappingTemplateDetail> {
-  ensureFixtureMode('getMappingTemplate()')
+  if (isRealMode()) {
+    const raw = await getJson<RawMappingTemplateDetail>(
+      `/api/v1/mapping-templates/${encodeURIComponent(templateId)}`,
+    )
+    return normalizeDetail(raw)
+  }
   const found = tenantTemplates(snapshot).find((t) => t.template_id === templateId)
   if (found === undefined) {
     throw new Error(`mapping template ${templateId} not found`)
   }
   return found
+}
+
+// POST /api/v1/mapping-templates -> 201 MappingTemplateDetail (writes a v1 DRAFT). Additive
+// (T10): no screen consumer yet. Real mode posts the body; fixture synthesizes a DRAFT.
+export async function createMappingTemplate(
+  body: MappingTemplateCreate,
+): Promise<MappingTemplateDetail> {
+  if (isRealMode()) {
+    return normalizeDetail(await postJson<RawMappingTemplateDetail>('/api/v1/mapping-templates', body))
+  }
+  return synthDraftDetail(FIXTURE_DRAFT_TEMPLATE_ID, body.source_id, body.template_name, body.mapping_rules)
+}
+
+// PATCH /api/v1/mapping-templates/{template_id} -> MappingTemplateDetail (DRAFT edit / new
+// DRAFT, per the D17 lifecycle, server-side). Additive (T10): no screen consumer yet. Real
+// mode patches; fixture synthesizes a DRAFT echoing the patch.
+export async function patchMappingTemplate(
+  templateId: string,
+  body: MappingTemplatePatch,
+): Promise<MappingTemplateDetail> {
+  if (isRealMode()) {
+    return normalizeDetail(
+      await patchJson<RawMappingTemplateDetail>(
+        `/api/v1/mapping-templates/${encodeURIComponent(templateId)}`,
+        body,
+      ),
+    )
+  }
+  return synthDraftDetail(
+    templateId,
+    'manual_csv_upload',
+    body.template_name ?? 'Template',
+    body.mapping_rules ?? EMPTY_RULES,
+  )
 }
 
 const TEMPLATES_KEY = ['dis-ui-server', 'mapping-templates'] as const

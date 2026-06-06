@@ -1,14 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
-import { SERVER_MODE } from './mode'
+import { getJson } from './client'
+import { isRealMode } from './mode'
 
 // Onboarded-stores endpoint (slice 14b, D70). Shaped EXACTLY to the real contract
 // (services/dis-ui-server/.../schemas/stores.py:OnboardedStore), served as a bare array at
 // GET /api/v1/stores-onboarded, tenant-scoped (in-query predicate, identity_mirror RLS-off).
-// Fixture mode (default) returns the inlined fixtures; real mode is OPEN (slice 13) and
-// throws. Surfaces the locale-relevant store attributes (currency, timezone, tax_treatment)
-// the UI shows as read-only context; the editable locale declaration is a later slice.
+// Mode-aware (T10): real mode calls the live endpoint; fixture mode (default) returns the
+// inlined fixtures, so local dev + tests work with no backend. Surfaces the locale-relevant
+// store attributes (currency, timezone, tax_treatment) the UI shows as read-only context.
 
 export type StoreStatus = 'opening' | 'active' | 'inactive' | 'closed'
 export type StoreTaxTreatment = 'inclusive' | 'exclusive'
@@ -49,15 +50,13 @@ const STORE_FIXTURES: Record<string, OnboardedStore[]> = {
   ],
 }
 
-function ensureFixtureMode(fn: string): void {
-  if (SERVER_MODE === 'real') {
-    throw new Error(`real-mode ${fn} is not implemented (slice 13)`)
-  }
-}
-
-// GET /api/v1/stores-onboarded -> the tenant's onboarded stores (own-tenant only).
+// GET /api/v1/stores-onboarded -> the tenant's onboarded stores (own-tenant only). Real
+// mode calls the live endpoint (tenant scoped server-side from the token); fixture mode
+// returns the inlined tenant fixtures.
 export async function getStoresOnboarded(snapshot: AuthSnapshot): Promise<OnboardedStore[]> {
-  ensureFixtureMode('getStoresOnboarded()')
+  if (isRealMode()) {
+    return getJson<OnboardedStore[]>('/api/v1/stores-onboarded')
+  }
   return [...(STORE_FIXTURES[snapshot.tenantId ?? ''] ?? [])]
 }
 

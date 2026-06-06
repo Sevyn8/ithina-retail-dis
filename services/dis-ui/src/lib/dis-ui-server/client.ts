@@ -1,22 +1,21 @@
+import { readToken } from '../../auth/storage'
 import { getBaseUrl } from './mode'
 
-// Typed fetch wrapper for real-mode dis-ui-server calls. This is the wired seam
-// for when real mode lands (slice 13); it is unused in fixture mode. The bearer
-// token is the Customer Master session token the UI holds.
-//
-// FM4 note: callers are responsible for validating the parsed JSON against the
-// expected response type (e.g. a parseMeResponse guard) and throwing on a shape
-// mismatch, so a backend that returns a different shape degrades to the caller's
-// error state rather than propagating a half-shaped object. That validation
-// ships with the real path; it is not implemented in slice 19.
-export async function request<T>(path: string, opts: { token: string }): Promise<T> {
-  const response = await fetch(`${getBaseUrl()}${path}`, {
-    headers: { authorization: `Bearer ${opts.token}` },
-  })
-  if (!response.ok) {
-    throw new Error(`dis-ui-server request to ${path} failed with status ${response.status}`)
+// The real-mode dis-ui-server HTTP seam. Every real JSON endpoint goes through the
+// getJson/postJson/patchJson helpers below; they share one set of conventions with
+// postMultipart (getBaseUrl base, Bearer from the session token, DisUiServerHttpError on
+// non-2xx via parseErrorEnvelope), so status-code handling is consistent across the UI.
+// Unused in fixture mode. (T10 replaced an earlier single GET wrapper with this set.)
+
+// The session bearer the UI holds (Customer Master token, auth/storage). All authed real
+// calls read it here; behind AuthBoundary it is always present, so a missing token is a
+// loud error rather than a silent unauthenticated call.
+export function sessionToken(): string {
+  const token = readToken()
+  if (token === null || token.length === 0) {
+    throw new Error('no session token: cannot call dis-ui-server (sign in first)')
   }
-  return (await response.json()) as T
+  return token
 }
 
 // A non-2xx response from dis-ui-server, carrying the HTTP status plus the parsed
@@ -73,4 +72,49 @@ export async function postMultipart<T>(path: string, opts: { token: string; form
     throw new DisUiServerHttpError(response.status, code, message, details)
   }
   return (await response.json()) as T
+}
+
+// Throw DisUiServerHttpError on a non-2xx, parsing the standard error envelope; otherwise
+// parse the JSON body as T. The shared tail for the JSON helpers below.
+async function readJsonOrThrow<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const { code, message, details } = await parseErrorEnvelope(response)
+    throw new DisUiServerHttpError(response.status, code, message, details)
+  }
+  return (await response.json()) as T
+}
+
+// GET a JSON resource. Bearer from the session token. Non-2xx (incl. throw-style 404s)
+// raise DisUiServerHttpError so callers map (status, code) consistently.
+export async function getJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    headers: { authorization: `Bearer ${sessionToken()}` },
+  })
+  return readJsonOrThrow<T>(response)
+}
+
+// POST a JSON body (application/json). Same auth + error conventions as getJson.
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${sessionToken()}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  return readJsonOrThrow<T>(response)
+}
+
+// PATCH a JSON body (application/json). Same auth + error conventions as getJson.
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    method: 'PATCH',
+    headers: {
+      authorization: `Bearer ${sessionToken()}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  return readJsonOrThrow<T>(response)
 }
