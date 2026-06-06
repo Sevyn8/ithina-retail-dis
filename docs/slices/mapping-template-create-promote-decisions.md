@@ -29,13 +29,19 @@ is retired. Until a real stage step exists, the UI states plainly that the
 template was created as a draft. This resolves the brief's DRAFT-vs-staged
 semantic mismatch on the UI side.
 
-### (b) Promotion granularity: two-step DRAFT to STAGED to ACTIVE. PROVISIONAL, pending-Sanjeev.
+### (b) Promotion granularity: ONE-STEP DRAFT to ACTIVE (STAGED dropped). PROVISIONAL, pending-Sanjeev.
 
-The promote UI is built provisionally to a two-step lifecycle (DRAFT to STAGED,
-STAGED to ACTIVE), with an operator action at each step. This is NOT yet confirmed
-with Sanjeev. The shape (number of steps, whether a template may be created
-directly into STAGED) must be reconciled with Sanjeev BEFORE the server promotion
-endpoints are built, so the UI shape and the endpoint shape agree.
+The promote UI is built to a ONE-STEP lifecycle: a single operator action takes a
+template DRAFT to ACTIVE directly. STAGED has been DROPPED from the create/promote
+flow: there is no Stage step, no intermediate STAGED state, and no STAGED copy in
+this flow. (The wire types still carry `staged_version`/`'staged'` as a
+backend-contract mirror, and the separate D17 staged-rollout screens are
+unaffected; only the create/promote flow is one-step.)
+
+This SIMPLIFIES the contract Sanjeev agreed to build: the server needs ONE
+`/activate` endpoint and NO `/stage` endpoint. This must be FLAGGED to Sanjeev so
+the UI shape and the endpoint shape agree before the server promotion endpoint is
+built. It is NOT yet confirmed with him.
 
 ### (c) What triggers ACTIVE: direct operator action ("Activate"). PROVISIONAL, pending-Sanjeev.
 
@@ -49,15 +55,16 @@ action provisionally and must adapt if the gate model is chosen.
 
 ## Build posture
 
-The full create to stage to activate UI is built now, real-endpoint-wired (not
-deferred behind a stub-only seam). Mode behavior:
+The full create to activate UI is built now (one-step DRAFT to ACTIVE),
+real-endpoint-wired (not deferred behind a stub-only seam). Mode behavior:
 
-- Fixture mode (local and demo) synthesizes the transitions so the whole flow is
-  walkable without a backend.
+- Fixture mode (local and demo) synthesizes the transition so the whole flow is
+  walkable without a backend (a clearly-marked demo activation).
 - Real mode, create-as-DRAFT: REAL. The `POST /api/v1/mapping-templates` endpoint
   exists, is validated, RLS-scoped, and tested; Go-live calls it for real.
-- Real mode, stage/activate: the promotion endpoints do NOT exist yet. Real-mode
-  promote actions surface an honest "promotion endpoint not yet available" state.
+- Real mode, activate: the single `/activate` endpoint does NOT exist yet.
+  Real-mode activate surfaces an honest "activation endpoint not yet available"
+  state and the lifecycle stays DRAFT.
 
 Honesty guard (hard rule for this build): real-mode promotion must NEVER fake a
 successful ACTIVE. ACTIVE gates real data ingestion (CSV upload binds to the

@@ -94,7 +94,9 @@ export type MappingTemplatePatch = {
 
 // The real wire shapes OMIT the UI-only `ingestion_mode` (see header). Type the raw response
 // with it OPTIONAL so the real branch can default it; the fixture carries it explicitly.
-type RawMappingTemplate = Omit<MappingTemplate, 'ingestion_mode'> & { ingestion_mode?: IngestionMode }
+type RawMappingTemplate = Omit<MappingTemplate, 'ingestion_mode'> & {
+  ingestion_mode?: IngestionMode
+}
 type RawMappingTemplateDetail = Omit<MappingTemplateDetail, 'ingestion_mode'> & {
   ingestion_mode?: IngestionMode
 }
@@ -148,8 +150,12 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               sale_type: 'event_subtype',
             },
             normalize: {
-              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } }],
-              unit_sale_price: [{ op: 'parse_decimal', args: { decimal_separator: ',', thousands_separator: '.' } }],
+              source_sale_timestamp: [
+                { op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } },
+              ],
+              unit_sale_price: [
+                { op: 'parse_decimal', args: { decimal_separator: ',', thousands_separator: '.' } },
+              ],
             },
             cast: {
               quantity: { type: 'integer' },
@@ -181,8 +187,12 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               sale_type: 'event_subtype',
             },
             normalize: {
-              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } }],
-              unit_sale_price: [{ op: 'parse_decimal', args: { decimal_separator: ',', thousands_separator: '.' } }],
+              source_sale_timestamp: [
+                { op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } },
+              ],
+              unit_sale_price: [
+                { op: 'parse_decimal', args: { decimal_separator: ',', thousands_separator: '.' } },
+              ],
             },
             cast: {
               quantity: { type: 'integer' },
@@ -208,7 +218,9 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
             version: 1,
             rename: { item_code: 'sku_id', qty: 'quantity', txn_date: 'source_sale_timestamp' },
             normalize: {
-              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } }],
+              source_sale_timestamp: [
+                { op: 'parse_datetime', args: { format: '%d-%m-%Y %H:%M:%S', timezone: 'UTC' } },
+              ],
             },
             cast: { quantity: { type: 'integer' } },
             derive: {},
@@ -248,11 +260,15 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               attr: 'attribute_name',
             },
             normalize: {
-              source_event_timestamp: [{ op: 'parse_datetime', args: { format: '%Y-%m-%d %H:%M:%S', timezone: 'UTC' } }],
+              source_event_timestamp: [
+                { op: 'parse_datetime', args: { format: '%Y-%m-%d %H:%M:%S', timezone: 'UTC' } },
+              ],
             },
             cast: {},
             derive: {
-              event_date: [{ op: 'date_from_datetime', args: { source: 'source_event_timestamp' } }],
+              event_date: [
+                { op: 'date_from_datetime', args: { source: 'source_event_timestamp' } },
+              ],
               event_category: [{ op: 'constant', args: { value: 'INVENTORY' } }],
             },
           },
@@ -326,8 +342,12 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
               price: 'unit_sale_price',
             },
             normalize: {
-              source_sale_timestamp: [{ op: 'parse_datetime', args: { format: '%Y-%m-%dT%H:%M:%S', timezone: 'UTC' } }],
-              unit_sale_price: [{ op: 'parse_decimal', args: { decimal_separator: '.', thousands_separator: ',' } }],
+              source_sale_timestamp: [
+                { op: 'parse_datetime', args: { format: '%Y-%m-%dT%H:%M:%S', timezone: 'UTC' } },
+              ],
+              unit_sale_price: [
+                { op: 'parse_decimal', args: { decimal_separator: '.', thousands_separator: ',' } },
+              ],
             },
             cast: { quantity: { type: 'integer' } },
             derive: {},
@@ -393,7 +413,13 @@ function synthDraftDetail(
   }
 }
 
-const EMPTY_RULES: SourceMappingRules = { version: 1, rename: {}, normalize: {}, cast: {}, derive: {} }
+const EMPTY_RULES: SourceMappingRules = {
+  version: 1,
+  rename: {},
+  normalize: {},
+  cast: {},
+  derive: {},
+}
 
 function toSummary(detail: MappingTemplateDetail): MappingTemplate {
   // The list endpoint returns the lineage summary (no versions[]).
@@ -453,9 +479,16 @@ export async function createMappingTemplate(
   body: MappingTemplateCreate,
 ): Promise<MappingTemplateDetail> {
   if (isRealMode()) {
-    return normalizeDetail(await postJson<RawMappingTemplateDetail>('/api/v1/mapping-templates', body))
+    return normalizeDetail(
+      await postJson<RawMappingTemplateDetail>('/api/v1/mapping-templates', body),
+    )
   }
-  return synthDraftDetail(FIXTURE_DRAFT_TEMPLATE_ID, body.source_id, body.template_name, body.mapping_rules)
+  return synthDraftDetail(
+    FIXTURE_DRAFT_TEMPLATE_ID,
+    body.source_id,
+    body.template_name,
+    body.mapping_rules,
+  )
 }
 
 // PATCH /api/v1/mapping-templates/{template_id} -> MappingTemplateDetail (DRAFT edit / new
@@ -481,53 +514,42 @@ export async function patchMappingTemplate(
   )
 }
 
-// The lifecycle transition target for promotion (create/promote flow). 'staged' = DRAFT to
-// STAGED, 'active' = STAGED to ACTIVE.
-export type PromoteTo = 'staged' | 'active'
-
-// Fixture-mode synthesis of a promotion: advance the held detail's single version to the new
-// status and move the lineage pointers. Clearly a demo transition (real mode never synthesizes;
-// see promoteMappingTemplate). active stamps activated_at.
-function synthPromotedDetail(current: MappingTemplateDetail, to: PromoteTo): MappingTemplateDetail {
-  const nextStatus = to === 'staged' ? 'staged' : 'active'
+// Fixture-mode synthesis of activation: advance the held detail's single version DRAFT -> ACTIVE
+// directly (one-step lifecycle; STAGED was dropped from the create/promote flow). Clearly a demo
+// transition (real mode never synthesizes; see promoteMappingTemplate). Stamps activated_at.
+function synthActivatedDetail(current: MappingTemplateDetail): MappingTemplateDetail {
   const versions = current.versions.map((v) =>
     v.version === current.latest_version
-      ? {
-          ...v,
-          status: nextStatus as TemplateStatus,
-          activated_at: to === 'active' ? '2026-06-06T00:00:00Z' : v.activated_at,
-        }
+      ? { ...v, status: 'active' as TemplateStatus, activated_at: '2026-06-06T00:00:00Z' }
       : v,
   )
   return {
     ...current,
     versions,
     draft_version: null,
-    staged_version: to === 'staged' ? current.latest_version : null,
-    active_version: to === 'active' ? current.latest_version : current.active_version,
+    staged_version: null,
+    active_version: current.latest_version,
   }
 }
 
-// Promote a template along the lifecycle (DRAFT -> STAGED -> ACTIVE). REAL mode POSTs to the
-// PROVISIONAL endpoint path (/stage, /activate) - these endpoints are NOT yet built on
-// dis-ui-server (pending Sanjeev; the path shape is unconfirmed), so a real call is expected to
-// fail (404) until they ship: the caller treats any error as honest "not yet available" and
-// MUST NOT display STAGED/ACTIVE without a real 2xx (FM1, no fake ACTIVE). FIXTURE mode
-// synthesizes the transition so the full flow is walkable locally (clearly a demo transition).
+// Activate a template (one-step DRAFT -> ACTIVE; STAGED dropped from this flow). REAL mode POSTs
+// to the PROVISIONAL endpoint path (/activate) - not yet built on dis-ui-server (pending Sanjeev;
+// this UI now expects a SINGLE /activate endpoint, no /stage), so a real call is expected to fail
+// (404) until it ships: the caller treats any error as honest "not yet available" and MUST NOT
+// display ACTIVE without a real 2xx (FM1/FM2, no fake ACTIVE). FIXTURE mode synthesizes the
+// transition so the full flow is walkable locally (clearly a demo transition).
 export async function promoteMappingTemplate(
   current: MappingTemplateDetail,
-  to: PromoteTo,
 ): Promise<MappingTemplateDetail> {
   if (isRealMode()) {
-    const path = to === 'staged' ? 'stage' : 'activate'
     return normalizeDetail(
       await postJson<RawMappingTemplateDetail>(
-        `/api/v1/mapping-templates/${encodeURIComponent(current.template_id)}/${path}`,
+        `/api/v1/mapping-templates/${encodeURIComponent(current.template_id)}/activate`,
         {},
       ),
     )
   }
-  return synthPromotedDetail(current, to)
+  return synthActivatedDetail(current)
 }
 
 const TEMPLATES_KEY = ['dis-ui-server', 'mapping-templates'] as const
@@ -553,6 +575,8 @@ export function useMappingTemplate(snapshot: AuthSnapshot | null, templateId: st
 }
 
 // The currently-active version of a template, if any (what recurring batches reuse).
-export function activeTemplateVersion(detail: MappingTemplateDetail): MappingTemplateVersion | null {
+export function activeTemplateVersion(
+  detail: MappingTemplateDetail,
+): MappingTemplateVersion | null {
   return detail.versions.find((v) => v.status === 'active') ?? null
 }

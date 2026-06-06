@@ -2,10 +2,7 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
-import {
-  __resetSampleStore,
-  putSampleAnalysis,
-} from '../lib/dis-ui-server/onboarding'
+import { __resetSampleStore, putSampleAnalysis } from '../lib/dis-ui-server/onboarding'
 import type { SampleAnalysis } from '../lib/dis-ui-server/onboarding'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { AppRoutes } from './AppRoutes'
@@ -60,7 +57,8 @@ const LLM_SEED: SampleAnalysis = {
       proposed_canonical: 'source_sale_timestamp',
       confidence: 0.62,
       transforms: [{ type: 'date_format', value: 'DD-MM-YYYY' }],
-      reasoning: 'Values look like dates in day-month-year order, so this maps to the sale timestamp.',
+      reasoning:
+        'Values look like dates in day-month-year order, so this maps to the sale timestamp.',
       alternatives: ['transaction_id'],
     },
     {
@@ -148,7 +146,7 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(status).not.toHaveTextContent(/staged/i)
   })
 
-  it('fixture mode promotes DRAFT -> STAGED -> ACTIVE via synth (demo-marked)', async () => {
+  it('fixture mode activates DRAFT -> ACTIVE in one step via synth (demo-marked)', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
@@ -157,11 +155,13 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     await user.click(await screen.findByRole('button', { name: /go live/i }))
     await screen.findByRole('status')
     expect(screen.getByText(/Demo transition \(fixture mode\)/)).toBeInTheDocument()
-    // DRAFT -> STAGED
-    await user.click(screen.getByRole('button', { name: 'Stage' }))
-    await user.click(await screen.findByRole('button', { name: 'Activate' }))
-    // STAGED -> ACTIVE: honest active state, no further promote button.
-    expect(await screen.findByText(/New files for this source are now processed/)).toBeInTheDocument()
+    // One step: no Stage, a single Activate takes DRAFT -> ACTIVE.
+    expect(screen.queryByRole('button', { name: 'Stage' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Activate' }))
+    // ACTIVE: honest active state, no further activate button.
+    expect(
+      await screen.findByText(/New files for this source are now processed/),
+    ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Activate' })).not.toBeInTheDocument()
   })
 
@@ -196,7 +196,9 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(screen.getAllByText('item_code').length).toBeGreaterThan(0)
     await user.click(screen.getByLabelText('Change mapping for item_code'))
     const select = screen.getByLabelText('Canonical for item_code')
-    expect(within(select).queryByRole('group', { name: "Assistant's alternatives" })).not.toBeInTheDocument()
+    expect(
+      within(select).queryByRole('group', { name: "Assistant's alternatives" }),
+    ).not.toBeInTheDocument()
   })
 
   it('selecting an alternative reuses the override path (draft updates)', async () => {
@@ -223,7 +225,9 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(values).toContain('quantity')
     expect(values).toContain('attribute_name')
     expect(values).not.toContain('store_id')
-    expect(within(select).getAllByRole('option', { name: /SKU \* \(text\)/ }).length).toBeGreaterThan(0)
+    expect(
+      within(select).getAllByRole('option', { name: /SKU \* \(text\)/ }).length,
+    ).toBeGreaterThan(0)
   })
 
   // T11: honest source labeling.
@@ -319,6 +323,8 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
       </div>,
       { snapshot: tenantSnapshot, initialEntries: ['/upload/smp_acme0001/review'] },
     )
-    expect(await within(container).findByRole('heading', { name: 'Review mapping' })).toBeInTheDocument()
+    expect(
+      await within(container).findByRole('heading', { name: 'Review mapping' }),
+    ).toBeInTheDocument()
   })
 })

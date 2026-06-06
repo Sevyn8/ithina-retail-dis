@@ -114,7 +114,7 @@ export function RecurringBatchUpload() {
     return (
       <section className="flex flex-col gap-4">
         <header>
-          <h1 className="text-display">Ingest data</h1>
+          <h1 className="text-display">Upload CSV</h1>
           <p className="text-caption text-muted-foreground">{template.template_name}</p>
         </header>
         <EmptyState
@@ -151,7 +151,7 @@ export function RecurringBatchUpload() {
   return (
     <section className="flex max-w-2xl flex-col gap-4">
       <header>
-        <h1 className="text-display">Ingest data</h1>
+        <h1 className="text-display">Upload CSV</h1>
         <p className="text-caption text-muted-foreground">
           This batch will be uploaded against{' '}
           <span className="font-medium text-foreground">{template.template_name}</span>.
@@ -173,19 +173,10 @@ export function RecurringBatchUpload() {
         </span>
       </div>
 
-      {/* The template's active mapping (read-only): the rules this batch will be mapped through.
-          The version number is the template's CURRENT active version (context from
-          mapping-templates), not a claim that the upload pinned that version. */}
-      <div>
-        <h2 className="text-body-strong mb-1">Active mapping</h2>
-        <p className="text-caption text-muted-foreground mb-2">
-          The rules this batch will be mapped through. The version shown (v{active.version}) is the
-          template&apos;s current active version; the version applied is whichever is active when
-          the batch is processed.
-        </p>
-        <ActiveMappingSummary version={active} catalog={catalog} />
-      </div>
-
+      {/* Action-first (FM4: prominence/order only, all info preserved). The operator came to
+          upload a file for a store, so the store picker + dropzone + upload button lead; the
+          read-only mapping/rules are confirmable context, demoted to a collapsed disclosure
+          below the action. */}
       {/* Store picker: store_code is required by the endpoint; only ACTIVE, coded stores. */}
       <div>
         <Label htmlFor="ingest-store">Store</Label>
@@ -241,9 +232,13 @@ export function RecurringBatchUpload() {
       ) : null}
 
       {result !== null ? (
-        <p role="status" className="rounded-md border border-border bg-muted/40 p-3 text-sm text-foreground">
+        <p
+          role="status"
+          className="rounded-md border border-border bg-muted/40 p-3 text-sm text-foreground"
+        >
           Uploaded {result.row_count} rows against {template.template_name}. They are ingested
-          asynchronously through the template&apos;s active mapping version. Trace {result.trace_id}.
+          asynchronously through the template&apos;s active mapping version. Trace {result.trace_id}
+          .
         </p>
       ) : (
         <div className="flex gap-3">
@@ -257,6 +252,24 @@ export function RecurringBatchUpload() {
           </Button>
         </div>
       )}
+
+      {/* Reference (not the headline): the template's active mapping (read-only), demoted below
+          the action and collapsed by default. All info is preserved (FM4) - only prominence and
+          order changed. The version shown is the template's CURRENT active version (context from
+          mapping-templates), not a claim that the upload pinned that version. */}
+      <details className="rounded-md border border-border bg-muted/20">
+        <summary className="cursor-pointer select-none px-3 py-2 text-body-strong text-foreground">
+          View mapping details
+        </summary>
+        <div className="flex flex-col gap-2 border-t border-border px-3 py-3">
+          <p className="text-caption text-muted-foreground">
+            The rules this batch will be mapped through. The version shown (v{active.version}) is
+            the template&apos;s current active version; the version applied is whichever is active
+            when the batch is processed.
+          </p>
+          <ActiveMappingSummary version={active} catalog={catalog} />
+        </div>
+      </details>
     </section>
   )
 }

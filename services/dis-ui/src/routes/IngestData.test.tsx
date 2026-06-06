@@ -12,10 +12,19 @@ const tenant: AuthSnapshot = {
 }
 
 function render(dark = false) {
-  return renderWithProviders(dark ? <div className="dark"><AppRoutes /></div> : <AppRoutes />, {
-    snapshot: tenant,
-    initialEntries: ['/ingest'],
-  })
+  return renderWithProviders(
+    dark ? (
+      <div className="dark">
+        <AppRoutes />
+      </div>
+    ) : (
+      <AppRoutes />
+    ),
+    {
+      snapshot: tenant,
+      initialEntries: ['/ingest'],
+    },
+  )
 }
 
 // T6: Ingest Data lists all templates across sources GROUPED by source. Each source is a group
@@ -24,7 +33,7 @@ function render(dark = false) {
 describe('IngestData (templates grouped by source)', () => {
   it('groups templates under their source, each source shown once for context', async () => {
     render()
-    await screen.findByRole('heading', { name: 'Ingest Data' })
+    await screen.findByRole('heading', { name: 'Upload CSV' })
     // two sources represented (manual_csv_upload + square_pos), each as a group heading
     expect(screen.getByRole('heading', { name: 'manual_csv_upload' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'square_pos' })).toBeInTheDocument()
@@ -35,7 +44,7 @@ describe('IngestData (templates grouped by source)', () => {
 
   it('offers a per-template ingest action for FILE sources, gated by active version', async () => {
     render()
-    await screen.findByRole('heading', { name: 'Ingest Data' })
+    await screen.findByRole('heading', { name: 'Upload CSV' })
     // file source (manual_csv_upload): Sales + Inventory active -> enabled links; Pricing
     // (no active) -> disabled. Orders is on an API source, so it is NOT an Ingest action.
     expect(screen.getAllByRole('link', { name: 'Ingest data' })).toHaveLength(2)
@@ -46,7 +55,7 @@ describe('IngestData (templates grouped by source)', () => {
 
   it('shows "Connected / syncing" for an API source instead of an ingest action (T8)', async () => {
     render()
-    await screen.findByRole('heading', { name: 'Ingest Data' })
+    await screen.findByRole('heading', { name: 'Upload CSV' })
     // square_pos / Orders is an API/connector source: it syncs automatically, so no upload.
     expect(screen.getByText('Connected / syncing')).toBeInTheDocument()
     // the Orders row offers no link to the recurring-batch upload route (file-only). Scope to
@@ -54,14 +63,17 @@ describe('IngestData (templates grouped by source)', () => {
     const uploadLinks = screen
       .getAllByRole('link')
       .map((l) => l.getAttribute('href'))
-      .filter((href): href is string => href !== null && href.includes('/templates/') && href.endsWith('/upload'))
+      .filter(
+        (href): href is string =>
+          href !== null && href.includes('/templates/') && href.endsWith('/upload'),
+      )
     expect(uploadLinks.length).toBe(2) // Sales + Inventory (file, active); Orders (api) has none
     expect(uploadLinks.some((href) => href.includes('square_pos'))).toBe(false)
   })
 
   it('offers a once-per-source "Manage source" link into SourceEdit (edit + deprecate)', async () => {
     render()
-    await screen.findByRole('heading', { name: 'Ingest Data' })
+    await screen.findByRole('heading', { name: 'Upload CSV' })
     // one Manage source link per source (two sources in the fixture), not per template row
     const manage = screen.getAllByRole('link', { name: 'Manage source' })
     expect(manage).toHaveLength(2)
@@ -74,7 +86,7 @@ describe('IngestData (templates grouped by source)', () => {
 
   it('links each row to the template detail', async () => {
     render()
-    await screen.findByRole('heading', { name: 'Ingest Data' })
+    await screen.findByRole('heading', { name: 'Upload CSV' })
     const views = screen.getAllByRole('link', { name: 'View' })
     expect(views.length).toBeGreaterThan(0)
     expect(views[0].getAttribute('href')).toMatch(/^\/sources\/[^/]+\/templates\//)
@@ -82,6 +94,8 @@ describe('IngestData (templates grouped by source)', () => {
 
   it('mounts under the dark theme class', async () => {
     const { container } = render(true)
-    expect(await within(container).findByRole('heading', { name: 'Ingest Data' })).toBeInTheDocument()
+    expect(
+      await within(container).findByRole('heading', { name: 'Upload CSV' }),
+    ).toBeInTheDocument()
   })
 })

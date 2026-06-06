@@ -27,13 +27,13 @@ beforeEach(() => {
 describe('SampleUpload', () => {
   it('renders the honest analysis banner on the upload step', async () => {
     renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
-    await screen.findByRole('heading', { name: 'Create Template' })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
     expect(screen.getByText(/parsed and profiled in your browser/)).toBeInTheDocument()
   })
 
   it('removes the source-kind dropdown and the New/Existing attach toggle (source-controls simplification)', async () => {
     renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
-    await screen.findByRole('heading', { name: 'Create Template' })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
     expect(screen.queryByLabelText('Source kind')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /New source/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Existing source/ })).not.toBeInTheDocument()
@@ -43,7 +43,7 @@ describe('SampleUpload', () => {
   it('derives the Source id from the Source name, keeps it editable, and validates the pattern', async () => {
     const user = userEvent.setup()
     renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
-    await screen.findByRole('heading', { name: 'Create Template' })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
     const sourceId = screen.getByLabelText('Source id') as HTMLInputElement
     // derived from the source name
     await user.type(screen.getByLabelText(/source name/i), 'POS CSV Main')
@@ -51,13 +51,15 @@ describe('SampleUpload', () => {
     // editable + pattern-validated: an invalid id surfaces an error
     await user.clear(sourceId)
     await user.type(sourceId, 'Bad Id!')
-    expect(screen.getByRole('alert')).toHaveTextContent(/lowercase letters, digits, and underscores/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /lowercase letters, digits, and underscores/i,
+    )
   })
 
   it('disables Analyze until a valid file AND a valid source id are present', async () => {
     const user = userEvent.setup()
     renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
-    await screen.findByRole('heading', { name: 'Create Template' })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
     const analyze = screen.getByRole('button', { name: /analyze sample/i })
     expect(analyze).toBeDisabled() // no file, no id
     await user.upload(screen.getByLabelText('CSV file'), sampleFile())
@@ -69,7 +71,7 @@ describe('SampleUpload', () => {
   it('parses a real CSV and advances to Review mapping with the real columns', async () => {
     const user = userEvent.setup()
     renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
-    expect(await screen.findByRole('heading', { name: 'Create Template' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'New CSV Template' })).toBeInTheDocument()
 
     await user.upload(screen.getByLabelText('CSV file'), sampleFile())
     await user.type(screen.getByLabelText(/source name/i), 'POS-CSV-Main')

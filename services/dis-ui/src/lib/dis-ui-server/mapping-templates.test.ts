@@ -161,7 +161,9 @@ describe('mapping-templates real mode (T10)', () => {
   }
 
   it('list GETs /api/v1/mapping-templates and defaults ingestion_mode to file', async () => {
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => ok([RAW_SUMMARY]))
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      ok([RAW_SUMMARY]),
+    )
     vi.stubGlobal('fetch', fetchMock)
     const list = await getMappingTemplates(tenant)
     expect(fetchMock.mock.calls[0][0]).toBe('http://test.local/api/v1/mapping-templates')
@@ -170,7 +172,9 @@ describe('mapping-templates real mode (T10)', () => {
   })
 
   it('list appends ?source_id= when filtering by source', async () => {
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => ok([RAW_SUMMARY]))
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      ok([RAW_SUMMARY]),
+    )
     vi.stubGlobal('fetch', fetchMock)
     await getMappingTemplates(tenant, 'manual_csv_upload')
     expect(fetchMock.mock.calls[0][0]).toBe(
@@ -179,7 +183,9 @@ describe('mapping-templates real mode (T10)', () => {
   })
 
   it('detail GETs /api/v1/mapping-templates/{id} and defaults ingestion_mode to file', async () => {
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => ok(RAW_DETAIL))
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      ok(RAW_DETAIL),
+    )
     vi.stubGlobal('fetch', fetchMock)
     const detail = await getMappingTemplate(tenant, '0190ac10-5a00-7000-8a00-0000000000a1')
     expect(fetchMock.mock.calls[0][0]).toBe(
@@ -192,13 +198,22 @@ describe('mapping-templates real mode (T10)', () => {
   it('detail maps a 404 to DisUiServerHttpError (throw-style)', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({ ok: false, status: 404, json: async () => ({ error: { code: 'resource_not_found' } }) }) as unknown as Response),
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 404,
+            json: async () => ({ error: { code: 'resource_not_found' } }),
+          }) as unknown as Response,
+      ),
     )
     await expect(getMappingTemplate(tenant, 'nope')).rejects.toBeInstanceOf(DisUiServerHttpError)
   })
 
   it('create POSTs MappingTemplateCreate as a JSON body', async () => {
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => ok(RAW_DETAIL, 201))
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      ok(RAW_DETAIL, 201),
+    )
     vi.stubGlobal('fetch', fetchMock)
     const body = { source_id: 'manual_csv_upload', template_name: 'Sales', mapping_rules: RULES }
     const created = await createMappingTemplate(body)
@@ -211,12 +226,16 @@ describe('mapping-templates real mode (T10)', () => {
   })
 
   it('patch PATCHes MappingTemplatePatch as a JSON body', async () => {
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => ok(RAW_DETAIL))
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      ok(RAW_DETAIL),
+    )
     vi.stubGlobal('fetch', fetchMock)
     const body = { template_name: 'Renamed' }
     await patchMappingTemplate('0190ac10-5a00-7000-8a00-0000000000a1', body)
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://test.local/api/v1/mapping-templates/0190ac10-5a00-7000-8a00-0000000000a1')
+    expect(url).toBe(
+      'http://test.local/api/v1/mapping-templates/0190ac10-5a00-7000-8a00-0000000000a1',
+    )
     expect((init as RequestInit).method).toBe('PATCH')
     expect((init as RequestInit).body).toBe(JSON.stringify(body))
   })
@@ -225,8 +244,18 @@ describe('mapping-templates real mode (T10)', () => {
 // T10: create/patch in FIXTURE mode synthesize a DRAFT detail (no mutable store, no backend).
 describe('mapping-templates create/patch fixture mode (T10)', () => {
   it('createMappingTemplate synthesizes a v1 DRAFT from the request', async () => {
-    const rules: SourceMappingRules = { version: 1, rename: { a: 'sku_id', b: 'quantity' }, normalize: {}, cast: {}, derive: {} }
-    const detail = await createMappingTemplate({ source_id: 'manual_csv_upload', template_name: 'New', mapping_rules: rules })
+    const rules: SourceMappingRules = {
+      version: 1,
+      rename: { a: 'sku_id', b: 'quantity' },
+      normalize: {},
+      cast: {},
+      derive: {},
+    }
+    const detail = await createMappingTemplate({
+      source_id: 'manual_csv_upload',
+      template_name: 'New',
+      mapping_rules: rules,
+    })
     expect(detail.template_name).toBe('New')
     expect(detail.draft_version).toBe(1)
     expect(detail.active_version).toBeNull()
@@ -251,7 +280,7 @@ describe('promoteMappingTemplate', () => {
     derive: {},
   }
 
-  it('fixture mode synthesizes DRAFT -> STAGED -> ACTIVE (demo transitions)', async () => {
+  it('fixture mode synthesizes a one-step DRAFT -> ACTIVE activation (demo transition)', async () => {
     const draft = await createMappingTemplate({
       source_id: 'manual_csv_upload',
       template_name: 'Sales',
@@ -260,15 +289,13 @@ describe('promoteMappingTemplate', () => {
     expect(draft.draft_version).toBe(1)
     expect(draft.active_version).toBeNull()
 
-    const staged = await promoteMappingTemplate(draft, 'staged')
-    expect(staged.staged_version).toBe(1)
-    expect(staged.draft_version).toBeNull()
-    expect(staged.versions[0].status).toBe('staged')
-
-    const active = await promoteMappingTemplate(staged, 'active')
+    // One step: DRAFT -> ACTIVE directly, no STAGED.
+    const active = await promoteMappingTemplate(draft)
     expect(active.active_version).toBe(1)
+    expect(active.draft_version).toBeNull()
     expect(active.staged_version).toBeNull()
     expect(active.versions[0].status).toBe('active')
+    expect(active.versions[0].activated_at).not.toBeNull()
   })
 
   describe('real mode (mocked fetch)', () => {
@@ -298,28 +325,33 @@ describe('promoteMappingTemplate', () => {
       clearToken()
     })
 
-    it('POSTs to the provisional /stage path; a 404 rejects (honest-pending, never fakes STAGED)', async () => {
+    it('POSTs to the provisional /activate path; a 404 rejects (honest-pending, never fakes ACTIVE)', async () => {
       const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
-        async () => ({ ok: false, status: 404, json: async () => ({ error: { code: 'not_found' } }) }) as unknown as Response,
+        async () =>
+          ({
+            ok: false,
+            status: 404,
+            json: async () => ({ error: { code: 'not_found' } }),
+          }) as unknown as Response,
       )
       vi.stubGlobal('fetch', fetchMock)
-      await expect(promoteMappingTemplate(draft, 'staged')).rejects.toBeInstanceOf(DisUiServerHttpError)
+      await expect(promoteMappingTemplate(draft)).rejects.toBeInstanceOf(DisUiServerHttpError)
       expect(fetchMock.mock.calls[0][0]).toBe(
-        'http://test.local/api/v1/mapping-templates/0190ac10-5a00-7000-8a00-0000000000a1/stage',
+        'http://test.local/api/v1/mapping-templates/0190ac10-5a00-7000-8a00-0000000000a1/activate',
       )
       expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
     })
 
-    it('a real 2xx advances the lifecycle (once the endpoint ships)', async () => {
-      const RESP = { ...draft, staged_version: 1, draft_version: null }
+    it('a real 2xx advances the lifecycle to ACTIVE (once the endpoint ships)', async () => {
+      const RESP = { ...draft, active_version: 1, draft_version: null }
       vi.stubGlobal(
         'fetch',
         vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
           async () => ({ ok: true, status: 200, json: async () => RESP }) as unknown as Response,
         ),
       )
-      const staged = await promoteMappingTemplate(draft, 'staged')
-      expect(staged.staged_version).toBe(1)
+      const active = await promoteMappingTemplate(draft)
+      expect(active.active_version).toBe(1)
     })
   })
 })

@@ -14,20 +14,30 @@ import { LoadingState } from '../components/states/LoadingState'
 import { DemoDataBanner } from '../components/DemoDataBanner'
 import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
-  dryRunSample,
-  patchSampleMapping,
-  useSample,
-} from '../lib/dis-ui-server/onboarding'
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { dryRunSample, patchSampleMapping, useSample } from '../lib/dis-ui-server/onboarding'
 import type { DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
 import { DisUiServerHttpError } from '../lib/dis-ui-server/client'
 import { isRealMode } from '../lib/dis-ui-server/mode'
-import { createMappingTemplate, promoteMappingTemplate } from '../lib/dis-ui-server/mapping-templates'
-import type { MappingTemplateDetail, PromoteTo } from '../lib/dis-ui-server/mapping-templates'
+import {
+  createMappingTemplate,
+  promoteMappingTemplate,
+} from '../lib/dis-ui-server/mapping-templates'
+import type { MappingTemplateDetail } from '../lib/dis-ui-server/mapping-templates'
 import { assembleMappingRules } from '../lib/onboarding/assemble-mapping-rules'
 import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
-import type { FieldDatatype, FieldSection, TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
+import type {
+  FieldDatatype,
+  FieldSection,
+  TemplateMappingField,
+} from '../lib/dis-ui-server/mapping-fields'
 import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
 import {
   COMMON_TIMEZONES,
@@ -62,15 +72,11 @@ function createErrorMessage(err: unknown): string {
   return 'Could not create the template. Please try again.'
 }
 
-// The lifecycle position of a created template, from its version pointers.
-function lifecycleStatus(detail: MappingTemplateDetail): 'draft' | 'staged' | 'active' {
-  if (detail.active_version !== null) {
-    return 'active'
-  }
-  if (detail.staged_version !== null) {
-    return 'staged'
-  }
-  return 'draft'
+// The lifecycle position of a created template, from its version pointers. One-step lifecycle:
+// a created template is either a DRAFT or (after activation) ACTIVE (STAGED dropped from this
+// flow; the wire type still carries staged_version for the D17 rollout screens).
+function lifecycleStatus(detail: MappingTemplateDetail): 'draft' | 'active' {
+  return detail.active_version !== null ? 'active' : 'draft'
 }
 
 // High-confidence columns are auto-mapped and shown calmly; the rest are pulled out for
@@ -119,8 +125,8 @@ export function MappingReview() {
   // operator promotes (fixture synth; real mode only on a real 2xx, never faked).
   const [created, setCreated] = useState<MappingTemplateDetail | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  // Promotion is honest-pending in real mode (the stage/activate endpoints do not exist yet):
-  // this message is shown when a real promote call fails, and the lifecycle is NOT advanced.
+  // Activation is honest-pending in real mode (the /activate endpoint does not exist yet):
+  // this message is shown when a real activate call fails, and the lifecycle is NOT advanced.
   const [promoteError, setPromoteError] = useState<string | null>(null)
   const [promoting, setPromoting] = useState(false)
   // Per-column UI expanders (T8): the format-rule "more examples" reveal, and the auto-mapped
@@ -136,7 +142,9 @@ export function MappingReview() {
       catalogByKey.set(field.key, field)
     }
   }
-  const timezones = [...new Set([...(stores.data ?? []).map((s) => s.timezone), ...COMMON_TIMEZONES])]
+  const timezones = [
+    ...new Set([...(stores.data ?? []).map((s) => s.timezone), ...COMMON_TIMEZONES]),
+  ]
 
   // The canonical-target options, section-grouped from the catalog. Each option's value is
   // the canonical key, so selecting one is the same setOverride path as before (behavior
@@ -195,7 +203,12 @@ export function MappingReview() {
   const analysis = sample.data
 
   function overrideFor(column: SampleColumn): Override {
-    return overrides[column.source_col] ?? { proposed_canonical: column.proposed_canonical, authoritative: false }
+    return (
+      overrides[column.source_col] ?? {
+        proposed_canonical: column.proposed_canonical,
+        authoritative: false,
+      }
+    )
   }
 
   function setOverride(sourceCol: string, next: Override): void {
@@ -260,22 +273,22 @@ export function MappingReview() {
     }
   }
 
-  // Promote the created template along the lifecycle. FIXTURE mode synthesizes the transition
-  // (demo) and advances the displayed lifecycle. REAL mode POSTs to the provisional endpoint;
-  // it does not exist yet, so any error is honest-pending and the lifecycle is NOT advanced
-  // (FM1: never display STAGED/ACTIVE without a real 2xx, no fake ACTIVE).
-  async function promote(to: PromoteTo): Promise<void> {
+  // Activate the created template (one-step DRAFT -> ACTIVE). FIXTURE mode synthesizes the
+  // transition (demo) and advances the displayed lifecycle. REAL mode POSTs to the provisional
+  // /activate endpoint; it does not exist yet, so any error is honest-pending and the lifecycle
+  // is NOT advanced (FM1/FM2: never display ACTIVE without a real 2xx, no fake ACTIVE).
+  async function activate(): Promise<void> {
     if (created === null) {
       return
     }
     setPromoteError(null)
     setPromoting(true)
     try {
-      const next = await promoteMappingTemplate(created, to)
+      const next = await promoteMappingTemplate(created)
       setCreated(next)
     } catch {
       setPromoteError(
-        'Promotion is not yet available. The template was created as a draft; staging and activation ship with dis-ui-server.',
+        'Activation is not yet available. The template was created as a draft; activation ships with dis-ui-server.',
       )
     } finally {
       setPromoting(false)
@@ -309,7 +322,9 @@ export function MappingReview() {
       <Select
         aria-label={`Canonical for ${column.source_col}`}
         value={ov.proposed_canonical}
-        onChange={(e) => setOverride(column.source_col, { ...ov, proposed_canonical: e.target.value })}
+        onChange={(e) =>
+          setOverride(column.source_col, { ...ov, proposed_canonical: e.target.value })
+        }
         className="h-7 w-auto"
       >
         {column.alternatives && column.alternatives.length > 0 ? (
@@ -335,7 +350,9 @@ export function MappingReview() {
           type="checkbox"
           aria-label={`Authoritative for ${column.source_col}`}
           checked={ov.authoritative}
-          onChange={(e) => setOverride(column.source_col, { ...ov, authoritative: e.target.checked })}
+          onChange={(e) =>
+            setOverride(column.source_col, { ...ov, authoritative: e.target.checked })
+          }
         />
         Authoritative
       </label>
@@ -420,9 +437,7 @@ export function MappingReview() {
           type="button"
           aria-label={`Change mapping for ${column.source_col}`}
           aria-expanded={editing}
-          onClick={() =>
-            setEditingField((prev) => ({ ...prev, [column.source_col]: !editing }))
-          }
+          onClick={() => setEditingField((prev) => ({ ...prev, [column.source_col]: !editing }))}
           className="ml-auto text-caption text-primary hover:underline"
         >
           {editing ? 'Done' : 'Change'}
@@ -638,7 +653,9 @@ export function MappingReview() {
           {/* Auto-mapped: condensed one-line cards (high-confidence, nothing outstanding). */}
           {autoMapped.length > 0 ? (
             <div className="flex flex-col gap-2">
-              <h2 className="text-subheading text-muted-foreground">Auto-mapped ({autoMapped.length})</h2>
+              <h2 className="text-subheading text-muted-foreground">
+                Auto-mapped ({autoMapped.length})
+              </h2>
               {autoMapped.map((column) => condensedCard(column))}
             </div>
           ) : null}
@@ -646,14 +663,19 @@ export function MappingReview() {
           {/* FM2: required locale rules must be declared (never inferred) before preview. */}
           {!allRulesDeclared ? (
             <p role="alert" className="text-caption text-danger">
-              Declare the required format rule for: {undeclaredColumns.map((c) => c.source_col).join(', ')}.
+              Declare the required format rule for:{' '}
+              {undeclaredColumns.map((c) => c.source_col).join(', ')}.
             </p>
           ) : null}
           <div className="flex gap-3">
             <Button type="button" variant="ghost" onClick={() => navigate('/upload')}>
               Back
             </Button>
-            <Button type="button" disabled={!allRulesDeclared} onClick={() => void continueToPreview()}>
+            <Button
+              type="button"
+              disabled={!allRulesDeclared}
+              onClick={() => void continueToPreview()}
+            >
               Continue to preview
             </Button>
           </div>
@@ -701,7 +723,7 @@ export function MappingReview() {
         ? (() => {
             const status = lifecycleStatus(created)
             const version =
-              created.active_version ?? created.staged_version ?? created.draft_version ?? created.latest_version
+              created.active_version ?? created.draft_version ?? created.latest_version
             return (
               <Card>
                 <CardContent className="flex flex-col gap-3">
@@ -710,38 +732,33 @@ export function MappingReview() {
                     Created (draft): {created.template_name} v{version} for {created.source_id}.
                   </p>
                   <p className="text-caption text-muted-foreground">
-                    The template was created as a draft. Promote it to staged, then active; new files
-                    for this source are processed through the active version.
+                    The template was created as a draft. Activate it; new files for this source are
+                    processed through the active version.
                   </p>
 
                   <div className="flex items-center gap-2">
                     <span className="text-label text-muted-foreground">Lifecycle</span>
-                    <StatusBadge
-                      tone={status === 'active' ? 'success' : status === 'staged' ? 'warning' : 'neutral'}
-                    >
+                    <StatusBadge tone={status === 'active' ? 'success' : 'neutral'}>
                       {status}
                     </StatusBadge>
                   </div>
 
-                  {/* Provisional two-step promote (pending-Sanjeev). Honesty guard (FM1): real
-                      mode has no stage/activate endpoint yet, so a promote attempt is
-                      honest-pending and the lifecycle is NOT advanced without a real 2xx; fixture
-                      mode synthesizes the transition (a clearly-marked demo). No fake ACTIVE. */}
+                  {/* One-step activate (DRAFT -> ACTIVE; STAGED dropped, pending-Sanjeev: a single
+                      /activate endpoint). Honesty guard (FM1/FM2): real mode has no activate
+                      endpoint yet, so the attempt is honest-pending and the lifecycle is NOT
+                      advanced without a real 2xx; fixture mode synthesizes the transition (a
+                      clearly-marked demo). No fake ACTIVE. */}
                   {status !== 'active' ? (
                     <div className="flex flex-col gap-2">
                       <div className="flex gap-3">
-                        {status === 'draft' ? (
-                          <Button type="button" disabled={promoting} onClick={() => void promote('staged')}>
-                            Stage
-                          </Button>
-                        ) : (
-                          <Button type="button" disabled={promoting} onClick={() => void promote('active')}>
-                            Activate
-                          </Button>
-                        )}
+                        <Button type="button" disabled={promoting} onClick={() => void activate()}>
+                          Activate
+                        </Button>
                       </div>
                       {!isRealMode() ? (
-                        <p className="text-caption text-muted-foreground">Demo transition (fixture mode).</p>
+                        <p className="text-caption text-muted-foreground">
+                          Demo transition (fixture mode).
+                        </p>
                       ) : null}
                       {promoteError !== null ? (
                         <p role="alert" className="text-caption text-warning">

@@ -39,12 +39,12 @@ export type NavItem = {
 // are unchanged from T6.
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard, section: 'OVERVIEW' },
-  // DATA: the source/template lifecycle. "Create Template" is the onboarding journey
-  // (/upload); "Add Source" promotes the connector picker (/connect); "Ingest Data" is the
-  // flat template list (/ingest) grouped by source with a per-template ingest action.
-  { label: 'Create Template', to: '/upload', icon: Upload, section: 'DATA' },
+  // DATA: the source/template lifecycle, action-first. "Upload CSV" is the flat template list
+  // (/ingest) grouped by source with a per-template upload action; "New CSV Template" is the
+  // onboarding journey (/upload); "Add Source" promotes the connector picker (/connect).
+  { label: 'Upload CSV', to: '/ingest', icon: Database, section: 'DATA' },
+  { label: 'New CSV Template', to: '/upload', icon: Upload, section: 'DATA' },
   { label: 'Add Source', to: '/connect', icon: Plus, section: 'DATA' },
-  { label: 'Ingest Data', to: '/ingest', icon: Database, section: 'DATA' },
   // MONITORING: Quarantine and Audit are scope-aware (T9): a tenant sees their own tenant
   // (scope locked, no tenant filter); an ops user sees the fleet-wide view with a tenant
   // filter, via the SAME route/screen (the component branches on isOps). Always visible.

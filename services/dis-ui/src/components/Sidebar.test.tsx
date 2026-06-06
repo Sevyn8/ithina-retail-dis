@@ -93,27 +93,29 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Query' })).toBeInTheDocument()
   })
 
-  it('renders the renamed tenant nav labels (Create Template, Ingest Data) and not the old ones', () => {
+  it('renders the renamed tenant nav labels (Upload CSV, New CSV Template) and not the old ones', () => {
     renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
-    expect(screen.getByRole('link', { name: 'Ingest Data' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Create Template' })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Upload' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Upload CSV' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'New CSV Template' })).toBeInTheDocument()
+    // The prior labels are retired.
+    expect(screen.queryByRole('link', { name: 'Ingest Data' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Create Template' })).not.toBeInTheDocument()
     // The old "Sources"/"Manage Sources" top-level nav items are gone (source management is
-    // reached from Ingest Data's per-source "Manage source").
+    // reached from the Upload CSV per-source "Manage source").
     expect(screen.queryByRole('link', { name: 'Sources' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Manage Sources' })).not.toBeInTheDocument()
   })
 
-  it('renders an "Add Source" item routing to the connector picker, below "Create Template"', () => {
+  it('renders an "Add Source" item routing to the connector picker, below "New CSV Template"', () => {
     renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
     const addSource = screen.getByRole('link', { name: 'Add Source' })
     expect(addSource).toHaveAttribute('href', '/connect')
-    // ordered immediately below Create Template
+    // ordered immediately below New CSV Template
     const links = screen.getAllByRole('link')
-    const createIdx = links.findIndex((l) => l.textContent === 'Create Template')
+    const templateIdx = links.findIndex((l) => l.textContent === 'New CSV Template')
     const addIdx = links.findIndex((l) => l.textContent === 'Add Source')
-    expect(createIdx).toBeGreaterThanOrEqual(0)
-    expect(addIdx).toBe(createIdx + 1)
+    expect(templateIdx).toBeGreaterThanOrEqual(0)
+    expect(addIdx).toBe(templateIdx + 1)
   })
 
   it('renders the brand header (DIS wordmark + DATA PLATFORM subtitle + placeholder mark)', () => {
@@ -142,7 +144,11 @@ describe('Sidebar nav gating', () => {
     const monIdx = order.indexOf('MONITORING')
     expect(dataIdx).toBeGreaterThanOrEqual(0)
     expect(monIdx).toBeGreaterThan(dataIdx)
-    expect(order.slice(dataIdx + 1, monIdx)).toEqual(['Create Template', 'Add Source', 'Ingest Data'])
+    expect(order.slice(dataIdx + 1, monIdx)).toEqual([
+      'Upload CSV',
+      'New CSV Template',
+      'Add Source',
+    ])
     // OVERVIEW (Dashboard) precedes DATA.
     expect(order.indexOf('OVERVIEW')).toBeLessThan(dataIdx)
   })

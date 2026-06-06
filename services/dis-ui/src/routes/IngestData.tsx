@@ -3,7 +3,14 @@ import { Link } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
@@ -21,7 +28,9 @@ import { useMappingTemplates } from '../lib/dis-ui-server/mapping-templates'
 
 // Group the flat template list by source_id, preserving first-seen order so the rendered
 // grouping is stable and matches the fixture ordering.
-function groupBySource(templates: MappingTemplate[]): { sourceId: string; templates: MappingTemplate[] }[] {
+function groupBySource(
+  templates: MappingTemplate[],
+): { sourceId: string; templates: MappingTemplate[] }[] {
   const groups: { sourceId: string; templates: MappingTemplate[] }[] = []
   const index = new Map<string, number>()
   for (const template of templates) {
@@ -44,9 +53,9 @@ export function IngestData() {
   const header = (
     <header className="flex flex-wrap items-baseline justify-between gap-2">
       <div>
-        <h1 className="text-display">Ingest Data</h1>
+        <h1 className="text-display">Upload CSV</h1>
         <p className="text-caption text-muted-foreground">
-          Every mapping template across your sources. Pick one to ingest a new batch of data.
+          Every mapping template across your sources. Pick one to upload a new batch of data.
         </p>
       </div>
     </header>
@@ -129,7 +138,9 @@ export function IngestData() {
                             <span className="text-caption text-muted-foreground">-</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{template.versions_count}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {template.versions_count}
+                        </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap items-center justify-end gap-2">
                             <Link

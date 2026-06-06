@@ -19,7 +19,7 @@ const tenant: AuthSnapshot = {
 describe('CSV journey (one guided flow)', () => {
   it('renders the four-step journey rail with the shared labels', async () => {
     renderWithProviders(<AppRoutes />, { snapshot: tenant, initialEntries: ['/upload'] })
-    await screen.findByRole('heading', { name: 'Create Template' })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
     const rail = screen.getByRole('list', { name: 'Progress' })
     for (const label of CSV_JOURNEY_STEPS) {
       expect(within(rail).getByText(label)).toBeInTheDocument()
@@ -33,7 +33,7 @@ describe('CSV journey (one guided flow)', () => {
     // Upload: a REAL CSV is parsed client-side (T11), then suggestions come from the
     // mechanical fallback (fixture mode), mapping qty -> quantity (number, decimal rule) and
     // txn_date -> source_sale_timestamp (datetime, format + timezone rule).
-    await screen.findByRole('heading', { name: 'Create Template' })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
     await user.upload(
       screen.getByLabelText('CSV file'),
       new File(['item_code,qty,txn_date\nA123,12,03-12-2025\nB456,3,04-12-2025\n'], 'sample.csv', {
@@ -62,12 +62,16 @@ describe('CSV journey (one guided flow)', () => {
     expect(status).toHaveTextContent(/Created \(draft\)/i)
     expect(status).toHaveTextContent(/pos_csv_main/)
     expect(status).not.toHaveTextContent(/staged/i)
-    expect(screen.queryByText(/rows ingested|ingestion|throughput|events\/day/i)).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/rows ingested|ingestion|throughput|events\/day/i),
+    ).not.toBeInTheDocument()
 
-    // Promote: fixture mode synthesizes DRAFT -> STAGED -> ACTIVE (demo transitions).
-    await user.click(screen.getByRole('button', { name: 'Stage' }))
-    await user.click(await screen.findByRole('button', { name: 'Activate' }))
-    expect(await screen.findByText(/New files for this source are now processed/)).toBeInTheDocument()
+    // Activate: fixture mode synthesizes a one-step DRAFT -> ACTIVE (demo transition).
+    expect(screen.queryByRole('button', { name: 'Stage' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Activate' }))
+    expect(
+      await screen.findByText(/New files for this source are now processed/),
+    ).toBeInTheDocument()
   })
 
   it('renders the journey under the dark theme class (both modes)', async () => {
@@ -77,6 +81,8 @@ describe('CSV journey (one guided flow)', () => {
       </div>,
       { snapshot: tenant, initialEntries: ['/upload'] },
     )
-    expect(await within(container).findByRole('heading', { name: 'Create Template' })).toBeInTheDocument()
+    expect(
+      await within(container).findByRole('heading', { name: 'New CSV Template' }),
+    ).toBeInTheDocument()
   })
 })
