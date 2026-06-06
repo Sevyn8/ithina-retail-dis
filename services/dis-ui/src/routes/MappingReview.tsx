@@ -133,8 +133,25 @@ export function MappingReview() {
   if (sample.isPending) {
     return <LoadingState label="Loading mapping..." />
   }
-  if (sample.isError || sample.data === undefined) {
+  if (sample.isError) {
     return <ErrorState message="Could not load the sample analysis." />
+  }
+  // No analyzed sample in the store (reload / direct nav): a clean empty state, not demo
+  // data and not a crash. The analysis lives only for the session that parsed the CSV.
+  if (sample.data === null || sample.data === undefined) {
+    return (
+      <section className="flex flex-col gap-4">
+        <EmptyState
+          title="No analyzed sample"
+          message="Upload a CSV to review its mapping; the analysis is not retained across reloads."
+        />
+        <div>
+          <Link to="/upload" className={buttonVariants({ variant: 'default', size: 'sm' })}>
+            Upload a CSV
+          </Link>
+        </div>
+      </section>
+    )
   }
 
   const analysis = sample.data
@@ -216,9 +233,11 @@ export function MappingReview() {
       >
         {column.alternatives && column.alternatives.length > 0 ? (
           <optgroup label="Assistant's alternatives">
+            {/* Alternatives are catalog keys (server list[str]); the server cannot supply a
+                per-alternative confidence, so none is shown (no fabricated percentages). */}
             {column.alternatives.map((alt) => (
-              <option key={`alt-${alt.target}`} value={alt.target}>
-                {alt.target} ({Math.round(alt.confidence * 100)}%)
+              <option key={`alt-${alt}`} value={alt}>
+                {alt}
               </option>
             ))}
           </optgroup>
@@ -447,17 +466,28 @@ export function MappingReview() {
 
   return (
     <section className="flex flex-col gap-4">
-      <header>
-        <h1 className="text-display">
-          {step === 'review' ? 'Review mapping' : step === 'preview' ? 'Preview' : 'Go live'}
-        </h1>
-        <p className="text-caption text-muted-foreground">
-          {step === 'review'
-            ? 'We mapped your columns to the canonical schema. Verify the ones we are unsure about.'
-            : step === 'preview'
-              ? 'Dry-run canonical rows produced by your approved mapping.'
-              : 'Your mapping is approved.'}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-display">
+            {step === 'review' ? 'Review mapping' : step === 'preview' ? 'Preview' : 'Go live'}
+          </h1>
+          <p className="text-caption text-muted-foreground">
+            {step === 'review'
+              ? 'We mapped your columns to the canonical schema. Verify the ones we are unsure about.'
+              : step === 'preview'
+                ? 'Dry-run canonical rows produced by your approved mapping.'
+                : 'Your mapping is approved.'}
+          </p>
+        </div>
+        {/* Honest source label (FM4): AI when the server's suggestions are LLM-derived, basic
+            name matching otherwise. Fallback carries no reasoning, so no AI prose is shown. */}
+        {step === 'review' ? (
+          analysis.source === 'llm' ? (
+            <StatusBadge tone="info">Suggestions: AI</StatusBadge>
+          ) : (
+            <StatusBadge tone="neutral">Suggestions: basic match</StatusBadge>
+          )
+        ) : null}
       </header>
 
       <ProgressRail steps={[...CSV_JOURNEY_STEPS]} current={currentIndex} />
@@ -472,6 +502,44 @@ export function MappingReview() {
 
       {step === 'review' ? (
         <>
+          {/* Sample data preview (T11): the first rows from the real client-side parse, so the
+              operator sees actual data behind the columns. Bounded to 10 rows; row_count is the
+              true total. No in-card horizontal scroll beyond the table's own overflow guard. */}
+          {analysis.sample_rows.length > 0 ? (
+            <Card>
+              <CardContent>
+                <h2 className="text-subheading mb-1">Sample data</h2>
+                <p className="text-caption text-muted-foreground mb-2">
+                  First {analysis.sample_rows.length} of {analysis.row_count} rows.
+                </p>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {analysis.columns.map((c) => (
+                          <TableHead key={c.source_col} className="font-mono text-xs">
+                            {c.source_col}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {analysis.sample_rows.map((row, index) => (
+                        <TableRow key={index}>
+                          {analysis.columns.map((c) => (
+                            <TableCell key={c.source_col} className="text-muted-foreground">
+                              {row[c.source_col] ?? ''}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {/* Needs your review: full cards, leading the page (low-confidence or a required
               locale rule outstanding). Each is the two stacked concerns (field + format). */}
           {attention.length > 0 ? (

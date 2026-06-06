@@ -2,6 +2,11 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
+import {
+  __resetSampleStore,
+  putSampleAnalysis,
+} from '../lib/dis-ui-server/onboarding'
+import type { SampleAnalysis } from '../lib/dis-ui-server/onboarding'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { AppRoutes } from './AppRoutes'
 
@@ -12,6 +17,69 @@ const tenantSnapshot: AuthSnapshot = {
   roles: ['dis:upload', 'dis:read'],
 }
 
+// A pre-parsed analysis seeded into the store (the SampleUpload -> MappingReview handoff in
+// real use). Mirrors a real-shaped profile + endpoint suggestions; source "llm" so the R8
+// fields (reasoning + alternatives) and the AI badge are exercised. alternatives are catalog
+// KEYS (server list[str] shape).
+const LLM_SEED: SampleAnalysis = {
+  sample_id: 'smp_acme0001',
+  status: 'ready',
+  source: 'llm',
+  model: 'gemini-2.5-flash',
+  row_count: 2,
+  sample_rows: [
+    { item_code: 'A123', qty: '12', txn_date: '03-12-2025', pos_terminal: 'T-2A' },
+    { item_code: 'B456', qty: '3', txn_date: '04-12-2025', pos_terminal: 'T-2B' },
+  ],
+  columns: [
+    {
+      source_col: 'item_code',
+      inferred_type: 'text',
+      sample_values: ['A123'],
+      null_pct: 0,
+      proposed_canonical: 'sku_id',
+      confidence: 0.98,
+      transforms: [],
+    },
+    {
+      source_col: 'qty',
+      inferred_type: 'integer',
+      sample_values: ['12'],
+      null_pct: 0,
+      proposed_canonical: 'quantity',
+      confidence: 0.95,
+      transforms: [],
+    },
+    {
+      source_col: 'txn_date',
+      inferred_type: 'datetime',
+      sample_values: ['03-12-2025'],
+      null_pct: 0.01,
+      proposed_canonical: 'source_sale_timestamp',
+      confidence: 0.62,
+      transforms: [{ type: 'date_format', value: 'DD-MM-YYYY' }],
+      reasoning: 'Values look like dates in day-month-year order, so this maps to the sale timestamp.',
+      alternatives: ['transaction_id'],
+    },
+    {
+      source_col: 'pos_terminal',
+      inferred_type: 'text',
+      sample_values: ['T-2A'],
+      null_pct: 0,
+      proposed_canonical: 'transaction_id',
+      confidence: 0.41,
+      transforms: [],
+      reasoning: 'Values look like terminal or register identifiers; the target is uncertain.',
+      alternatives: ['sku_variant'],
+    },
+  ],
+}
+
+beforeEach(() => {
+  __resetSampleStore()
+  putSampleAnalysis(LLM_SEED)
+})
+
 function renderReview(sampleId: string) {
   return renderWithProviders(<AppRoutes />, {
     snapshot: tenantSnapshot,
@@ -19,31 +87,26 @@ function renderReview(sampleId: string) {
   })
 }
 
-// T3: the format rules are mandatory by the mapped field's datatype and gate "Continue".
-// The sample's qty -> quantity (number) needs a decimal_separator; txn_date ->
-// source_sale_timestamp (datetime) needs a format + timezone. Declare them to pass the gate.
+// qty -> quantity (number) needs a decimal_separator; txn_date -> source_sale_timestamp
+// (datetime) needs a format + timezone. Declare them to pass the gate.
 async function declareRequiredRules(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.selectOptions(await screen.findByLabelText('Decimal separator for qty'), '.')
   await user.selectOptions(screen.getByLabelText('Date format for txn_date'), '%d-%m-%Y')
   await user.selectOptions(screen.getByLabelText('Timezone for txn_date'), 'UTC')
 }
 
-// R3 reshaped these screens into the guided journey (Upload -> Review mapping -> Preview ->
-// Go live behind the rail). The DATA assertions below are unchanged from before; only the
-// step FLOW and the headings (selectors) are updated. The mapping data layer (onboarding.ts)
-// is untouched; its own data tests live in lib/dis-ui-server/onboarding.test.ts.
 describe('MappingReview (Review mapping / Preview / Go live)', () => {
-  it('renders the per-column mapping for a known sample', async () => {
+  it('renders the per-column mapping for a seeded sample', async () => {
     renderReview('smp_acme0001')
     expect(await screen.findByRole('heading', { name: 'Review mapping' })).toBeInTheDocument()
-    expect(screen.getByText('item_code')).toBeInTheDocument()
-    expect(screen.getByText('txn_date')).toBeInTheDocument()
+    // column names appear in the sample-data preview header AND the cards, so allow multiple.
+    expect(screen.getAllByText('item_code').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('txn_date').length).toBeGreaterThan(0)
   })
 
   it('flags low-confidence and very-low-confidence columns', async () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // txn_date 0.62 -> low; pos_terminal 0.41 -> very low.
     expect(screen.getByText(/Low confidence/)).toBeInTheDocument()
     expect(screen.getByText(/Very low confidence/)).toBeInTheDocument()
   })
@@ -53,8 +116,6 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     const select = screen.getByLabelText('Canonical for pos_terminal')
-    // Targets are real catalog keys now (T1; store_id is not an event target). Selecting
-    // updates the draft exactly as before - only the option SOURCE changed.
     await user.selectOptions(select, 'quantity')
     expect((select as HTMLSelectElement).value).toBe('quantity')
     await user.selectOptions(select, 'unit_sale_price')
@@ -81,13 +142,13 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(/approved to staged \(version 1\)/i)
   })
 
-  it('shows an error for an unknown sample id', async () => {
+  it('shows a clean empty state (not an error) for an unknown sample id', async () => {
     renderReview('smp_unknown')
-    expect(await screen.findByRole('alert')).toHaveTextContent(/could not load the sample analysis/i)
+    expect(await screen.findByRole('heading', { name: 'No analyzed sample' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Upload a CSV' })).toHaveAttribute('href', '/upload')
   })
 
-  // R8: the LLM-shaped suggestion fields (reasoning + alternatives), presented as the
-  // assistant's view, optional and never fabricated.
+  // R8: the assistant reasoning + alternatives, presented as the assistant's view, optional.
   it('shows the assistant reasoning on low-confidence columns', async () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
@@ -95,23 +156,21 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(screen.getByText(/Assistant:.*day-month-year/)).toBeInTheDocument()
   })
 
-  it('offers the assistant alternatives as quick-picks in the canonical dropdown', async () => {
+  it('offers the assistant alternatives as quick-picks (catalog keys, no fabricated percentage)', async () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     const select = screen.getByLabelText('Canonical for pos_terminal')
-    // the alternative target is offered (assistant's alternatives group), e.g. sku_variant at 20%
-    expect(within(select).getByRole('group', { name: "Assistant's alternatives" })).toBeInTheDocument()
-    expect(within(select).getByRole('option', { name: /sku_variant \(20%\)/ })).toBeInTheDocument()
+    const altGroup = within(select).getByRole('group', { name: "Assistant's alternatives" })
+    // The alternative renders as the catalog key EXACTLY (no fabricated "(20%)" the server
+    // cannot supply); an exact-name match would fail if a percentage were appended.
+    expect(within(altGroup).getByRole('option', { name: 'sku_variant' })).toBeInTheDocument()
   })
 
   it('degrades gracefully for a column with no reasoning/alternatives', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // item_code (high confidence) has neither: it renders, with no assistant reasoning and a
-    // plain canonical select (no alternatives optgroup). T8: item_code is auto-mapped
-    // (condensed), so reveal its select via the "change" control first.
-    expect(screen.getByText('item_code')).toBeInTheDocument()
+    expect(screen.getAllByText('item_code').length).toBeGreaterThan(0)
     await user.click(screen.getByLabelText('Change mapping for item_code'))
     const select = screen.getByLabelText('Canonical for item_code')
     expect(within(select).queryByRole('group', { name: "Assistant's alternatives" })).not.toBeInTheDocument()
@@ -126,83 +185,97 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect((select as HTMLSelectElement).value).toBe('sku_variant')
   })
 
-  // T1: canonical targets now come from the real template-mapping-fields catalog.
   it('offers canonical targets from the catalog, section-grouped, not the legacy list', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // T8: item_code is auto-mapped (condensed); reveal its select via "change".
     await user.click(screen.getByLabelText('Change mapping for item_code'))
     const select = screen.getByLabelText('Canonical for item_code')
-    // section grouping from the catalog
     expect(within(select).getByRole('group', { name: 'Sale event' })).toBeInTheDocument()
     expect(within(select).getByRole('group', { name: 'Change event' })).toBeInTheDocument()
-    // real catalog keys are offered (by value); a legacy non-event name is NOT
     const values = within(select)
       .getAllByRole('option')
       .map((o) => o.getAttribute('value'))
     expect(values).toContain('sku_id')
     expect(values).toContain('quantity')
-    expect(values).toContain('attribute_name') // a change_event-only key
-    expect(values).not.toContain('store_id') // identity-resolved; not an event target
-    // mandatory marker rendered on a required field (SKU appears once per section)
+    expect(values).toContain('attribute_name')
+    expect(values).not.toContain('store_id')
     expect(within(select).getAllByRole('option', { name: /SKU \* \(text\)/ }).length).toBeGreaterThan(0)
   })
 
-  it('renders the demo-data banner', async () => {
+  // T11: honest source labeling.
+  it('shows an "AI" suggestions badge when the source is llm', async () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    expect(screen.getByText(/Demo data\./)).toBeInTheDocument()
-    expect(screen.getByText(/not parsed yet/)).toBeInTheDocument()
+    expect(screen.getByText('Suggestions: AI')).toBeInTheDocument()
   })
 
-  // T3: each column is presented as two explicit parts - field mapping + format rules.
-  it('presents both the field-mapping and the format-rules parts', async () => {
+  it('shows a "basic match" badge and no AI prose when the source is fallback', async () => {
+    const fallback: SampleAnalysis = {
+      ...LLM_SEED,
+      sample_id: 'smp_fallback',
+      source: 'fallback',
+      model: null,
+      columns: LLM_SEED.columns.map((c) => ({
+        ...c,
+        reasoning: null, // fallback carries no reasoning
+        alternatives: undefined,
+      })),
+    }
+    putSampleAnalysis(fallback)
+    renderReview('smp_fallback')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    expect(screen.getByText('Suggestions: basic match')).toBeInTheDocument()
+    // No fabricated AI reasoning prose on the fallback path.
+    expect(screen.queryByText(/Assistant:/)).not.toBeInTheDocument()
+  })
+
+  it('shows the sample-data preview (first rows + true row count) from the parse', async () => {
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // field mapping: the catalog-sourced canonical select (preserved)
+    expect(screen.getByRole('heading', { name: 'Sample data' })).toBeInTheDocument()
+    expect(screen.getByText(/First 2 of 2 rows/)).toBeInTheDocument()
+    expect(screen.getAllByText('A123').length).toBeGreaterThan(0)
+  })
+
+  it('renders the honest analysis banner (real parse, no over-claim)', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
+    expect(screen.getByText(/parsed and profiled in your browser/)).toBeInTheDocument()
+  })
+
+  it('presents both the maps-to-field and the format-rule parts', async () => {
+    renderReview('smp_acme0001')
+    await screen.findByRole('heading', { name: 'Review mapping' })
     expect(screen.getByLabelText('Canonical for qty')).toBeInTheDocument()
-    // T8: the two explicit part labels are "Maps to field" + "Format rule", and a required
-    // locale control is present
     expect(screen.getAllByText('Maps to field').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Format rule').length).toBeGreaterThan(0)
     expect(await screen.findByLabelText('Decimal separator for qty')).toBeInTheDocument()
-    // a text-mapped column needs no locale rule
     expect(screen.getAllByText('No locale rule needed').length).toBeGreaterThan(0)
   })
 
-  // FM3 gate test: the mandatory locale rule blocks Continue until declared (preserved in the
-  // T8 two-column card layout; one example shown by default + a "more examples" toggle).
+  // FM3 gate test: the mandatory locale rule blocks Continue until declared.
   it('requires a mandatory locale rule (with a visible example) and blocks Continue until declared', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // qty -> quantity (number) requires a decimal separator; one example is visible by default
     expect(await screen.findByLabelText('Decimal separator for qty')).toBeInTheDocument()
     expect(screen.getAllByText(/-> 1299\.50/).length).toBeGreaterThan(0)
     expect(screen.getAllByRole('button', { name: /more examples/i }).length).toBeGreaterThan(0)
-    // undeclared -> Continue blocked
     expect(screen.getByRole('button', { name: /continue to preview/i })).toBeDisabled()
-    // declare all required rules -> Continue enabled
     await declareRequiredRules(user)
     expect(screen.getByRole('button', { name: /continue to preview/i })).toBeEnabled()
   })
 
-  // T8: per-column layout - needs-attention two-column full cards, auto-mapped one-line rows.
   it('renders needs-review columns as full cards and auto-mapped columns condensed', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // the visual hierarchy: a "Needs your review" group (low-confidence or rule-bearing) and
-    // an "Auto-mapped" group (high-confidence, nothing outstanding)
     expect(screen.getByText(/Needs your review/)).toBeInTheDocument()
     expect(screen.getByText(/Auto-mapped/)).toBeInTheDocument()
-    // item_code (high-confidence, text, no rule) is auto-mapped and condensed to a one-line
-    // row; its canonical select is revealed via the "change" control (no control removed)
     expect(screen.getByLabelText('Change mapping for item_code')).toBeInTheDocument()
     await user.click(screen.getByLabelText('Change mapping for item_code'))
     expect(screen.getByLabelText('Canonical for item_code')).toBeInTheDocument()
-    // a needs-review column carries the two labeled parts (two-column full card)
     expect(screen.getAllByText('Maps to field').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Format rule').length).toBeGreaterThan(0)
   })
@@ -211,10 +284,18 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // pos_terminal -> transaction_id (text): no locale rule control
     expect(screen.queryByLabelText('Decimal separator for pos_terminal')).not.toBeInTheDocument()
-    // remap pos_terminal to quantity (number) -> a decimal rule becomes required
     await user.selectOptions(screen.getByLabelText('Canonical for pos_terminal'), 'quantity')
     expect(await screen.findByLabelText('Decimal separator for pos_terminal')).toBeInTheDocument()
+  })
+
+  it('mounts under the dark theme class', async () => {
+    const { container } = renderWithProviders(
+      <div className="dark">
+        <AppRoutes />
+      </div>,
+      { snapshot: tenantSnapshot, initialEntries: ['/upload/smp_acme0001/review'] },
+    )
+    expect(await within(container).findByRole('heading', { name: 'Review mapping' })).toBeInTheDocument()
   })
 })

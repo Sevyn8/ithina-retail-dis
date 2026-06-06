@@ -1,5 +1,5 @@
 import { Sparkles, UploadCloud } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
@@ -8,40 +8,35 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { DemoDataBanner } from '../components/DemoDataBanner'
-import { ErrorState } from '../components/states/ErrorState'
-import { LoadingState } from '../components/states/LoadingState'
 import { ProgressRail } from '@/components/ui/progress-rail'
 import { cn } from '@/lib/utils'
-import { createSample, useSample } from '../lib/dis-ui-server/onboarding'
+import { parseCsvFile } from '../lib/onboarding/analyze-csv'
+import { getMappingSuggestions } from '../lib/dis-ui-server/mapping-suggestions'
+import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
+import { assembleAnalysis, nextSampleId, putSampleAnalysis } from '../lib/dis-ui-server/onboarding'
 import { deriveSourceId, makeSourceDraft, useSources } from '../lib/dis-ui-server/sources'
 import { CSV_JOURNEY_STEPS, CSV_JOURNEY_STEP_INDEX } from './csv-journey'
 
-// Upload (CSV journey step 1; surface map screen 3, onboarding step 1), on the redesign
-// visual language behind the shared 4-step rail. Accepts a CSV sample and metadata, calls
-// the 2.1 fixture to create a sample, polls 2.2, and on `ready` advances to Review mapping.
-// Fixture mode: the file bytes are not sent. The data layer (onboarding.ts) is unchanged
-// (R3); only the composition and the rail are new.
+// Upload (CSV journey step 1), on the shared 4-step rail. T11: the uploaded CSV is parsed
+// CLIENT-SIDE (Papa Parse) into a real column profile, per-column suggestions come from the
+// mapping-suggestions endpoint (real mode) or the mechanical stand-in (fixture mode), and the
+// assembled analysis is stored for the Review step. No demo data: an upload is required.
 export function SampleUpload() {
   const navigate = useNavigate()
   const { snapshot } = useAuth()
   const sources = useSources(snapshot)
+  const fields = useTemplateMappingFields()
 
   const [file, setFile] = useState<File | null>(null)
   const [label, setLabel] = useState('')
   const [sourceKind, setSourceKind] = useState('csv')
   const [attachTo, setAttachTo] = useState<'new' | 'existing'>('new')
-  // UI-only: demand list 2.1 has no source-instance field, so this is captured
-  // but NOT sent (see onboarding.ts / the prior ambiguity note).
+  // UI-only: the source-instance choice is captured but not part of the analyze profile.
   const [existingSourceId, setExistingSourceId] = useState('')
-  const [sampleId, setSampleId] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
 
-  const sample = useSample(sampleId)
-
-  // The new source this attach-to-new flow declares, built via the SHARED SourceDraft
-  // builder so onboarding and the Sources CRUD create define a source identically (slice
-  // 27, FM2). The 2.1 sample-create wire call is unchanged; this only surfaces the
-  // kind-style source_id the flow will mint.
+  // The new source this attach-to-new flow declares, built via the SHARED SourceDraft builder.
   const newSourceDraft = makeSourceDraft({
     source_id: deriveSourceId(label),
     name: label,
@@ -49,32 +44,31 @@ export function SampleUpload() {
     store: '',
   })
 
-  useEffect(() => {
-    if (sampleId !== null && sample.data?.status === 'ready') {
-      navigate(`/upload/${sampleId}/review`)
-    }
-  }, [sampleId, sample.data?.status, navigate])
-
   async function analyze(): Promise<void> {
     setSubmitError(null)
+    if (file === null) {
+      setSubmitError('Select a CSV file to analyze.')
+      return
+    }
+    setAnalyzing(true)
     try {
-      const result = await createSample({ source_kind: sourceKind, label })
-      setSampleId(result.sample_id)
-    } catch {
-      setSubmitError('Could not start sample analysis.')
-    }
-  }
-
-  if (sampleId !== null) {
-    if (sample.isError || sample.data?.status === 'failed') {
-      return (
-        <ErrorState
-          message="Sample analysis failed. Please try a different sample."
-          onRetry={() => setSampleId(null)}
-        />
+      // 1) real client-side parse -> column profile + sample rows + true row count.
+      const parsed = await parseCsvFile(file)
+      // 2) per-column suggestions: endpoint (real) or mechanical stand-in (fixture).
+      const sourceId = attachTo === 'existing' ? existingSourceId || null : newSourceDraft.source_id || null
+      const response = await getMappingSuggestions(
+        { columns: parsed.columns, source_id: sourceId, template_name: label || null },
+        fields.data ?? [],
       )
+      // 3) assemble + hand off to Review.
+      const sampleId = nextSampleId()
+      putSampleAnalysis(assembleAnalysis(parsed, response, sampleId))
+      navigate(`/upload/${sampleId}/review`)
+    } catch {
+      setSubmitError('Could not analyze the CSV. Please check the file and try again.')
+    } finally {
+      setAnalyzing(false)
     }
-    return <LoadingState label="Analyzing sample..." />
   }
 
   return (
@@ -95,8 +89,8 @@ export function SampleUpload() {
       </div>
 
       <div className="flex flex-col gap-4">
-        {/* Styled dropzone. The native input is visually hidden but accessible; the
-            file bytes are not sent in fixture mode. */}
+        {/* Styled dropzone. The native input is visually hidden but accessible. The file is
+            parsed in the browser on Analyze (the bytes are not uploaded at this step). */}
         <div>
           <Label htmlFor="csv-file">CSV file</Label>
           <label
@@ -117,7 +111,11 @@ export function SampleUpload() {
           </label>
           {file !== null ? (
             <p className="mt-1 text-caption text-muted-foreground">Selected: {file.name}</p>
-          ) : null}
+          ) : (
+            <p className="mt-1 text-caption text-muted-foreground">
+              Select a CSV file to analyze its columns.
+            </p>
+          )}
         </div>
 
         <div>
@@ -205,9 +203,9 @@ export function SampleUpload() {
         ) : null}
 
         <div className="flex gap-3">
-          <Button type="button" onClick={() => void analyze()}>
+          <Button type="button" onClick={() => void analyze()} disabled={file === null || analyzing}>
             <Sparkles aria-hidden="true" />
-            Analyze sample
+            {analyzing ? 'Analyzing sample...' : 'Analyze sample'}
           </Button>
         </div>
       </div>

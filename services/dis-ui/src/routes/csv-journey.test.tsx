@@ -30,8 +30,16 @@ describe('CSV journey (one guided flow)', () => {
     const user = userEvent.setup()
     renderWithProviders(<AppRoutes />, { snapshot: tenant, initialEntries: ['/upload'] })
 
-    // Upload
+    // Upload: a REAL CSV is parsed client-side (T11), then suggestions come from the
+    // mechanical fallback (fixture mode), mapping qty -> quantity (number, decimal rule) and
+    // txn_date -> source_sale_timestamp (datetime, format + timezone rule).
     await screen.findByRole('heading', { name: 'Create Template' })
+    await user.upload(
+      screen.getByLabelText('CSV file'),
+      new File(['item_code,qty,txn_date\nA123,12,03-12-2025\nB456,3,04-12-2025\n'], 'sample.csv', {
+        type: 'text/csv',
+      }),
+    )
     await user.type(screen.getByLabelText(/source name/i), 'POS-CSV-Main')
     await user.click(screen.getByRole('button', { name: /analyze sample/i }))
 

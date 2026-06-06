@@ -1,9 +1,9 @@
 import { Info } from 'lucide-react'
 
-// Demo-data banner (redesign R8). An honest, visible-but-not-alarming notice on the CSV
-// journey that the screens run on fixture data: uploaded files are not parsed yet, and the
-// mapping shown is sample data. Live parsing and AI-assisted mapping arrive with
-// dis-ui-server. Presentation only; new-language styling; light + dark via tokens.
+// CSV-journey notice (T11). Honest, visible-but-not-alarming: the parse is REAL (your CSV is
+// read and profiled in your browser). Mapping suggestions are AI when the server has a model
+// key and basic name matching otherwise (the review step labels which). Preview and saving the
+// template still arrive with dis-ui-server. Presentation only; light + dark via tokens.
 export function DemoDataBanner() {
   return (
     <div
@@ -12,8 +12,9 @@ export function DemoDataBanner() {
     >
       <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
       <span>
-        Demo data. Uploaded files are not parsed yet, and the mapping shown is sample data. Live
-        parsing and AI-assisted mapping arrive with dis-ui-server.
+        Your CSV is parsed and profiled in your browser. Mapping suggestions are AI-assisted when
+        available and basic name matching otherwise; preview and saving the template arrive with
+        dis-ui-server.
       </span>
     </div>
   )
