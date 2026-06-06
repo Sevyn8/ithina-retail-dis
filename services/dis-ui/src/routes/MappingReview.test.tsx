@@ -105,11 +105,14 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
   })
 
   it('degrades gracefully for a column with no reasoning/alternatives', async () => {
+    const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     // item_code (high confidence) has neither: it renders, with no assistant reasoning and a
-    // plain canonical select (no alternatives optgroup)
+    // plain canonical select (no alternatives optgroup). T8: item_code is auto-mapped
+    // (condensed), so reveal its select via the "change" control first.
     expect(screen.getByText('item_code')).toBeInTheDocument()
+    await user.click(screen.getByLabelText('Change mapping for item_code'))
     const select = screen.getByLabelText('Canonical for item_code')
     expect(within(select).queryByRole('group', { name: "Assistant's alternatives" })).not.toBeInTheDocument()
   })
@@ -125,8 +128,11 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
 
   // T1: canonical targets now come from the real template-mapping-fields catalog.
   it('offers canonical targets from the catalog, section-grouped, not the legacy list', async () => {
+    const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
+    // T8: item_code is auto-mapped (condensed); reveal its select via "change".
+    await user.click(screen.getByLabelText('Change mapping for item_code'))
     const select = screen.getByLabelText('Canonical for item_code')
     // section grouping from the catalog
     expect(within(select).getByRole('group', { name: 'Sale event' })).toBeInTheDocument()
@@ -156,21 +162,25 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     await screen.findByRole('heading', { name: 'Review mapping' })
     // field mapping: the catalog-sourced canonical select (preserved)
     expect(screen.getByLabelText('Canonical for qty')).toBeInTheDocument()
-    // format rules: the two explicit part headers, and a required locale control
-    expect(screen.getAllByText('Field mapping').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Format rules').length).toBeGreaterThan(0)
+    // T8: the two explicit part labels are "Maps to field" + "Format rule", and a required
+    // locale control is present
+    expect(screen.getAllByText('Maps to field').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Format rule').length).toBeGreaterThan(0)
     expect(await screen.findByLabelText('Decimal separator for qty')).toBeInTheDocument()
     // a text-mapped column needs no locale rule
     expect(screen.getAllByText('No locale rule needed').length).toBeGreaterThan(0)
   })
 
+  // FM3 gate test: the mandatory locale rule blocks Continue until declared (preserved in the
+  // T8 two-column card layout; one example shown by default + a "more examples" toggle).
   it('requires a mandatory locale rule (with a visible example) and blocks Continue until declared', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
-    // qty -> quantity (number) requires a decimal separator; the example is visible
+    // qty -> quantity (number) requires a decimal separator; one example is visible by default
     expect(await screen.findByLabelText('Decimal separator for qty')).toBeInTheDocument()
-    expect(screen.getByText('1.299,50 -> 1299.50')).toBeInTheDocument()
+    expect(screen.getAllByText(/-> 1299\.50/).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: /more examples/i }).length).toBeGreaterThan(0)
     // undeclared -> Continue blocked
     expect(screen.getByRole('button', { name: /continue to preview/i })).toBeDisabled()
     // declare all required rules -> Continue enabled
@@ -178,20 +188,23 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(screen.getByRole('button', { name: /continue to preview/i })).toBeEnabled()
   })
 
-  // T3.5: per-column card layout - needs-attention full cards, auto-mapped condensed.
+  // T8: per-column layout - needs-attention two-column full cards, auto-mapped one-line rows.
   it('renders needs-review columns as full cards and auto-mapped columns condensed', async () => {
+    const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     // the visual hierarchy: a "Needs your review" group (low-confidence or rule-bearing) and
     // an "Auto-mapped" group (high-confidence, nothing outstanding)
     expect(screen.getByText(/Needs your review/)).toBeInTheDocument()
     expect(screen.getByText(/Auto-mapped/)).toBeInTheDocument()
-    // item_code (high-confidence, text, no rule) is auto-mapped and condensed - but still
-    // exposes its canonical select (no hidden controls)
+    // item_code (high-confidence, text, no rule) is auto-mapped and condensed to a one-line
+    // row; its canonical select is revealed via the "change" control (no control removed)
+    expect(screen.getByLabelText('Change mapping for item_code')).toBeInTheDocument()
+    await user.click(screen.getByLabelText('Change mapping for item_code'))
     expect(screen.getByLabelText('Canonical for item_code')).toBeInTheDocument()
-    // a needs-review column carries the two labeled parts (full card)
-    expect(screen.getAllByText('Field mapping').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Format rules').length).toBeGreaterThan(0)
+    // a needs-review column carries the two labeled parts (two-column full card)
+    expect(screen.getAllByText('Maps to field').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Format rule').length).toBeGreaterThan(0)
   })
 
   it('recomputes the required rule when the field mapping changes datatype', async () => {

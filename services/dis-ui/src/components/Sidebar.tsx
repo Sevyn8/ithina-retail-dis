@@ -43,7 +43,7 @@ export function Sidebar({ items = NAV_ITEMS }: { items?: NavItem[] }) {
       <div className={cn('flex items-center gap-3 px-4 py-5', collapsed && 'justify-center px-0')}>
         <BrandMark />
         <span className={cn('flex flex-col leading-none', collapsed && 'sr-only')}>
-          <span className="text-subheading text-sidebar-foreground">Ithina</span>
+          <span className="text-subheading text-sidebar-foreground">DIS</span>
           <span className="mt-1 text-micro tracking-[0.12em] text-sidebar-foreground/55">
             DATA PLATFORM
           </span>

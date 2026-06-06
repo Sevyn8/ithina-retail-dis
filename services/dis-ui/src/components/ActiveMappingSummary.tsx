@@ -1,5 +1,6 @@
+import { ArrowRight } from 'lucide-react'
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { MappingTemplateVersion, NormalizeOp } from '../lib/dis-ui-server/mapping-templates'
 import type { TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
 
@@ -16,6 +17,10 @@ function formatOp(op: NormalizeOp): string {
 // presentational and read-only (no inputs/selects), so it is safe to reuse anywhere the
 // active mapping must be SHOWN but never edited: the template detail (T2) and the
 // recurring-batch upload flow (T4, reuse-not-re-map).
+//
+// T8: rendered as compact WRAPPING lines (not wide tables), so the cards never scroll
+// horizontally (FM2). Each field mapping is one "source -> canonical" line; each format
+// rule is one "field: rule" line.
 export function ActiveMappingSummary({
   version,
   catalog,
@@ -47,35 +52,27 @@ export function ActiveMappingSummary({
           </p>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto"><Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Source column</TableHead>
-                <TableHead>Canonical field</TableHead>
-                <TableHead>Section</TableHead>
-                <TableHead>Type</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {renameEntries.map(([sourceCol, canonicalKey]) => {
-                const field = fieldByKey.get(canonicalKey)
-                return (
-                  <TableRow key={sourceCol}>
-                    <TableCell className="font-mono text-xs">{sourceCol}</TableCell>
-                    <TableCell className="font-medium text-foreground">
-                      {field ? field.display_name : canonicalKey}
-                      {field?.mandatory ? ' *' : ''}
-                      <span className="block font-mono text-caption font-normal text-muted-foreground">
-                        {canonicalKey}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{field?.section ?? '-'}</TableCell>
-                    <TableCell className="text-muted-foreground">{field?.datatype ?? '-'}</TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table></div>
+          <ul className="flex flex-col gap-3">
+            {renameEntries.map(([sourceCol, canonicalKey]) => {
+              const field = fieldByKey.get(canonicalKey)
+              return (
+                <li key={sourceCol} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-mono text-xs break-all text-muted-foreground">{sourceCol}</span>
+                  <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="font-medium break-all text-foreground">
+                    {field ? field.display_name : canonicalKey}
+                    {field?.mandatory ? ' *' : ''}
+                  </span>
+                  <span className="font-mono text-caption break-all text-muted-foreground">
+                    {canonicalKey}
+                  </span>
+                  <span className="text-caption text-muted-foreground">{field?.section ?? '-'}</span>
+                  <span aria-hidden="true" className="text-caption text-muted-foreground">·</span>
+                  <span className="text-caption text-muted-foreground">{field?.datatype ?? '-'}</span>
+                </li>
+              )
+            })}
+          </ul>
         </CardContent>
       </Card>
 
@@ -90,39 +87,31 @@ export function ActiveMappingSummary({
           {ruleColumns.length === 0 ? (
             <p className="text-caption text-muted-foreground">No format rules declared.</p>
           ) : (
-            <div className="overflow-x-auto"><Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Canonical field</TableHead>
-                  <TableHead>Rule</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {ruleColumns.map((col) => {
-                  const parts: string[] = []
-                  for (const op of rules.normalize[col] ?? []) {
-                    parts.push(`normalize: ${formatOp(op)}`)
-                  }
-                  const castSpec = rules.cast[col]
-                  if (castSpec) {
-                    const detailStr =
-                      castSpec.precision !== undefined
-                        ? `${castSpec.type}(${castSpec.precision},${castSpec.scale ?? 0})`
-                        : castSpec.type
-                    parts.push(`cast: ${detailStr}`)
-                  }
-                  for (const op of rules.derive[col] ?? []) {
-                    parts.push(`derive: ${formatOp(op)}`)
-                  }
-                  return (
-                    <TableRow key={col}>
-                      <TableCell className="font-mono text-xs">{col}</TableCell>
-                      <TableCell className="text-muted-foreground">{parts.join('; ')}</TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table></div>
+            <ul className="flex flex-col gap-3">
+              {ruleColumns.map((col) => {
+                const parts: string[] = []
+                for (const op of rules.normalize[col] ?? []) {
+                  parts.push(`normalize: ${formatOp(op)}`)
+                }
+                const castSpec = rules.cast[col]
+                if (castSpec) {
+                  const detailStr =
+                    castSpec.precision !== undefined
+                      ? `${castSpec.type}(${castSpec.precision},${castSpec.scale ?? 0})`
+                      : castSpec.type
+                  parts.push(`cast: ${detailStr}`)
+                }
+                for (const op of rules.derive[col] ?? []) {
+                  parts.push(`derive: ${formatOp(op)}`)
+                }
+                return (
+                  <li key={col} className="flex flex-col gap-0.5">
+                    <span className="font-mono text-xs break-all text-foreground">{col}</span>
+                    <span className="text-caption break-words text-muted-foreground">{parts.join('; ')}</span>
+                  </li>
+                )
+              })}
+            </ul>
           )}
         </CardContent>
       </Card>

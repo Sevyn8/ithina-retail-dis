@@ -1,3 +1,4 @@
+import { ArrowRight, Check } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 
@@ -84,6 +85,10 @@ export function MappingReview() {
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
   const [approved, setApproved] = useState<ApproveResult | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  // Per-column UI expanders (T8): the format-rule "more examples" reveal, and the auto-mapped
+  // row's "change" reveal of the canonical select. Keyed by source_col; default collapsed.
+  const [showAllExamples, setShowAllExamples] = useState<Record<string, boolean>>({})
+  const [editingField, setEditingField] = useState<Record<string, boolean>>({})
 
   // Catalog datatype lookup, by canonical key (first section wins; datatype is consistent
   // per key). Drives which locale rule a mapped column requires.
@@ -237,8 +242,11 @@ export function MappingReview() {
     )
   }
 
-  // A full card: the two stacked concerns (field mapping + format rules), R8 reasoning and
-  // the confidence band inside. Used for needs-attention columns; leads the page.
+  // A full card (T8): a header row (mono column + type/null/sample + confidence badge), an
+  // optional one-line assistant note (R8), then a TWO-COLUMN grid - "Maps to field" (the
+  // catalog select + authoritative checkbox) and "Format rule" (the required-rule select +
+  // one example + "more examples"). Columns stack on narrow widths; no table, no in-card
+  // horizontal scroll (FM2). Used for needs-attention columns; leads the page.
   function fullCard(column: SampleColumn) {
     const ov = overrideFor(column)
     const band = confidenceBand(column.confidence)
@@ -258,49 +266,73 @@ export function MappingReview() {
             </StatusBadge>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <span className="text-label text-muted-foreground">Field mapping</span>
-            {/* The assistant's explanation, when provided (R8); optional, never fabricated. */}
-            {column.reasoning != null && column.reasoning.length > 0 ? (
-              <div className="text-caption font-normal text-muted-foreground italic">
-                Assistant: {column.reasoning}
-              </div>
-            ) : null}
-            <div className="flex flex-wrap items-center gap-3">
-              {canonicalSelect(column, ov)}
-              {authoritativeToggle(column, ov)}
+          {/* The assistant's explanation, when provided (R8); optional, never fabricated. */}
+          {column.reasoning != null && column.reasoning.length > 0 ? (
+            <div className="text-caption font-normal text-muted-foreground italic">
+              Assistant: {column.reasoning}
             </div>
-          </div>
+          ) : null}
 
-          <div className="flex flex-col gap-1">
-            <span className="text-label text-muted-foreground">Format rules</span>
-            {renderFormatRules(column)}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <span className="text-label text-muted-foreground">Maps to field</span>
+              <div className="flex flex-wrap items-center gap-3">
+                {canonicalSelect(column, ov)}
+                {authoritativeToggle(column, ov)}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-label text-muted-foreground">Format rule</span>
+              {renderFormatRules(column)}
+            </div>
           </div>
         </CardContent>
       </Card>
     )
   }
 
-  // A condensed card: a compact one-line row for an auto-mapped column with nothing
-  // outstanding. Keeps the canonical select + authoritative toggle editable (no hidden
-  // controls), just without the sample/reasoning/format clutter.
+  // A condensed row (T8): a compact ONE-LINE row for an auto-mapped column with nothing
+  // outstanding - check icon, mono column, arrow, target field, "no rule needed", confidence,
+  // and a small "change" control that expands to reveal the canonical select (and the
+  // authoritative toggle) so no control is permanently hidden. No tall card.
   function condensedCard(column: SampleColumn) {
     const ov = overrideFor(column)
     const band = confidenceBand(column.confidence)
+    const target = catalogByKey.get(ov.proposed_canonical)
+    const editing = editingField[column.source_col] ?? false
     return (
       <div
         key={column.source_col}
-        className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3 py-2"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border px-3 py-2"
       >
+        <Check aria-hidden="true" className="size-4 shrink-0 text-success" />
         <span className="font-mono text-xs text-muted-foreground">{column.source_col}</span>
-        <span aria-hidden="true" className="text-muted-foreground">
-          to
+        <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="font-medium text-foreground">
+          {target ? target.display_name : ov.proposed_canonical}
         </span>
-        {canonicalSelect(column, ov)}
+        <span className="text-caption text-muted-foreground">No rule needed</span>
         <StatusBadge tone={band.tone}>
           {Math.round(column.confidence * 100)}% {band.text}
         </StatusBadge>
-        <span className="ml-auto">{authoritativeToggle(column, ov)}</span>
+        <button
+          type="button"
+          aria-label={`Change mapping for ${column.source_col}`}
+          aria-expanded={editing}
+          onClick={() =>
+            setEditingField((prev) => ({ ...prev, [column.source_col]: !editing }))
+          }
+          className="ml-auto text-caption text-primary hover:underline"
+        >
+          {editing ? 'Done' : 'Change'}
+        </button>
+        {editing ? (
+          <div className="flex w-full flex-wrap items-center gap-3 pt-1">
+            {canonicalSelect(column, ov)}
+            {authoritativeToggle(column, ov)}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -316,6 +348,13 @@ export function MappingReview() {
       return <span className="text-caption text-muted-foreground">No locale rule needed</span>
     }
     const complete = isRuleComplete(kind, decl)
+    // One example (T8): the selected choice's example, defaulting to the first when undeclared;
+    // "more examples" reveals the full set. Collapsed by default, so the card stays compact.
+    const choices: { value: string; label: string; example: string }[] =
+      kind === 'decimal' ? DECIMAL_CHOICES : DATE_FORMAT_CHOICES
+    const selectedValue = kind === 'decimal' ? decl?.decimal_separator : decl?.format
+    const oneExample = (choices.find((c) => c.value === selectedValue) ?? choices[0]).example
+    const expanded = showAllExamples[col] ?? false
     return (
       <div className="flex flex-col gap-1">
         {kind === 'decimal' ? (
@@ -345,11 +384,6 @@ export function MappingReview() {
                 </option>
               ))}
             </Select>
-            <div className="text-caption text-muted-foreground">
-              {DECIMAL_CHOICES.map((c) => (
-                <div key={c.value}>{c.example}</div>
-              ))}
-            </div>
           </>
         ) : (
           <>
@@ -381,13 +415,26 @@ export function MappingReview() {
                 ))}
               </Select>
             ) : null}
-            <div className="text-caption text-muted-foreground">
-              {DATE_FORMAT_CHOICES.map((c) => (
-                <div key={c.value}>{c.example}</div>
-              ))}
-            </div>
           </>
         )}
+
+        {/* One example by default; "more examples" reveals the rest. */}
+        <div className="text-caption text-muted-foreground">
+          {expanded ? (
+            choices.map((c) => <div key={c.value}>{c.example}</div>)
+          ) : (
+            <div>{oneExample}</div>
+          )}
+        </div>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setShowAllExamples((prev) => ({ ...prev, [col]: !expanded }))}
+          className="self-start text-caption text-primary hover:underline"
+        >
+          {expanded ? 'Fewer examples' : 'More examples'}
+        </button>
+
         {!complete ? (
           <span className="text-caption text-danger">Required before preview</span>
         ) : null}

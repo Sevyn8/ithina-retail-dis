@@ -1,4 +1,3 @@
-import { Boxes } from 'lucide-react'
 import { Outlet } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
@@ -9,11 +8,12 @@ import { useMe } from '../lib/dis-ui-server/me'
 import { ThemeToggle } from '../theme/ThemeToggle'
 
 // Authenticated shell on the design-system chrome (slice 23, craft bar): a sticky top
-// bar (h-14, border-b, backdrop-blur) carrying the branded mark, the notification bell,
-// the theme toggle, and the user (avatar initial + email) with a logout control; a
-// collapsible sidebar; and the routed page body. The header is a /me consumer (demand
-// list 1.1), reading the display email from the profile call and falling back to the
-// token's userId (email is not a token claim). No behavior change, only chrome.
+// bar (h-14, border-b, backdrop-blur) carrying the notification bell, the theme toggle,
+// and the user (avatar initial + email) with a logout control; a collapsible sidebar; and
+// the routed page body. T8: the DIS brand lives ONLY in the sidebar header now (one brand
+// on screen), so the top bar no longer carries its own mark/wordmark. The header is a /me
+// consumer (demand list 1.1), reading the display email from the profile call and falling
+// back to the token's userId (email is not a token claim).
 export function AppLayout() {
   const { snapshot, logout } = useAuth()
   const { data } = useMe(snapshot)
@@ -24,12 +24,8 @@ export function AppLayout() {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 flex h-14 items-center gap-4 border-b border-border bg-background/95 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <span className="flex items-center gap-2 font-heading font-semibold">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Boxes aria-hidden="true" className="h-4 w-4" />
-          </span>
-          DIS
-        </span>
+        {/* T8: brand removed here; it lives once, in the sidebar header. The user/controls
+            group stays right-aligned via ml-auto. */}
         <div className="ml-auto flex items-center gap-3">
           <NotificationBell />
           <ThemeToggle />

@@ -102,13 +102,13 @@ describe('Sidebar nav gating', () => {
     expect(addIdx).toBe(createIdx + 1)
   })
 
-  it('renders the brand header (Ithina wordmark + DATA PLATFORM subtitle + placeholder mark)', () => {
+  it('renders the brand header (DIS wordmark + DATA PLATFORM subtitle + placeholder mark)', () => {
     renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
-    expect(screen.getByText('Ithina')).toBeInTheDocument()
+    expect(screen.getByText('DIS')).toBeInTheDocument()
     expect(screen.getByText('DATA PLATFORM')).toBeInTheDocument()
-    // the placeholder mark is isolated (BrandMark); it carries the swap-point markers
+    // the placeholder mark is isolated (BrandMark); it carries the swap-point markers (T8: DIS)
     const mark = screen.getByTestId('brand-mark')
-    expect(mark).toHaveAttribute('data-placeholder', 'ithina-logo')
+    expect(mark).toHaveAttribute('data-placeholder', 'dis-logo')
   })
 
   it('groups the tenant nav into OVERVIEW / DATA / MONITORING sections (no OPERATIONS)', () => {
@@ -156,7 +156,7 @@ describe('Sidebar nav gating', () => {
       </div>,
       { snapshot: tenantSnapshot },
     )
-    expect(within(container).getByText('Ithina')).toBeInTheDocument()
+    expect(within(container).getByText('DIS')).toBeInTheDocument()
     expect(within(container).getByRole('heading', { name: 'DATA' })).toBeInTheDocument()
   })
 

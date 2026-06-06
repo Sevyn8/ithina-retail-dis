@@ -33,14 +33,30 @@ describe('IngestData (templates grouped by source)', () => {
     expect(screen.getByText('Orders')).toBeInTheDocument()
   })
 
-  it('offers a per-template ingest action, gated by active version', async () => {
+  it('offers a per-template ingest action for FILE sources, gated by active version', async () => {
     render()
     await screen.findByRole('heading', { name: 'Ingest Data' })
-    // active templates (Sales, Inventory, Orders) -> enabled links; Pricing (no active) -> disabled
-    expect(screen.getAllByRole('link', { name: 'Ingest data' }).length).toBeGreaterThanOrEqual(3)
+    // file source (manual_csv_upload): Sales + Inventory active -> enabled links; Pricing
+    // (no active) -> disabled. Orders is on an API source, so it is NOT an Ingest action.
+    expect(screen.getAllByRole('link', { name: 'Ingest data' })).toHaveLength(2)
     const disabled = screen.getByRole('button', { name: 'Ingest data' })
     expect(disabled).toBeDisabled()
     expect(disabled.getAttribute('title')).toMatch(/no active version/i)
+  })
+
+  it('shows "Connected / syncing" for an API source instead of an ingest action (T8)', async () => {
+    render()
+    await screen.findByRole('heading', { name: 'Ingest Data' })
+    // square_pos / Orders is an API/connector source: it syncs automatically, so no upload.
+    expect(screen.getByText('Connected / syncing')).toBeInTheDocument()
+    // the Orders row offers no link to the recurring-batch upload route (file-only). Scope to
+    // template-upload routes (the sidebar "Create Template" /upload link has no /templates/).
+    const uploadLinks = screen
+      .getAllByRole('link')
+      .map((l) => l.getAttribute('href'))
+      .filter((href): href is string => href !== null && href.includes('/templates/') && href.endsWith('/upload'))
+    expect(uploadLinks.length).toBe(2) // Sales + Inventory (file, active); Orders (api) has none
+    expect(uploadLinks.some((href) => href.includes('square_pos'))).toBe(false)
   })
 
   it('offers a once-per-source "Manage source" link into SourceEdit (edit + deprecate)', async () => {

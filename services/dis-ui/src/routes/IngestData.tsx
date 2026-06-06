@@ -131,16 +131,21 @@ export function IngestData() {
                         </TableCell>
                         <TableCell className="text-muted-foreground">{template.versions_count}</TableCell>
                         <TableCell>
-                          <div className="flex flex-wrap justify-end gap-2">
+                          <div className="flex flex-wrap items-center justify-end gap-2">
                             <Link
                               to={`/sources/${template.source_id}/templates/${template.template_id}`}
                               className={buttonVariants({ variant: 'outline', size: 'sm' })}
                             >
                               View
                             </Link>
-                            {/* Gated ingest (FM4): enabled only with an active version; the
-                                server also rejects a non-active template with 409. */}
-                            {template.active_version !== null ? (
+                            {/* Ingest affordance by ingestion mode (T8). API/connector sources
+                                sync automatically: a "Connected / syncing" status, no manual
+                                upload. File/CSV sources keep the gated ingest action (enabled
+                                only with an active version; the server also rejects a non-active
+                                template with 409). */}
+                            {template.ingestion_mode === 'api' ? (
+                              <StatusBadge tone="info">Connected / syncing</StatusBadge>
+                            ) : template.active_version !== null ? (
                               <Link
                                 to={`/sources/${template.source_id}/templates/${template.template_id}/upload`}
                                 className={buttonVariants({ variant: 'default', size: 'sm' })}

@@ -80,6 +80,26 @@ export function RecurringBatchUpload() {
   }
 
   const template = detail.data
+
+  // Ingest-mode guard (T8, FM1 defense-in-depth): API/connector sources sync automatically
+  // and have NO manual upload. The IngestData affordance is already hidden for them; this
+  // also blocks direct navigation to the upload route. The CSV POST path below is unchanged
+  // for file sources.
+  if (template.ingestion_mode === 'api') {
+    return (
+      <section className="flex flex-col gap-4">
+        <header>
+          <h1 className="text-display">{template.template_name}</h1>
+          <p className="text-caption text-muted-foreground">{template.source_id}</p>
+        </header>
+        <EmptyState
+          title="Connected / syncing"
+          message="This source syncs automatically through its connector. There is no manual upload; batches arrive over the connector as they sync."
+        />
+      </section>
+    )
+  }
+
   const active = activeTemplateVersion(template)
   const catalog: TemplateMappingField[] = fields.data ?? []
   // The endpoint requires an ACTIVE store WITH a store_code; offer only those (a non-active or

@@ -13,6 +13,17 @@ import { SERVER_MODE } from './mode'
 
 export type TemplateStatus = 'draft' | 'staged' | 'active' | 'deprecated'
 
+// Ingestion mode (T8): how data arrives for the source this template belongs to. 'file'
+// sources (CSV upload) accept a manual batch upload; 'api' sources (POS/ERP connectors like
+// Square) sync automatically, so there is no manual ingest action.
+//
+// PROVISIONAL + ISOLATED (FM4): the real contract does not expose this yet. In the real
+// model the mode derives from the source's connector type (config.source_mappings / the
+// connector registry), and the mapping-templates list response would denormalize it per
+// template (or the UI would join sources). Kept here, on the template fixture, so the UI can
+// gate the ingest affordance now; swap to the contract field when it lands.
+export type IngestionMode = 'file' | 'api'
+
 // Raw D49 SourceMapping (mapping_rules served raw by the backend): the FIELD half is
 // `rename` (source col -> canonical key); the FORMAT-RULES half is normalize/cast/derive
 // (date format, decimal separator, type casts) - the two concerns T2 lays out separately.
@@ -47,6 +58,7 @@ export type MappingTemplate = {
   template_id: string // UUID, lowercase string
   source_id: string
   template_name: string
+  ingestion_mode: IngestionMode // T8, provisional (see IngestionMode)
   latest_version: number
   active_version: number | null
   staged_version: number | null
@@ -78,6 +90,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: SALES_TEMPLATE_ID,
       source_id: 'manual_csv_upload',
       template_name: 'Sales',
+      ingestion_mode: 'file',
       latest_version: 3,
       active_version: 2,
       staged_version: 3,
@@ -180,6 +193,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: INVENTORY_TEMPLATE_ID,
       source_id: 'manual_csv_upload',
       template_name: 'Inventory',
+      ingestion_mode: 'file',
       latest_version: 1,
       active_version: 1,
       staged_version: null,
@@ -222,6 +236,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: PRICING_TEMPLATE_ID,
       source_id: 'manual_csv_upload',
       template_name: 'Pricing',
+      ingestion_mode: 'file',
       latest_version: 1,
       active_version: null,
       staged_version: null,
@@ -255,6 +270,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: ORDERS_TEMPLATE_ID,
       source_id: 'square_pos',
       template_name: 'Orders',
+      ingestion_mode: 'api',
       latest_version: 1,
       active_version: 1,
       staged_version: null,
@@ -311,6 +327,7 @@ function toSummary(detail: MappingTemplateDetail): MappingTemplate {
     template_id: detail.template_id,
     source_id: detail.source_id,
     template_name: detail.template_name,
+    ingestion_mode: detail.ingestion_mode,
     latest_version: detail.latest_version,
     active_version: detail.active_version,
     staged_version: detail.staged_version,

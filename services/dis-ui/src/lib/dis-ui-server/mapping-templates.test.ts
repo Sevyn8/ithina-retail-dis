@@ -23,6 +23,7 @@ describe('mapping-templates fixtures (shaped to the real contract)', () => {
         'template_id',
         'source_id',
         'template_name',
+        'ingestion_mode',
         'latest_version',
         'active_version',
         'staged_version',

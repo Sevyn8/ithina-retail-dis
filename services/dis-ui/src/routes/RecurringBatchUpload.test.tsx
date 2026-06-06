@@ -24,8 +24,9 @@ const tenant: AuthSnapshot = {
   roles: ['dis:upload', 'dis:read'],
 }
 // mapping-templates.ts fixtures.
-const SALES = '0190ac10-5a00-7000-8a00-0000000000a1' // active v2
-const PRICING = '0190ac10-5a00-7000-8a00-0000000000a3' // draft only, no active version
+const SALES = '0190ac10-5a00-7000-8a00-0000000000a1' // active v2 (file source)
+const PRICING = '0190ac10-5a00-7000-8a00-0000000000a3' // draft only, no active version (file)
+const ORDERS = '0190ac10-5a00-7000-8a00-0000000000b1' // square_pos, API source (active)
 const TEMPLATES = '/sources/manual_csv_upload/templates'
 
 const RESULT: CsvUploadResult = {
@@ -148,6 +149,19 @@ describe('Ingest data (real csv-uploads wiring)', () => {
     await screen.findByRole('heading', { name: 'Ingest data' })
     expect(screen.getByText(/No active version yet/)).toBeInTheDocument()
     expect(screen.queryByLabelText('CSV file')).not.toBeInTheDocument()
+  })
+
+  // T8: API/connector sources sync automatically; the upload route is guarded (defense in
+  // depth) so direct navigation cannot reach the dropzone, even though the affordance is
+  // already removed from the Ingest Data list.
+  it('guards direct navigation for an API source (no upload form, shows connected/syncing)', async () => {
+    render(`/sources/square_pos/templates/${ORDERS}/upload`)
+    await screen.findByRole('heading', { name: 'Orders' })
+    expect(screen.getByText('Connected / syncing')).toBeInTheDocument()
+    expect(screen.getByText(/syncs automatically/i)).toBeInTheDocument()
+    // no upload affordance at all
+    expect(screen.queryByLabelText('CSV file')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /upload and ingest/i })).not.toBeInTheDocument()
   })
 
   it('mounts under the dark theme class', async () => {
