@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { ActiveMappingSummary } from '../components/ActiveMappingSummary'
+import { FileDropzone } from '../components/FileDropzone'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
@@ -201,29 +202,19 @@ export function RecurringBatchUpload() {
         ) : null}
       </div>
 
-      {/* Dropzone. The selected file's bytes ARE sent (real upload). */}
-      <div>
-        <Label htmlFor="batch-csv-file">Batch CSV file</Label>
-        <label
-          htmlFor="batch-csv-file"
-          className="mt-1 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border-strong bg-surface-raised/50 px-4 py-8 text-center transition-colors hover:bg-muted"
-        >
-          <UploadCloud aria-hidden="true" className="h-6 w-6 text-muted-foreground" />
-          <span className="text-body-strong">Drag and drop or browse</span>
-          <span className="text-caption text-muted-foreground">CSV up to 10 MB</span>
-          <input
-            id="batch-csv-file"
-            type="file"
-            accept=".csv"
-            aria-label="CSV file"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="sr-only"
-          />
-        </label>
-        {file !== null ? (
-          <p className="mt-1 text-caption text-muted-foreground">Selected: {file.name}</p>
-        ) : null}
-      </div>
+      {/* Shared dropzone. The selected file's bytes ARE sent (real network upload), so the
+          in-flight label is "Uploading ..." (FM3); the success state below shows only on a real
+          2xx. No fake progress bar - fetch does not expose byte progress (FM2). */}
+      <FileDropzone
+        id="batch-csv-file"
+        label="Batch CSV file"
+        file={file}
+        onSelect={setFile}
+        accept=".csv"
+        hint="CSV up to 10 MB"
+        busy={submitting}
+        busyLabel={file !== null ? `Uploading ${file.name}...` : undefined}
+      />
 
       {submitError !== null ? (
         <p role="alert" className="text-sm text-danger">
@@ -236,9 +227,8 @@ export function RecurringBatchUpload() {
           role="status"
           className="rounded-md border border-border bg-muted/40 p-3 text-sm text-foreground"
         >
-          Uploaded {result.row_count} rows against {template.template_name}. They are ingested
-          asynchronously through the template&apos;s active mapping version. Trace {result.trace_id}
-          .
+          Uploaded {file?.name}. {result.row_count} rows received against {template.template_name},
+          ingested asynchronously through the active mapping version. Trace {result.trace_id}.
         </p>
       ) : (
         <div className="flex gap-3">

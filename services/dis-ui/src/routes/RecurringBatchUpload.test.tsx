@@ -130,13 +130,55 @@ describe('Ingest data (real csv-uploads wiring)', () => {
     expect(arg.storeCode).toBe('TX-102')
     expect(arg.file).toBeInstanceOf(File)
 
-    const status = await screen.findByRole('status')
-    expect(status).toHaveTextContent(/Uploaded 42 rows against Sales/)
+    const status = await screen.findByText(/Uploaded batch\.csv/)
+    // filename-led success copy, shown only on a real 2xx.
+    expect(status).toHaveTextContent(/42 rows received against Sales/)
     // async framing kept; no over-claim of a pinned/specific applied version.
     expect(status).toHaveTextContent(/ingested\s+asynchronously/i)
     expect(status).toHaveTextContent(/active mapping version/i)
     expect(status).not.toHaveTextContent(/version-pinned/i)
     expect(status).not.toHaveTextContent(/mapping_version_id/i)
+  })
+
+  // on-drop file card: selecting a file replaces the empty prompt with the file card (name).
+  it('shows the file card with the filename after a file is selected', async () => {
+    const user = userEvent.setup()
+    render(`${TEMPLATES}/${SALES}/upload`)
+    await screen.findByRole('heading', { name: 'Upload CSV' })
+    expect(screen.getByText('Drag and drop or browse')).toBeInTheDocument()
+    await user.upload(
+      screen.getByLabelText('CSV file'),
+      new File(['a,b\n1,2\n'], 'batch.csv', { type: 'text/csv' }),
+    )
+    expect(screen.getByText('batch.csv')).toBeInTheDocument()
+    expect(screen.queryByText('Drag and drop or browse')).not.toBeInTheDocument()
+  })
+
+  // in-flight: a pending upload shows the role=status "Uploading {filename}..." spinner state,
+  // then resolves to the filename-led success copy. NO fake progress (spinner only, FM2).
+  it('shows an "Uploading..." in-flight state while the upload is pending', async () => {
+    let resolveUpload: (v: CsvUploadResult) => void = () => {}
+    mockUpload.mockReturnValueOnce(
+      new Promise<CsvUploadResult>((resolve) => {
+        resolveUpload = resolve
+      }),
+    )
+    const user = userEvent.setup()
+    render(`${TEMPLATES}/${SALES}/upload`)
+    await screen.findByRole('heading', { name: 'Upload CSV' })
+    await user.selectOptions(screen.getByLabelText('Store'), 'TX-102')
+    await user.upload(
+      screen.getByLabelText('CSV file'),
+      new File(['a,b\n1,2\n'], 'batch.csv', { type: 'text/csv' }),
+    )
+    await user.click(screen.getByRole('button', { name: /upload and ingest/i }))
+    // in-flight: accurate "Uploading" label (not "Analyzing"), announced via role=status.
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent('Uploading batch.csv...')
+    expect(status).not.toHaveTextContent(/Analyzing/i)
+    // resolving settles to the success state.
+    resolveUpload(RESULT)
+    expect(await screen.findByText(/Uploaded batch\.csv/)).toBeInTheDocument()
   })
 
   it('surfaces a server 409 store-not-active as a clear error', async () => {

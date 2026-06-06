@@ -1,4 +1,4 @@
-import { Sparkles, UploadCloud } from 'lucide-react'
+import { Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DemoDataBanner } from '../components/DemoDataBanner'
+import { FileDropzone } from '../components/FileDropzone'
 import { ProgressRail } from '@/components/ui/progress-rail'
 import { parseCsvFile } from '../lib/onboarding/analyze-csv'
 import { getMappingSuggestions } from '../lib/dis-ui-server/mapping-suggestions'
@@ -99,34 +100,19 @@ export function SampleUpload() {
       </div>
 
       <div className="flex flex-col gap-4">
-        {/* Styled dropzone. The native input is visually hidden but accessible. The file is
-            parsed in the browser on Analyze (the bytes are not uploaded at this step). */}
-        <div>
-          <Label htmlFor="csv-file">CSV file</Label>
-          <label
-            htmlFor="csv-file"
-            className="mt-1 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border-strong bg-surface-raised/50 px-4 py-8 text-center transition-colors hover:bg-muted"
-          >
-            <UploadCloud aria-hidden="true" className="h-6 w-6 text-muted-foreground" />
-            <span className="text-body-strong">Drag and drop or browse</span>
-            <span className="text-caption text-muted-foreground">CSV up to 10 MB</span>
-            <input
-              id="csv-file"
-              type="file"
-              accept=".csv"
-              aria-label="CSV file"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="sr-only"
-            />
-          </label>
-          {file !== null ? (
-            <p className="mt-1 text-caption text-muted-foreground">Selected: {file.name}</p>
-          ) : (
-            <p className="mt-1 text-caption text-muted-foreground">
-              Select a CSV file to analyze its columns.
-            </p>
-          )}
-        </div>
+        {/* Shared dropzone. The file is parsed in the browser on Analyze (the bytes are not
+            uploaded at this step), so the in-flight label is "Analyzing ...", never "Uploading"
+            (FM3). Success here is the navigation to Review, not an "Uploaded" message. */}
+        <FileDropzone
+          id="csv-file"
+          label="CSV file"
+          file={file}
+          onSelect={setFile}
+          accept=".csv"
+          hint="CSV up to 10 MB"
+          busy={analyzing}
+          busyLabel={file !== null ? `Analyzing ${file.name}...` : undefined}
+        />
 
         <div>
           <Label htmlFor="source-name">Source name</Label>

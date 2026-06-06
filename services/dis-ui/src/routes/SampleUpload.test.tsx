@@ -1,9 +1,10 @@
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
 import { __resetSampleStore } from '../lib/dis-ui-server/onboarding'
+import * as suggestions from '../lib/dis-ui-server/mapping-suggestions'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { AppRoutes } from './AppRoutes'
 
@@ -22,6 +23,10 @@ function sampleFile(): File {
 
 beforeEach(() => {
   __resetSampleStore()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('SampleUpload', () => {
@@ -81,5 +86,32 @@ describe('SampleUpload', () => {
     expect(screen.getAllByText('item_code').length).toBeGreaterThan(0)
     expect(screen.getAllByText('txn_date').length).toBeGreaterThan(0)
     expect(screen.getByText('Suggestions: basic match')).toBeInTheDocument()
+  })
+
+  // on-drop file card: selecting a file replaces the empty prompt with the file card (name).
+  it('shows the file card with the filename after a file is selected', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
+    expect(screen.getByText('Drag and drop or browse')).toBeInTheDocument()
+    await user.upload(screen.getByLabelText('CSV file'), sampleFile())
+    expect(screen.getByText('sample.csv')).toBeInTheDocument()
+    expect(screen.queryByText('Drag and drop or browse')).not.toBeInTheDocument()
+  })
+
+  // in-flight: the client-side parse is labelled "Analyzing ...", NEVER "Uploading" (FM3); this
+  // step parses in the browser, it does not upload. Freeze the step by hanging the suggestions
+  // call so the analyzing state is observable.
+  it('labels the in-flight client-side parse as "Analyzing...", not "Uploading"', async () => {
+    vi.spyOn(suggestions, 'getMappingSuggestions').mockReturnValue(new Promise(() => {}))
+    const user = userEvent.setup()
+    renderWithProviders(<AppRoutes />, { snapshot: tenantSnapshot, initialEntries: ['/upload'] })
+    await screen.findByRole('heading', { name: 'New CSV Template' })
+    await user.upload(screen.getByLabelText('CSV file'), sampleFile())
+    await user.type(screen.getByLabelText(/source name/i), 'POS-CSV-Main')
+    await user.click(screen.getByRole('button', { name: /analyze sample/i }))
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent('Analyzing sample.csv...')
+    expect(status).not.toHaveTextContent(/Uploading/i)
   })
 })
