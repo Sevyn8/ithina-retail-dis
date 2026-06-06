@@ -65,6 +65,9 @@ resource "google_sql_database_instance" "this" {
   depends_on = [var.private_service_connection]
 
   settings {
+    # ENTERPRISE (not the default ENTERPRISE_PLUS) is the edition that allows
+    # shared-core tiers like db-f1-micro; keep the cheapest valid staging instance.
+    edition           = "ENTERPRISE"
     tier              = var.tier
     availability_type = "ZONAL" # single zone, no HA (staging, smallest)
     disk_size         = 10

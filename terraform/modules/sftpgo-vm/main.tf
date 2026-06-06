@@ -194,6 +194,8 @@ resource "google_compute_region_backend_service" "sftpgo" {
 
   backend {
     group = google_compute_instance_group.sftpgo.id
+    # External TCP network LB backends require CONNECTION (not the default UTILIZATION).
+    balancing_mode = "CONNECTION"
   }
 }
 
