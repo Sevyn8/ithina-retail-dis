@@ -21,6 +21,11 @@ OPTIONAL env (NOT in the required-or-crashloop set):
   Default Credentials from the Cloud Run service account), NOT an API key. BOTH
   UNSET is a normal state: the suggester falls back to the mechanical matcher, so
   missing config must NEVER abort startup (they are read with no raise).
+- ``GEMINI_IMPERSONATE_SA``: optional service-account email (gemini-dis) to
+  IMPERSONATE for the Vertex calls only. When set (with project+location), the
+  suggester impersonates this SA via short-lived credentials; the service still
+  runs as its own SA for everything else. Unset -> the ambient ADC (the Cloud Run
+  service account) is used directly. Read with no raise.
 
 Resolution happens inside the app lifespan, NOT at import time: a missing
 required value aborts startup loudly (crashloop is the correct signal for
@@ -48,6 +53,8 @@ _PUBSUB_PROJECT_ID = "PUBSUB_PROJECT_ID"
 # OPTIONAL (Vertex AI): both unset -> mechanical fallback, never crashloop.
 _GEMINI_VERTEX_PROJECT = "GEMINI_VERTEX_PROJECT"
 _GEMINI_VERTEX_LOCATION = "GEMINI_VERTEX_LOCATION"
+# OPTIONAL: SA to impersonate for Vertex calls only (unset -> ambient ADC).
+_GEMINI_IMPERSONATE_SA = "GEMINI_IMPERSONATE_SA"
 
 SERVICE_NAME = "dis-ui-server"
 
@@ -91,6 +98,8 @@ class UiServerConfig:
     # OPTIONAL Vertex AI config (see module docstring); never required. Both unset -> fallback.
     gemini_vertex_project: str | None = None
     gemini_vertex_location: str | None = None
+    # OPTIONAL: SA to impersonate for Vertex calls only; unset -> ambient ADC.
+    gemini_impersonate_sa: str | None = None
 
     @classmethod
     def from_env(cls) -> UiServerConfig:
@@ -116,12 +125,14 @@ class UiServerConfig:
         # fallback; missing Vertex config must never abort startup (FM1/FM2).
         gemini_vertex_project = os.environ.get(_GEMINI_VERTEX_PROJECT) or None
         gemini_vertex_location = os.environ.get(_GEMINI_VERTEX_LOCATION) or None
+        gemini_impersonate_sa = os.environ.get(_GEMINI_IMPERSONATE_SA) or None
         return cls(
             postgres_url=postgres_url,
             gcs_bucket_bronze=gcs_bucket_bronze,
             pubsub_project_id=pubsub_project_id,
             gemini_vertex_project=gemini_vertex_project,
             gemini_vertex_location=gemini_vertex_location,
+            gemini_impersonate_sa=gemini_impersonate_sa,
         )
 
 

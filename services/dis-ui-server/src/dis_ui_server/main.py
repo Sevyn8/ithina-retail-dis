@@ -72,6 +72,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.gemini = GeminiSuggester(
         project=config.gemini_vertex_project,
         location=config.gemini_vertex_location,
+        impersonate_sa=config.gemini_impersonate_sa,
     )
     _log.bind(stage="startup").info("dis-ui-server started")
     try:

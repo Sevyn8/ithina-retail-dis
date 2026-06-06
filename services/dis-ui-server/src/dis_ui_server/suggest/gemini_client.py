@@ -4,6 +4,11 @@ Auth is Vertex AI / GCP-native: the suggester takes (project, location), constru
 ``genai.Client(vertexai=True, project=..., location=...)``, and authenticates via Application
 Default Credentials (the Cloud Run service account). There is no API key string.
 
+Optional SA impersonation: when ``impersonate_sa`` is set, the Vertex calls (and ONLY those)
+impersonate that service account (gemini-dis) via short-lived
+``google.auth.impersonated_credentials`` minted from the ambient ADC; the service still runs as
+its own SA for everything else. Unset -> the ambient ADC is used directly.
+
 ``GeminiSuggester.suggest`` returns ``(source, model, suggestions)``:
 
 - project/location unset, or any model error/timeout/parse failure -> the mechanical
@@ -36,6 +41,8 @@ _log = get_logger(SERVICE_NAME)
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
 _DEFAULT_TIMEOUT_S = 15.0
+# The scope Vertex calls need; also the impersonation target scope.
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 
 class GeminiSuggester:
@@ -46,14 +53,18 @@ class GeminiSuggester:
         project: str | None,
         location: str | None,
         *,
+        impersonate_sa: str | None = None,
         model: str = _DEFAULT_MODEL,
         timeout_s: float = _DEFAULT_TIMEOUT_S,
     ) -> None:
         # Vertex AI (GCP-native) auth: no key string. project + location select the Vertex
         # backend; credentials come from Application Default Credentials (the Cloud Run service
         # account), not from a configured secret. Both unset -> mechanical fallback.
+        # impersonate_sa (optional): impersonate this SA for the Vertex calls only; unset ->
+        # ambient ADC used directly.
         self._project = project
         self._location = location
+        self._impersonate_sa = impersonate_sa
         self._model = model
         self._timeout_s = timeout_s
 
@@ -83,14 +94,32 @@ class GeminiSuggester:
         """Blocking Gemini call returning the raw JSON text. Lazy-imports the SDK.
 
         Vertex AI mode: ``vertexai=True`` selects the Vertex backend with the given project +
-        location, authenticating via Application Default Credentials (the Cloud Run service
-        account). No API key. The generate_content + structured-output (response_mime_type) call
-        is identical to the developer-API path, so the prompt/parse/validation logic is unchanged.
+        location. With ``impersonate_sa`` set, the credentials are short-lived impersonated
+        credentials for that SA (minted from the ambient ADC via google.auth); otherwise the
+        ambient ADC (the Cloud Run service account) is used directly. No API key. The
+        generate_content + structured-output (response_mime_type) call is identical either way,
+        so the prompt/parse/validation logic is unchanged.
         """
         import google.genai as genai
         from google.genai import types
 
-        client = genai.Client(vertexai=True, project=self._project, location=self._location)
+        if self._impersonate_sa:
+            import google.auth
+            from google.auth import impersonated_credentials
+
+            source_credentials, _ = google.auth.default(scopes=[_CLOUD_PLATFORM_SCOPE])
+            # google.auth's impersonated_credentials.Credentials is not type-annotated, so the
+            # strict-typed call is flagged; the args are exactly the documented Vertex pattern.
+            credentials = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
+                source_credentials=source_credentials,
+                target_principal=self._impersonate_sa,
+                target_scopes=[_CLOUD_PLATFORM_SCOPE],
+            )
+            client = genai.Client(
+                vertexai=True, project=self._project, location=self._location, credentials=credentials
+            )
+        else:
+            client = genai.Client(vertexai=True, project=self._project, location=self._location)
         response = client.models.generate_content(
             model=self._model,
             contents=prompt,
