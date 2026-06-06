@@ -218,7 +218,7 @@ async def test_unknown_template_raises_clean_mapping_config_error(
     with dis_admin.begin() as conn:
         failure = conn.execute(
             text(
-                "SELECT failure_code, failure_message FROM audit.events "
+                "SELECT failure_code, failure_message, data_ingress_event_id FROM audit.events "
                 "WHERE trace_id = CAST(:t AS uuid) AND stage = 'MAPPING_LOOKED_UP' "
                 "AND outcome = 'FAILURE'"
             ),
@@ -241,7 +241,10 @@ async def test_unknown_template_raises_clean_mapping_config_error(
             )
         }
 
-    assert failure.failure_code == "MappingConfigError"
+    # Slice 30b: the stable vocabulary replaces the exception class name, and the
+    # catch-all carries the bronze id it knows (the lookup runs AFTER the fetch).
+    assert failure.failure_code == "MAPPING_CONFIG_INVALID"
+    assert failure.data_ingress_event_id is not None
     assert str(ghost_template) in failure.failure_message
     assert written == {
         "store_sku_sale_events": 0,

@@ -56,7 +56,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from dis_canonical import StoreSkuChangeEvent, StoreSkuSaleEvent
-from dis_core.errors import DisError
+from dis_core.errors import HotPositionMissingError
 from dis_core.ids import new_uuid7
 from dis_rls import rls_session
 from streaming_consumer.envelope import IngressReadyEvent
@@ -474,14 +474,20 @@ async def write_chunk(
         # the merge once catalogue/position has onboarded.
         if misses:
             keys = sorted(str(m.natural_key) for m in misses)[:20]
-            raise DisError(
+            # A dedicated class (Slice 30b) so the FAILURE audit maps to the stable
+            # FailureCode.HOT_POSITION_MISSING instead of the INFRA_FAILURE bucket.
+            raise HotPositionMissingError(
                 f"{len(misses)} first-seen SKU(s) on an INCOMPLETE-mapping chunk: no "
                 "store_sku_current_position row exists and the projection cannot create "
                 "one (REVISED D63: completeness-gated creation; event history is "
                 "RETAINED, the hot merge waits for catalogue/position). "
                 f"natural keys (first 20): {keys} "
                 f"[tenant_id={event.tenant_id} trace_id={event.trace_id} "
-                f"mapping_version_id={loaded.mapping_version_id}]"
+                f"mapping_version_id={loaded.mapping_version_id}]",
+                tenant_id=str(event.tenant_id),
+                trace_id=str(event.trace_id),
+                mapping_version_id=loaded.mapping_version_id,
+                miss_count=len(misses),
             )
     return WriteReport(
         event_rows_written=len(event_rows),

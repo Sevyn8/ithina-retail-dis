@@ -28,7 +28,8 @@ dis-core ``new_uuid7`` — an id, not a trace).
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 from uuid import UUID
 
@@ -47,8 +48,8 @@ from csv_ingest_worker.envelope import CsvReceivedEvent
 from csv_ingest_worker.pii_gate import gate_csv_headers
 from csv_ingest_worker.preflight import PreflightResult, run_preflight
 from csv_ingest_worker.publisher import Publisher, build_ingress_ready
-from dis_audit import Outcome, Stage
-from dis_core.errors import EventPathMismatchError, PreflightFailedError
+from dis_audit import FailureCode, Outcome, Stage, failure_code_for
+from dis_core.errors import EventPathMismatchError, PiiBackendNotConfiguredError, PreflightFailedError
 from dis_core.ids import new_uuid7
 from dis_core.logging import get_logger
 from dis_core.timestamps import now_utc
@@ -59,6 +60,28 @@ from dis_storage import parse_object_path, split_object_uri
 _log = get_logger(SERVICE_NAME)
 
 Disposition = Literal["ingested", "duplicate_noop", "duplicate_resumed", "preflight_failed"]
+
+# The DuckDB preflight's closed reason set -> the stable vocabulary (Slice 30b).
+_PREFLIGHT_CODES: dict[str, FailureCode] = {
+    "not_csv": FailureCode.PREFLIGHT_NOT_CSV,
+    "no_columns": FailureCode.PREFLIGHT_NO_COLUMNS,
+    "no_header": FailureCode.PREFLIGHT_NO_HEADER,
+    "no_data_rows": FailureCode.PREFLIGHT_NO_DATA_ROWS,
+}
+
+
+@dataclass
+class _Lap:
+    """The per-stage duration seam (Slice 30b): stages run sequentially, so
+    elapsed-since-the-previous-audit-point IS the stage span at audit grain."""
+
+    _mark: float = field(default_factory=time.monotonic)
+
+    def lap(self) -> int:
+        now = time.monotonic()
+        elapsed_ms = int((now - self._mark) * 1000)
+        self._mark = now
+        return max(elapsed_ms, 0)
 
 
 class ObjectStore(Protocol):
@@ -91,9 +114,10 @@ class IngestPipeline:
         """Run one event through the pipeline. Raises CsvIngestError-family on
         terminal contract/content failures (the subscriber acks those)."""
         log = _log.bind(stage="pipeline", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
+        lap = _Lap()
 
         # 1. Path cross-check (consistency check, not re-resolution — D54).
-        object_key = await self._cross_check_path(event)
+        object_key = await self._cross_check_path(event, lap)
 
         # 2. Read + hash (read-only; before any write).
         data = self.storage.download_bytes(object_key)
@@ -109,13 +133,13 @@ class IngestPipeline:
                 trace_id=str(event.trace_id),
             )
         if prior is not None:
-            return await self._handle_duplicate(event, prior)
+            return await self._handle_duplicate(event, prior, lap)
 
         # 4. Structural preflight (D13/D16). Failure → FAILED bronze row, no publish.
         try:
             preflight = run_preflight(data, tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
         except PreflightFailedError as exc:
-            return await self._handle_preflight_failure(event, payload_sha256, len(data), exc)
+            return await self._handle_preflight_failure(event, payload_sha256, len(data), exc, lap)
 
         await self.audit.emit(
             stage=Stage.RECEIVED,
@@ -123,6 +147,7 @@ class IngestPipeline:
             tenant_id=event.tenant_id,
             trace_id=event.trace_id,
             row_count=preflight.row_count,
+            duration_ms=lap.lap(),
             event_data={
                 "preflight": {
                     "columns": len(preflight.columns),
@@ -135,7 +160,7 @@ class IngestPipeline:
 
         # 5. PII gate — BEFORE the bronze write (hard rule 2). Fail-loud: a detected
         #    column with no backend raises (and v1.0 has no backend, D40).
-        detected = await self._gate_pii(event, preflight)
+        detected = await self._gate_pii(event, preflight, lap)
 
         # 6. Bronze write (metadata only) via dis-rls under the EVENT's tenant.
         bronze_id = new_uuid7()
@@ -164,6 +189,7 @@ class IngestPipeline:
             trace_id=event.trace_id,
             bronze_id=bronze_id,
             row_count=preflight.row_count,
+            duration_ms=lap.lap(),
             event_data={"pii_columns_detected": len(detected)},
         )
 
@@ -180,6 +206,7 @@ class IngestPipeline:
             tenant_id=event.tenant_id,
             trace_id=event.trace_id,
             bronze_id=bronze_id,
+            duration_ms=lap.lap(),
             event_data={"topic": INGRESS_READY_TOPIC},
         )
         log.info("ingested")
@@ -187,7 +214,7 @@ class IngestPipeline:
 
     # -- stage helpers (one concern each) ---------------------------------------
 
-    async def _cross_check_path(self, event: CsvReceivedEvent) -> str:
+    async def _cross_check_path(self, event: CsvReceivedEvent, lap: _Lap) -> str:
         """Split + parse the event's gcs_uri and require it to agree with the event."""
         bucket, object_key = split_object_uri(event.gcs_uri)
         checks: list[tuple[str, str, str]] = [("bucket", bucket, self.bronze_bucket)]
@@ -200,12 +227,12 @@ class IngestPipeline:
                 ("ext", parsed.ext, "csv"),
             ]
         )
-        for field, path_value, event_value in checks:
+        for field_name, path_value, event_value in checks:
             if path_value != event_value:
                 error = EventPathMismatchError(
-                    f"csv.received gcs_uri disagrees with the event on {field!r} "
+                    f"csv.received gcs_uri disagrees with the event on {field_name!r} "
                     "(malformed producer; the event is the trust boundary, D54)",
-                    field=field,
+                    field=field_name,
                     event_value=event_value,
                     path_value=path_value,
                     tenant_id=str(event.tenant_id),
@@ -216,24 +243,37 @@ class IngestPipeline:
                     outcome=Outcome.FAILURE,
                     tenant_id=event.tenant_id,
                     trace_id=event.trace_id,
-                    failure_code="path_mismatch",
+                    duration_ms=lap.lap(),
+                    failure_code=FailureCode.PATH_MISMATCH,
                     failure_message=str(error),
+                    # Identifiers only, never payload (Slice 30b: the mismatch
+                    # detail rides event_data instead of being buried in fmsg).
+                    event_data={
+                        "field": field_name,
+                        "event_value": event_value,
+                        "path_value": path_value,
+                    },
                 )
                 raise error
         return object_key
 
-    async def _handle_duplicate(self, event: CsvReceivedEvent, prior: PriorIngest) -> IngestOutcome:
+    async def _handle_duplicate(
+        self, event: CsvReceivedEvent, prior: PriorIngest, lap: _Lap
+    ) -> IngestOutcome:
         """Redelivery semantics (D59): full no-op, or resume the lost publish."""
         log = _log.bind(stage="idempotency", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
         if prior.processing_status == "FAILED" or prior.is_published:
             # Same content + session + tenant already concluded → no second bronze
-            # row, no second publish; return the PRIOR trace_id.
+            # row, no second publish; return the PRIOR trace_id. The event_data
+            # shape is the D42 JSONB representation — unchanged in Slice 30b; the
+            # DUPLICATE_* outcome + prior_trace_id column promotion is Slice 30c.
             await self.audit.emit(
                 stage=Stage.RECEIVED,
                 outcome=Outcome.SKIPPED,
                 tenant_id=event.tenant_id,
                 trace_id=event.trace_id,
                 bronze_id=prior.bronze_id,
+                duration_ms=lap.lap(),
                 event_data={
                     "duplicate": True,
                     "prior_trace_id": str(prior.trace_id),
@@ -263,6 +303,7 @@ class IngestPipeline:
             tenant_id=event.tenant_id,
             trace_id=prior.trace_id,
             bronze_id=prior.bronze_id,
+            duration_ms=lap.lap(),
             event_data={"resumed": True, "topic": INGRESS_READY_TOPIC},
         )
         log.info("duplicate with unpublished prior; publish resumed and marked")
@@ -276,6 +317,7 @@ class IngestPipeline:
         payload_sha256: str,
         size_bytes: int,
         error: PreflightFailedError,
+        lap: _Lap,
     ) -> IngestOutcome:
         """Preflight failure: bronze FAILED row + audit, NO publish, terminal (D13).
 
@@ -308,17 +350,27 @@ class IngestPipeline:
             tenant_id=event.tenant_id,
             trace_id=event.trace_id,
             bronze_id=bronze_id,
-            failure_code=error.reason,
+            duration_ms=lap.lap(),
+            # The stable vocabulary (Slice 30b); the raw reason rides event_data.
+            failure_code=_PREFLIGHT_CODES.get(error.reason or "", FailureCode.INFRA_FAILURE),
             failure_message=str(error),
-            event_data={"preflight_failed": True, "detail": error.detail},
+            event_data={"preflight_failed": True, "reason": error.reason, "detail": error.detail},
         )
         _log.bind(stage="preflight", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id)).error(
             "structural preflight failed; FAILED bronze row written, no publish"
         )
         return IngestOutcome(disposition="preflight_failed", trace_id=event.trace_id, bronze_id=bronze_id)
 
-    async def _gate_pii(self, event: CsvReceivedEvent, preflight: PreflightResult) -> frozenset[str]:
-        """The fail-loud gate over the sniffed header; FAILURE audit before re-raise."""
+    async def _gate_pii(
+        self, event: CsvReceivedEvent, preflight: PreflightResult, lap: _Lap
+    ) -> frozenset[str]:
+        """The fail-loud gate over the sniffed header; FAILURE audit before re-raise.
+
+        The FAILURE row's ``data_ingress_event_id`` is correctly NULL: the gate
+        runs BEFORE the bronze write (hard rule 2 — PII never lands), so no
+        bronze row exists at this point (Slice 30b register note: the detected
+        COUNT rides ``event_data``; names/values never do).
+        """
         try:
             detected = gate_csv_headers(
                 preflight.columns,
@@ -327,13 +379,18 @@ class IngestPipeline:
                 backend=self.pii_backend,
             )
         except Exception as exc:
+            event_data: dict[str, object] = {"exception_class": type(exc).__name__}
+            if isinstance(exc, PiiBackendNotConfiguredError):
+                event_data["pii_columns_detected"] = len(exc.columns)
             await self.audit.emit(
                 stage=Stage.PII_TOKENIZED,
                 outcome=Outcome.FAILURE,
                 tenant_id=event.tenant_id,
                 trace_id=event.trace_id,
-                failure_code="pii_backend_not_configured",
+                duration_ms=lap.lap(),
+                failure_code=failure_code_for(exc),
                 failure_message=str(exc),
+                event_data=event_data,
             )
             raise  # fail-loud: PII never lands silently (hard rule 2)
         await self.audit.emit(
@@ -341,6 +398,7 @@ class IngestPipeline:
             outcome=Outcome.SUCCESS,
             tenant_id=event.tenant_id,
             trace_id=event.trace_id,
+            duration_ms=lap.lap(),
             event_data={
                 "pii_columns_detected": len(detected),
                 "backend_configured": self.pii_backend is not None,

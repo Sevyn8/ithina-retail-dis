@@ -173,18 +173,25 @@ for beta. The failure-audit shape defined here is the seam the quarantine work c
   Registered as D77; D45 → `RESOLVED-for-beta`. Unblocks Slice 30b (coverage on a sink that
   reliably accepts writes).
 
-- `TODO` Slice 30b: Audit coverage and failure-audit shape. Make every pipeline stage emit, and
-  make failure rows carry the columns they already have. The load-bearing piece: the consumer
-  catch-all (`orchestrate.py`) must populate `bronze_id`, `mapping_version_id`, and
-  `data_ingress_event_id` on failures (it carries only trace/tenant/failure_code/message today),
-  with a stable enumerated `failure_code` vocabulary, this is the failure-audit shape the
-  quarantine work consumes to correlate rows back to their audit story. Also: audit the dis-ui
-  4xx family (multipart, tier-0, template, store rejections, silent today), emit `RETRIED` on
-  redelivery (so retries are legible, not indistinguishable duplicate rows), and fix the small
-  population gaps (worker PII-block `bronze_id`, worker path-mismatch `event_data`). *Trigger:
-  after Slice 30a. Deferred-in-this-slice judgment calls (fold in or hold): extend the outcome
-  CHECK for DUPLICATE_*, promote `prior_trace_id` to a column, populate `duration_ms`, harden the
-  drift guard to type/nullability.*
+- `DONE` Slice 30b: Audit coverage and the failure-audit shape — Tier 1, the code-only spine
+  (operator split: Tier 2 / the DDL enrichment is Slice 30c). The load-bearing piece: **the
+  failure-audit shape, registered as D78** — the contract the quarantine work consumes (trace +
+  tenant always; `data_ingress_event_id` post-bronze; `mapping_version_id` post-lookup; a stable
+  `failure_code`; ids never buried in `failure_message`). The consumer catch-all threads its
+  known ids via `_FlowContext` (the storm's NULL-id failure shape is no longer producible —
+  mutation-test-enforced). **The `FailureCode` vocabulary, registered as D79** — a closed
+  27-member StrEnum in dis-audit replacing exception-class-name codes, zero DDL (`failure_code`
+  is a CHECK-less varchar; `INFRA_FAILURE` + `event_data.exception_class` is the no-loss
+  fallback; the D63 miss got a dedicated `HotPositionMissingError`). Also landed: the dis-ui 4xx
+  family audited (emit-then-re-raise; HTTP status + §2.3 envelope unchanged, proven incl. under
+  a THROWING audit backend); `RETRIED` on consumer redelivery (best-effort audit readback,
+  degrades to SUCCESS and never wedges — pipeline-level-proven; `delivery_attempt` is the
+  post-DLQ upgrade); the worker gaps (path-mismatch `event_data`; PII-block coded + counted —
+  `bronze_id` correctly stays NULL: the gate runs BEFORE the bronze write per hard rule 2, the
+  scoped line above was wrong); `duration_ms` per stage via lap timers on INGRESS_EVENT rows.
+  ZERO schema change (gate-proven: nothing under schemas/ or alembic/; writer/model untouched).
+  *Slice 30c carries Tier 2: the D42 revision (DUPLICATE_* outcome CHECK + `prior_trace_id`
+  column, duplicates emit JSONB until then), the drift-guard type/nullability hardening.*
 
 Deferred / owned elsewhere (named so they are not lost):
 - The `QUARANTINED` audit emitter (the Stage enum has the value, nothing emits it) is owned by

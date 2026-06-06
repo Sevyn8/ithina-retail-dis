@@ -212,8 +212,22 @@ async def test_first_seen_sku_quarantines_loud_event_history_retained(
             ),
             {"tenant": str(PRIMARY_TENANT.uuid), "sku": sku},
         ).scalar_one()
+        # Slice 30b failure-audit shape: the D63 miss lands as a stable,
+        # correlated FAILURE — code HOT_POSITION_MISSING (not an exception class
+        # name), with BOTH correlation ids the catch-all knows at the write stage.
+        d63_failure = conn.execute(
+            text(
+                "SELECT failure_code, data_ingress_event_id, mapping_version_id "
+                "FROM audit.events WHERE trace_id = CAST(:t AS uuid) "
+                "AND stage = 'CANONICAL_WRITTEN' AND outcome = 'FAILURE'"
+            ),
+            {"t": str(chunk.trace_id)},
+        ).one()
     assert event_count == 1  # history RETAINED: the appended event row committed
     assert hot_count == 0  # no hot row invented; no INSERT exists on this path
+    assert d63_failure.failure_code == "HOT_POSITION_MISSING"
+    assert d63_failure.data_ingress_event_id is not None
+    assert d63_failure.mapping_version_id is not None
 
 
 async def test_genuine_hot_failure_rolls_back_both_direction_two(

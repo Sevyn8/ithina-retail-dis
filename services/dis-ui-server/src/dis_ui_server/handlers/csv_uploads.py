@@ -25,6 +25,7 @@ bound to the request context so every error envelope and audit row carries it
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -32,12 +33,17 @@ import anyio.to_thread
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import Row
 
-from dis_audit import Outcome, Stage
+from dis_audit import FailureCode, Outcome, Stage
 from dis_core.errors import (
+    DisError,
     EventPublishError,
+    MappingStateConflictError,
+    PayloadTooLargeError,
+    ResourceNotFoundError,
     StorageError,
     StoreStateConflictError,
     UploadRequestError,
+    UploadStructureError,
 )
 from dis_core.logging import get_logger
 from dis_core.timestamps import now_utc
@@ -116,6 +122,38 @@ def _parse_template_id(parsed: ParsedUpload) -> UUID:
         ) from exc
 
 
+# Tier-0's closed reason set -> the stable vocabulary (Slice 30b).
+_TIER0_CODES: dict[str, FailureCode] = {
+    "empty_file": FailureCode.UPLOAD_EMPTY_FILE,
+    "not_utf8": FailureCode.UPLOAD_NOT_UTF8,
+    "not_csv": FailureCode.UPLOAD_NOT_CSV,
+    "below_min_rows": FailureCode.UPLOAD_BELOW_MIN_ROWS,
+}
+
+
+def _rejection_code(step: str, exc: DisError) -> FailureCode:
+    """The stable ``FailureCode`` for a 4xx rejection (Slice 30b).
+
+    ``step`` disambiguates the two ``ResourceNotFoundError`` sources (template
+    vs store); class identity decides the rest. An unexpected ``DisError`` in
+    the gate sequence falls through to ``INFRA_FAILURE`` (the emitting site
+    preserves the class name in ``event_data``).
+    """
+    if isinstance(exc, PayloadTooLargeError):
+        return FailureCode.UPLOAD_TOO_LARGE
+    if isinstance(exc, UploadRequestError):
+        return FailureCode.UPLOAD_REQUEST_MALFORMED
+    if isinstance(exc, UploadStructureError):
+        return _TIER0_CODES.get(exc.reason or "", FailureCode.UPLOAD_REQUEST_MALFORMED)
+    if isinstance(exc, MappingStateConflictError):
+        return FailureCode.TEMPLATE_NOT_ACTIVE
+    if isinstance(exc, StoreStateConflictError):
+        return FailureCode.STORE_NOT_ACTIVE
+    if isinstance(exc, ResourceNotFoundError):
+        return FailureCode.TEMPLATE_NOT_FOUND if step == "template" else FailureCode.STORE_NOT_FOUND
+    return FailureCode.INFRA_FAILURE
+
+
 @router.post("/csv-uploads", status_code=201)
 async def upload_csv(
     request: Request,
@@ -141,30 +179,60 @@ async def _process_upload(
     audit: UiAudit = request.app.state.audit
     bucket: str = request.app.state.config.gcs_bucket_bronze
     log = _log.bind(stage="csv_upload", tenant_id=str(tenant_id), trace_id=str(trace_id))
+    t0 = time.monotonic()
 
-    # 1. Stream + limits (413 mid-stream) and multipart shape (400). The body is
-    #    fully read here or not at all; nothing below re-reads the request.
-    parsed = await read_csv_upload(
-        request,
-        max_file_bytes=CSV_UPLOAD_MAX_FILE_BYTES,
-        body_ceiling_bytes=CSV_UPLOAD_BODY_CEILING_BYTES,
-    )
-    template_id = _parse_template_id(parsed)
-    store_code = parsed.fields["store_code"].strip()
+    # Steps 1-4 are the 4xx gate sequence. A rejection emits one FAILURE audit
+    # with its stable FailureCode and then re-raises UNCHANGED (Slice 30b:
+    # emit-then-re-raise — status codes and the §2.3 envelope are untouched;
+    # the emit is fire-and-forget, so an audit failure can never turn a clean
+    # 4xx into a 5xx). `step` disambiguates the two ResourceNotFoundError sites.
+    step = "upload"
+    try:
+        # 1. Stream + limits (413 mid-stream) and multipart shape (400). The body is
+        #    fully read here or not at all; nothing below re-reads the request.
+        parsed = await read_csv_upload(
+            request,
+            max_file_bytes=CSV_UPLOAD_MAX_FILE_BYTES,
+            body_ceiling_bytes=CSV_UPLOAD_BODY_CEILING_BYTES,
+        )
+        template_id = _parse_template_id(parsed)
+        store_code = parsed.fields["store_code"].strip()
 
-    # 2. Tier-0 structural gate (D51/D52): a failure is a clean 422 — no GCS
-    #    write, no publish, nothing persisted.
-    tier0 = run_tier0(parsed.file_bytes, tenant_id=str(tenant_id), trace_id=str(trace_id))
+        # 2. Tier-0 structural gate (D51/D52): a failure is a clean 422 — no GCS
+        #    write, no publish, nothing persisted.
+        step = "tier0"
+        tier0 = run_tier0(parsed.file_bytes, tenant_id=str(tenant_id), trace_id=str(trace_id))
 
-    # 3. Template: 404 unknown/cross-tenant (RLS), 409 not ACTIVE. The ACTIVE row
-    #    carries the lineage's source_id — the request never names a source.
-    template = await resolve_active_template(engine, tenant_id, template_id)
-    source_id: str = template.source_id
+        # 3. Template: 404 unknown/cross-tenant (RLS), 409 not ACTIVE. The ACTIVE row
+        #    carries the lineage's source_id — the request never names a source.
+        step = "template"
+        template = await resolve_active_template(engine, tenant_id, template_id)
+        source_id: str = template.source_id
 
-    # 4. Store: resolve FIRST (404, no existence oracle), THEN the lifecycle
-    #    gate (409, ACTIVE-only v1).
-    store = await resolve_store_by_code(engine, tenant_id, store_code)
-    _gate_store_uploadable(store, tenant_id=tenant_id, store_code=store_code)
+        # 4. Store: resolve FIRST (404, no existence oracle), THEN the lifecycle
+        #    gate (409, ACTIVE-only v1).
+        step = "store"
+        store = await resolve_store_by_code(engine, tenant_id, store_code)
+        _gate_store_uploadable(store, tenant_id=tenant_id, store_code=store_code)
+    except DisError as exc:
+        code = _rejection_code(step, exc)
+        extra: dict[str, Any] = {"step": step, "exception_class": type(exc).__name__}
+        reason = getattr(exc, "reason", None)
+        if reason:
+            extra["reason"] = reason
+        await _emit_failure(
+            audit,
+            identity,
+            request,
+            tenant_id,
+            trace_id,
+            code,
+            exc,
+            duration_ms=_elapsed_ms(t0),
+            extra=extra,
+        )
+        raise
+
     display_code = await get_tenant_display_code(engine, tenant_id)
 
     # 5. Lineage + path (D53: UUID tenant segment; one timestamp keeps the path
@@ -192,7 +260,17 @@ async def _process_upload(
         failure = StorageError(
             f"GCS write failed for the uploaded CSV (bucket {bucket!r}): {type(exc).__name__}"
         )
-        await _emit_failure(audit, identity, request, tenant_id, trace_id, "gcs_write_failed", failure)
+        await _emit_failure(
+            audit,
+            identity,
+            request,
+            tenant_id,
+            trace_id,
+            FailureCode.GCS_WRITE_FAILED,
+            failure,
+            duration_ms=_elapsed_ms(t0),
+            extra={"template_id": str(template_id), "store_code": store_code},
+        )
         raise failure from exc
 
     envelope = build_csv_received(
@@ -220,7 +298,17 @@ async def _process_upload(
             tenant_id=str(tenant_id),
             trace_id=str(trace_id),
         )
-        await _emit_failure(audit, identity, request, tenant_id, trace_id, "publish_failed", publish_failure)
+        await _emit_failure(
+            audit,
+            identity,
+            request,
+            tenant_id,
+            trace_id,
+            FailureCode.PUBLISH_FAILED,
+            publish_failure,
+            duration_ms=_elapsed_ms(t0),
+            extra={"template_id": str(template_id), "store_code": store_code, "upload_id": upload_id},
+        )
         raise publish_failure from exc
 
     await audit.emit(
@@ -229,6 +317,7 @@ async def _process_upload(
         tenant_id=tenant_id,
         trace_id=trace_id,
         row_count=tier0.row_count,
+        duration_ms=_elapsed_ms(t0),
         event_data={
             "phase": "csv_upload_phase1",
             "upload_id": upload_id,
@@ -256,6 +345,11 @@ async def _process_upload(
     )
 
 
+def _elapsed_ms(t0: float) -> int:
+    """Whole-request elapsed for this endpoint's single audit row (Slice 30b)."""
+    return max(int((time.monotonic() - t0) * 1000), 0)
+
+
 async def _emit_failure(
     audit: UiAudit,
     identity: Identity,
@@ -264,16 +358,25 @@ async def _emit_failure(
     trace_id: UUID,
     failure_code: str,
     failure: Exception,
+    *,
+    duration_ms: int | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
-    """One FAILURE audit for the post-resolution 5xx paths (tenant+trace known)."""
+    """One FAILURE audit row — the 4xx gate family and the post-resolution 5xx paths.
+
+    Tenant + trace are always known here (both exist before step 1). ``extra``
+    rides event_data alongside the phase marker (step / reason / resolved ids).
+    Fire-and-forget via UiAudit: an audit failure never alters the HTTP outcome.
+    """
     await audit.emit(
         stage=Stage.RECEIVED,
         outcome=Outcome.FAILURE,
         tenant_id=tenant_id,
         trace_id=trace_id,
+        duration_ms=duration_ms,
         failure_code=failure_code,
         failure_message=str(failure),
-        event_data={"phase": "csv_upload_phase1"},
+        event_data={"phase": "csv_upload_phase1", **(extra or {})},
         auth_principal=_auth_principal(identity),
         client_ip=_client_ip(request),
     )

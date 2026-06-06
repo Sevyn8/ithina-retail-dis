@@ -143,3 +143,126 @@ async def test_duplicate_path_emits_d42_event_data(
     # D44: the redelivery re-emitted CANONICAL_WRITTEN under the same trace —
     # duplicate audit rows exist and are tolerated, not prevented.
     assert same_trace_stage_rows >= 2
+
+
+async def test_redelivery_intake_is_retried_and_durations_populated(
+    pipeline: ConsumerPipeline,
+    dis_admin: Engine,
+    storage: StorageClient,
+    cleanup: Cleanup,
+    stack_env: dict[str, str],
+    consumer_mappings: dict[str, int],
+) -> None:
+    """Slice 30b: a redelivered chunk's intake is legible as RETRIED (best-effort
+    audit readback), and every consumer-emitted row carries a non-negative
+    duration_ms (the lap-timer seam)."""
+    sku = f"AU-{new_uuid7().hex[:10]}"
+    seed_hot_row(dis_admin, cleanup, sku_id=sku, mapping_version_id=consumer_mappings[SALE_SOURCE_ID])
+    chunk = seed_chunk(
+        dis_admin,
+        storage,
+        cleanup,
+        csv_data=sale_csv([(ts(0), sku, "1", "9.99", "9.50", f"T-{new_uuid7().hex[:8]}", "1")]),
+        source_id=SALE_SOURCE_ID,
+        bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
+    )
+
+    assert (await pipeline.process(chunk.event)).disposition == "written"
+    # Redelivery of the SAME envelope: the second intake must read as RETRIED.
+    assert (await pipeline.process(chunk.event)).disposition == "written"
+
+    with dis_admin.begin() as conn:
+        received = (
+            conn.execute(
+                text(
+                    "SELECT outcome FROM audit.events "
+                    "WHERE trace_id = CAST(:t AS uuid) AND stage = 'RECEIVED' "
+                    "AND service_name = 'streaming-consumer' ORDER BY _loaded_at, id"
+                ),
+                {"t": str(chunk.trace_id)},
+            )
+            .scalars()
+            .all()
+        )
+        # duration_ms is the STAGE span (the lap-timer seam), so it lives on
+        # INGRESS_EVENT-scoped rows; ROW-scoped records (per-row failures,
+        # duplicate hits) are not stages and carry none (untouched until 30c).
+        durations = (
+            conn.execute(
+                text(
+                    "SELECT duration_ms FROM audit.events "
+                    "WHERE trace_id = CAST(:t AS uuid) AND service_name = 'streaming-consumer' "
+                    "AND event_scope = 'INGRESS_EVENT'"
+                ),
+                {"t": str(chunk.trace_id)},
+            )
+            .scalars()
+            .all()
+        )
+    assert received == ["SUCCESS", "RETRIED"], (
+        "the first delivery's intake is SUCCESS; the redelivery's must be RETRIED"
+    )
+    assert durations, "no consumer audit rows found"
+    assert all(d is not None and d >= 0 for d in durations), "duration_ms must be populated, non-negative"
+
+
+async def test_broken_readback_degrades_to_success_and_never_blocks_processing(
+    pipeline: ConsumerPipeline,
+    dis_admin: Engine,
+    storage: StorageClient,
+    cleanup: Cleanup,
+    stack_env: dict[str, str],
+    consumer_mappings: dict[str, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice 30b RETRIED degradation + non-interference, at the PIPELINE level.
+
+    ``rls_session`` is imported into orchestrate.py for exactly one call site —
+    the ``_seen_before`` readback — so breaking THAT import breaks only the
+    readback, leaving the data path (fetch/lookup/write use their own modules)
+    intact. With the readback exploding on every call:
+
+    - a first delivery still processes to 'written' and its intake emits
+      SUCCESS (no wedge, no nack-shaped disposition);
+    - a genuine REDELIVERY also processes and its intake degrades to SUCCESS —
+      a missed RETRIED label, never an error, never RETRIED-by-accident.
+    """
+
+    def exploding_rls_session(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("injected readback outage (audit-side only)")
+
+    monkeypatch.setattr("streaming_consumer.orchestrate.rls_session", exploding_rls_session)
+
+    sku = f"AU-{new_uuid7().hex[:10]}"
+    seed_hot_row(dis_admin, cleanup, sku_id=sku, mapping_version_id=consumer_mappings[SALE_SOURCE_ID])
+    chunk = seed_chunk(
+        dis_admin,
+        storage,
+        cleanup,
+        csv_data=sale_csv([(ts(0), sku, "1", "9.99", "9.50", f"T-{new_uuid7().hex[:8]}", "1")]),
+        source_id=SALE_SOURCE_ID,
+        bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
+    )
+
+    # First delivery: processes normally despite the readback outage.
+    assert (await pipeline.process(chunk.event)).disposition == "written"
+    # Genuine redelivery with the readback still broken: degrades, still written.
+    assert (await pipeline.process(chunk.event)).disposition == "written"
+
+    with dis_admin.begin() as conn:
+        received = (
+            conn.execute(
+                text(
+                    "SELECT outcome FROM audit.events "
+                    "WHERE trace_id = CAST(:t AS uuid) AND stage = 'RECEIVED' "
+                    "AND service_name = 'streaming-consumer' ORDER BY _loaded_at, id"
+                ),
+                {"t": str(chunk.trace_id)},
+            )
+            .scalars()
+            .all()
+        )
+    assert received == ["SUCCESS", "SUCCESS"], (
+        "a broken readback must degrade BOTH intakes to SUCCESS (a missed "
+        "RETRIED label), never RETRIED-by-accident and never a failure"
+    )

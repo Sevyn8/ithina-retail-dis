@@ -10,8 +10,12 @@ CLOSED enum — this service adds no members. The mapping for the upload endpoin
   registered D42/D45 follow-up, API_CONTRACT §9).
 - a GCS-write or publish failure after identity is resolved →
   ``Stage.RECEIVED`` + ``Outcome.FAILURE`` (tenant + trace are known there).
-- 4xx rejections (size, tier-0, unknown template/store) are NOT audited: the
-  request never became an ingress event; the exception handlers log them.
+- 4xx rejections (multipart shape/size, tier-0, unknown/inactive template or
+  store) ALSO emit ``Stage.RECEIVED`` + ``Outcome.FAILURE`` (Slice 30b): tenant
+  and trace exist before the first gate, so the audit story starts at the
+  rejection, with the stable ``FailureCode`` and the step/reason in
+  ``event_data``. Emit-then-re-raise: the §2.3 envelope and status codes are
+  untouched, and the fire-and-forget emit can never turn a 4xx into a 5xx.
 
 This endpoint is a receiver stage, so events carry the caller context columns
 (``auth_principal`` as ``user:{sub}`` per the live bronze column comment's
@@ -46,13 +50,19 @@ class UiAudit:
         tenant_id: UUID,
         trace_id: UUID,
         row_count: int | None = None,
+        duration_ms: int | None = None,
         event_data: dict[str, Any] | None = None,
         failure_code: str | None = None,
         failure_message: str | None = None,
         auth_principal: str | None = None,
         client_ip: str | None = None,
     ) -> None:
-        """Emit one stage event. Never raises; never blocks the data path."""
+        """Emit one stage event. Never raises; never blocks the data path.
+
+        ``failure_code`` takes a :class:`~dis_audit.FailureCode` member (a
+        ``StrEnum``); ``duration_ms`` is the handler's whole-request elapsed
+        (this endpoint emits one row per request).
+        """
         log = _log.bind(stage=str(stage.value), tenant_id=str(tenant_id), trace_id=str(trace_id))
         try:
             event = AuditEvent(
@@ -64,6 +74,7 @@ class UiAudit:
                 event_scope=EventScope.INGRESS_EVENT,
                 outcome=outcome,
                 row_count=row_count,
+                duration_ms=duration_ms,
                 event_data=event_data,
                 failure_code=failure_code,
                 failure_message=failure_message,

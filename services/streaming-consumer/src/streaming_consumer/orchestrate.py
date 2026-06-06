@@ -30,15 +30,19 @@ The consumer reads ``trace_id`` and identity off the event and mints neither
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
+from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from dis_audit import EventScope, Outcome, Stage
+from dis_audit import EventScope, FailureCode, Outcome, Stage, failure_code_for
 from dis_canonical import StoreSkuSaleEvent
 from dis_core.logging import get_logger
+from dis_rls import rls_session
 from streaming_consumer.config import BATCH_SIZE_ROW_PAIRS, SERVICE_NAME
 from streaming_consumer.envelope import IngressReadyEvent
 from streaming_consumer.pipeline.fetch import FetchedChunk, ObjectStore, fetch_chunk, read_store_tax_treatment
@@ -71,6 +75,38 @@ class ConsumeOutcome:
     report: WriteReport | None = None
 
 
+# The gate-summary failure codes per validating stage (Slice 30b stable vocabulary).
+_GATE_FAILURE_CODES: dict[Stage, FailureCode] = {
+    Stage.PRE_MAPPING_VALIDATED: FailureCode.PRE_VALIDATION_FAILED,
+    Stage.MAPPING_EXECUTED: FailureCode.MAPPING_EXECUTION_FAILED,
+    Stage.POST_MAPPING_VALIDATED: FailureCode.POST_VALIDATION_FAILED,
+}
+
+
+@dataclass
+class _FlowContext:
+    """What the catch-all needs to know about a partially-processed event.
+
+    ``_process`` records the correlation ids as they become known (post-fetch →
+    ``bronze_id``; post-lookup → ``mapping_version_id``) so a FAILURE audit never
+    buries an id it knows in ``failure_message`` (the Slice 30b failure-audit
+    shape — the seam the quarantine work consumes). ``lap()`` is the per-stage
+    duration seam: stages run strictly sequentially, so elapsed-since-the-
+    previous-audit-point IS the stage span (at audit grain — small non-emitting
+    work like the tax read rides the following stage's lap; not micro-profiled).
+    """
+
+    bronze_id: UUID | None = None
+    mapping_version_id: int | None = None
+    _mark: float = field(default_factory=time.monotonic)
+
+    def lap(self) -> int:
+        now = time.monotonic()
+        elapsed_ms = int((now - self._mark) * 1000)
+        self._mark = now
+        return max(elapsed_ms, 0)
+
+
 @dataclass
 class ConsumerPipeline:
     """One consumer process's wired dependencies (caller-owned, 9b pattern)."""
@@ -86,10 +122,14 @@ class ConsumerPipeline:
 
         Raises on infrastructure/contract errors AFTER emitting a FAILURE audit
         where identity is known; the subscriber nacks any raise (audit-and-nack).
+        The FAILURE audit carries every correlation id known at the point of
+        failure (``_FlowContext``) and a stable ``FailureCode`` — never a bare
+        exception class name (Slice 30b failure-audit shape).
         """
         stage = Stage.RECEIVED
+        ctx = _FlowContext()
         try:
-            return await self._process(event)
+            return await self._process(event, ctx)
         except Exception as exc:
             stage = getattr(exc, "_dis_stage", stage)
             await self.audit.emit(
@@ -97,32 +137,46 @@ class ConsumerPipeline:
                 outcome=Outcome.FAILURE,
                 tenant_id=event.tenant_id,
                 trace_id=event.trace_id,
-                failure_code=type(exc).__name__,
+                bronze_id=ctx.bronze_id,
+                mapping_version_id=ctx.mapping_version_id,
+                duration_ms=ctx.lap(),
+                failure_code=failure_code_for(exc),
                 failure_message=str(exc)[:2000],
+                # The class name is always preserved (the no-information-loss rule
+                # behind the INFRA_FAILURE fallback; harmless for mapped codes).
+                event_data={"exception_class": type(exc).__name__},
             )
             raise
 
-    async def _process(self, event: IngressReadyEvent) -> ConsumeOutcome:
+    async def _process(self, event: IngressReadyEvent, ctx: _FlowContext) -> ConsumeOutcome:
         log = _log.bind(stage="pipeline", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
         tenant_id, trace_id = event.tenant_id, event.trace_id
+
+        # 0. Redelivery detection (Slice 30b): best-effort audit readback so a
+        #    redelivered chunk's intake is legible as RETRIED rather than an
+        #    indistinguishable duplicate SUCCESS row.
+        seen_before = await self._seen_before(tenant_id, trace_id)
 
         # 1. Fetch (intake + bronze + GCS; the chunk arrives tokenized, D24).
         fetched = await self._staged(
             Stage.RECEIVED,
             fetch_chunk(self.engine, self.storage, event, bronze_bucket=self.bronze_bucket),
         )
+        ctx.bronze_id = fetched.bronze.bronze_id
         await self.audit.emit(
             stage=Stage.RECEIVED,
-            outcome=Outcome.SUCCESS,
+            outcome=Outcome.RETRIED if seen_before else Outcome.SUCCESS,
             tenant_id=tenant_id,
             trace_id=trace_id,
             bronze_id=fetched.bronze.bronze_id,
             row_count=fetched.frame.height,
+            duration_ms=ctx.lap(),
             event_data={"columns": len(fetched.frame.columns), "dis_channel": fetched.bronze.dis_channel},
         )
 
         # 2. Mapping load (per-lookup side-input, D6) + routing.
         loaded = await self._staged(Stage.MAPPING_LOOKED_UP, load_active_mapping(self.engine, event))
+        ctx.mapping_version_id = loaded.mapping_version_id
         await self.audit.emit(
             stage=Stage.MAPPING_LOOKED_UP,
             outcome=Outcome.SUCCESS,
@@ -130,6 +184,7 @@ class ConsumerPipeline:
             trace_id=trace_id,
             bronze_id=fetched.bronze.bronze_id,
             mapping_version_id=loaded.mapping_version_id,
+            duration_ms=ctx.lap(),
             event_data={
                 "target_model": loaded.target_model.__name__,
                 "source_id": event.source_id,
@@ -154,6 +209,7 @@ class ConsumerPipeline:
                 event,
                 fetched,
                 loaded,
+                ctx,
                 failures=[(f.column, f.row_index, f.check, f.reason) for f in pre.failures],
             )
             return ConsumeOutcome(disposition="failed_pre_validation")
@@ -165,6 +221,7 @@ class ConsumerPipeline:
             bronze_id=fetched.bronze.bronze_id,
             mapping_version_id=loaded.mapping_version_id,
             row_count=fetched.frame.height,
+            duration_ms=ctx.lap(),
         )
 
         # 5. The four sub-stages (pure engine). ANY failed cell fails the chunk —
@@ -176,6 +233,7 @@ class ConsumerPipeline:
                 event,
                 fetched,
                 loaded,
+                ctx,
                 failures=[(f.column, f.row_index, f"{f.stage}:{f.op}", f.reason) for f in result.failures],
             )
             return ConsumeOutcome(disposition="failed_mapping")
@@ -189,6 +247,7 @@ class ConsumerPipeline:
             row_count=fetched.frame.height,
             rows_succeeded=result.contribution.height,
             rows_failed=0,
+            duration_ms=ctx.lap(),
         )
 
         # 6. Post-mapping (canonical-shape) gate + the drift guard (ERRORS, never skips).
@@ -201,6 +260,7 @@ class ConsumerPipeline:
                 event,
                 fetched,
                 loaded,
+                ctx,
                 failures=[(f.column, f.row_index, f.check, f.reason) for f in post.failures],
             )
             return ConsumeOutcome(disposition="failed_post_validation")
@@ -212,6 +272,7 @@ class ConsumerPipeline:
             bronze_id=fetched.bronze.bronze_id,
             mapping_version_id=loaded.mapping_version_id,
             row_count=result.contribution.height,
+            duration_ms=ctx.lap(),
         )
 
         # 7. mapping_version_id stamp (D22) + the atomic dual-write (D30).
@@ -237,6 +298,7 @@ class ConsumerPipeline:
             mapping_version_id=loaded.mapping_version_id,
             row_count=report.event_rows_written,
             rows_succeeded=report.event_rows_written,
+            duration_ms=ctx.lap(),
             event_data={
                 "written_to_table": report.written_to_table,
                 "hot_rows_upserted": report.hot_rows_upserted,
@@ -272,10 +334,17 @@ class ConsumerPipeline:
         event: IngressReadyEvent,
         fetched: FetchedChunk,
         loaded: LoadedMapping,
+        ctx: _FlowContext,
         *,
         failures: list[tuple[str | None, int | None, str, str]],
     ) -> None:
-        """One INGRESS_EVENT FAILURE summary + ROW-scoped events (Option B)."""
+        """One INGRESS_EVENT FAILURE summary + ROW-scoped events (Option B).
+
+        Slice 30b stable vocabulary: the summary carries the per-gate
+        ``FailureCode``; ROW events carry ``VALIDATION_ROW_FAILED`` with the
+        pandera check name in ``event_data["check"]`` (an unbounded vocabulary
+        cannot be enum members; column/reason stay in ``failure_message``).
+        """
         await self.audit.emit(
             stage=stage,
             outcome=Outcome.FAILURE,
@@ -285,7 +354,8 @@ class ConsumerPipeline:
             mapping_version_id=loaded.mapping_version_id,
             row_count=fetched.frame.height,
             rows_failed=len(failures),
-            failure_code=str(stage.value),
+            duration_ms=ctx.lap(),
+            failure_code=_GATE_FAILURE_CODES[stage],
             failure_message=f"{len(failures)} failure(s); chunk nacked (Slice 10 minimal disposition)",
         )
         for column, row_index, check, reason in failures:
@@ -298,12 +368,46 @@ class ConsumerPipeline:
                 bronze_id=fetched.bronze.bronze_id,
                 mapping_version_id=loaded.mapping_version_id,
                 row_offset=row_index,
-                failure_code=check[:64],
+                failure_code=FailureCode.VALIDATION_ROW_FAILED,
+                event_data={"check": check[:256]},
                 # Reasons are column/check-grained and never carry cell values
                 # (dis-validation/dis-mapping contract: values are quarantine
                 # payload, never logged or audited here).
                 failure_message=f"column={column}: {reason}"[:2000],
             )
+
+    async def _seen_before(self, tenant_id: UUID, trace_id: UUID) -> bool:
+        """Best-effort redelivery detection for the RETRIED outcome (Slice 30b).
+
+        One indexed read (``ix_audit_events_trace_id``) for a prior RECEIVED row
+        emitted by THIS service for the same trace. Fire-and-forget like every
+        audit concern: a read failure degrades to ``False`` (the intake emits
+        SUCCESS) — it never wedges or fails the data path. Best-effort by design:
+        audit is itself fire-and-forget, so a missing prior row simply re-reads
+        as a first delivery (D44 tolerates the duplicate-shaped result).
+
+        Upgrade path (the quarantine work): once a dead-letter policy exists on
+        the subscription, Pub/Sub populates ``delivery_attempt`` on the pull
+        response — a transport-level signal that replaces this readback.
+        """
+        try:
+            async with rls_session(self.engine, tenant_id) as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT 1 FROM audit.events "
+                            "WHERE trace_id = :trace_id AND service_name = :service "
+                            "AND stage = 'RECEIVED' LIMIT 1"
+                        ),
+                        {"trace_id": trace_id, "service": SERVICE_NAME},
+                    )
+                ).first()
+            return row is not None
+        except Exception:  # noqa: BLE001 — audit-side read; never blocks the data path
+            _log.bind(stage="redelivery_check", tenant_id=str(tenant_id), trace_id=str(trace_id)).warning(
+                "redelivery readback failed; assuming first delivery (best-effort)", exc_info=True
+            )
+            return False
 
     @staticmethod
     async def _staged[T](stage: Stage, awaitable: Awaitable[T]) -> T:

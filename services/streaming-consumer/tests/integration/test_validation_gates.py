@@ -64,6 +64,36 @@ def _failure_audit_rows(dis_admin: Engine, trace_id: object, stage: str) -> int:
         )
 
 
+def _assert_gate_failure_shape(dis_admin: Engine, trace_id: object, stage: str, summary_code: str) -> None:
+    """The Slice 30b failure-audit shape at a validation gate: a stable
+    summary code, ROW rows coded VALIDATION_ROW_FAILED with the pandera check
+    in event_data, and both correlation ids populated on every row."""
+    with dis_admin.begin() as conn:
+        rows = (
+            conn.execute(
+                text(
+                    "SELECT event_scope, failure_code, event_data, "
+                    "data_ingress_event_id, mapping_version_id, duration_ms "
+                    "FROM audit.events WHERE trace_id = CAST(:t AS uuid) "
+                    "AND stage = :stage AND outcome = 'FAILURE'"
+                ),
+                {"t": str(trace_id), "stage": stage},
+            )
+            .mappings()
+            .all()
+        )
+    summaries = [r for r in rows if r["event_scope"] == "INGRESS_EVENT"]
+    row_scoped = [r for r in rows if r["event_scope"] == "ROW"]
+    assert summaries and all(r["failure_code"] == summary_code for r in summaries)
+    assert row_scoped, "gate failures must carry per-row ROW events"
+    for r in row_scoped:
+        assert r["failure_code"] == "VALIDATION_ROW_FAILED"
+        assert r["event_data"] is not None and "check" in r["event_data"]
+    for r in rows:
+        assert r["data_ingress_event_id"] is not None
+        assert r["mapping_version_id"] is not None
+
+
 async def test_pre_validation_rejects_structurally_wrong_chunk(
     pipeline: ConsumerPipeline,
     dis_admin: Engine,
@@ -87,6 +117,7 @@ async def test_pre_validation_rejects_structurally_wrong_chunk(
     assert outcome.disposition == "failed_pre_validation"
     assert _no_canonical_rows(dis_admin, chunk.trace_id)
     assert _failure_audit_rows(dis_admin, chunk.trace_id, "PRE_MAPPING_VALIDATED") >= 1
+    _assert_gate_failure_shape(dis_admin, chunk.trace_id, "PRE_MAPPING_VALIDATED", "PRE_VALIDATION_FAILED")
 
 
 async def test_pre_validation_accepts_well_formed_chunk(
@@ -134,3 +165,4 @@ async def test_post_validation_rejects_invalid_canonical_frame(
     assert outcome.disposition == "failed_post_validation"
     assert _no_canonical_rows(dis_admin, chunk.trace_id)
     assert _failure_audit_rows(dis_admin, chunk.trace_id, "POST_MAPPING_VALIDATED") >= 1
+    _assert_gate_failure_shape(dis_admin, chunk.trace_id, "POST_MAPPING_VALIDATED", "POST_VALIDATION_FAILED")

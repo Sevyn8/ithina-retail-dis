@@ -297,6 +297,39 @@ class SuiteDriftError(ValidationSuiteError):
     """
 
 
+# -- Streaming-consumer canonical-sink errors (Slice 30b) ------------------------
+# Raised by the consumer's dual-write sink. Distinct classes exist where the audit
+# trail needs a stable failure_code (dis-audit FailureCode maps exception type ->
+# code); a bare DisError would fall through to the INFRA_FAILURE catch-all bucket.
+
+
+class HotPositionMissingError(DisError):
+    """The REVISED-D63 hot-merge miss: a first-seen SKU on an INCOMPLETE-mapping chunk.
+
+    No ``store_sku_current_position`` row exists and the completeness-gated
+    projection cannot create one; the event history is RETAINED (the batch already
+    committed) and the chunk nacks toward quarantine (Slice 11). Carries the
+    load-bearing identifiers (code-quality rule 5) so the FAILURE audit can join
+    back to the chunk and the mapping.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+        mapping_version_id: int | None = None,
+        miss_count: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+        self.mapping_version_id = mapping_version_id
+        self.miss_count = miss_count
+
+
 # -- Mirror Sync errors (Slice 7) ----------------------------------------------
 # Raised by the mirror-sync-consumer service (DB-pull mode), which reads Customer
 # Master's Postgres under a platform read context and upserts into identity_mirror.

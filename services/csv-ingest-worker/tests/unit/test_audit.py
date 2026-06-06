@@ -67,7 +67,7 @@ async def test_writer_raise_is_swallowed_and_logged(
             outcome=Outcome.FAILURE,
             tenant_id=_TENANT,
             trace_id=_TRACE,
-            failure_code="path_mismatch",
+            failure_code="PATH_MISMATCH",
         )  # no raise == the data path continues
     assert any("audit emission raised" in r.message for r in caplog.records)
 

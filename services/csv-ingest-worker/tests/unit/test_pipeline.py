@@ -157,7 +157,7 @@ async def test_happy_path_order_read_parse_before_write_then_conditional_publish
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     recorder = _Recorder()
-    pipeline, _ = _wire(monkeypatch, recorder)
+    pipeline, writer = _wire(monkeypatch, recorder)
     outcome = await pipeline.process(_event())
 
     names = recorder.names()
@@ -168,6 +168,9 @@ async def test_happy_path_order_read_parse_before_write_then_conditional_publish
     assert names.index("insert") < names.index("publish")
     assert names.index("publish") < names.index("mark_published")
     assert outcome.disposition == "ingested"
+    # Slice 30b: every emitted stage row carries a non-negative duration (lap seam).
+    assert writer.events
+    assert all(e.duration_ms is not None and e.duration_ms >= 0 for e in writer.events)
 
 
 async def test_emitted_trace_equals_event_trace_and_no_mint(
@@ -273,8 +276,16 @@ async def test_path_mismatch_raises_loud_before_any_read_or_write(
     assert "download" not in recorder.names()
     assert "insert" not in recorder.names()
     assert "publish" not in recorder.names()
-    # The FAILURE audit was emitted with the event's tenant/trace.
-    assert (Stage.RECEIVED, Outcome.FAILURE) in [(e.stage, e.outcome) for e in writer.events]
+    # The FAILURE audit was emitted with the event's tenant/trace — and (Slice
+    # 30b) the stable code plus the mismatch detail as event_data, not buried
+    # in failure_message.
+    [failure] = [e for e in writer.events if e.outcome is Outcome.FAILURE]
+    assert failure.stage is Stage.RECEIVED
+    assert failure.failure_code == "PATH_MISMATCH"
+    assert failure.event_data is not None
+    assert failure.event_data["field"] == field
+    assert {"field", "event_value", "path_value"} <= failure.event_data.keys()
+    assert failure.duration_ms is not None and failure.duration_ms >= 0
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +303,16 @@ async def test_pii_raise_precedes_bronze_write(monkeypatch: pytest.MonkeyPatch) 
     assert "insert" not in recorder.names()
     assert "publish" not in recorder.names()
     assert "mark_published" not in recorder.names()
-    assert (Stage.PII_TOKENIZED, Outcome.FAILURE) in [(e.stage, e.outcome) for e in writer.events]
+    # Slice 30b: stable code + the detected-column COUNT in event_data. The
+    # bronze id stays NULL — correctly: the gate runs BEFORE the bronze write
+    # (hard rule 2), so no bronze row exists at this emit (operator-confirmed).
+    [pii_failure] = [e for e in writer.events if e.outcome is Outcome.FAILURE]
+    assert pii_failure.stage is Stage.PII_TOKENIZED
+    assert pii_failure.failure_code == "PII_BACKEND_NOT_CONFIGURED"
+    assert pii_failure.data_ingress_event_id is None
+    assert pii_failure.event_data is not None
+    assert pii_failure.event_data["pii_columns_detected"] >= 1
+    assert pii_failure.event_data["exception_class"] == "PiiBackendNotConfiguredError"
 
 
 async def test_injected_backend_reaches_not_raise_branch(
@@ -330,7 +350,9 @@ async def test_preflight_failure_writes_failed_row_and_never_publishes(
     assert "publish" not in recorder.names()
     assert "mark_published" not in recorder.names()
     failures = [e for e in writer.events if e.outcome is Outcome.FAILURE]
-    assert failures and failures[0].failure_code == "not_csv"
+    # Slice 30b: the stable vocabulary replaces the raw reason; the reason rides event_data.
+    assert failures and failures[0].failure_code == "PREFLIGHT_NOT_CSV"
+    assert failures[0].event_data is not None and failures[0].event_data["reason"] == "not_csv"
     assert failures[0].data_ingress_event_id == row.id
 
 

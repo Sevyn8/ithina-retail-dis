@@ -47,11 +47,17 @@ class WorkerAudit:
         trace_id: UUID,
         bronze_id: UUID | None = None,
         row_count: int | None = None,
+        duration_ms: int | None = None,
         event_data: dict[str, Any] | None = None,
         failure_code: str | None = None,
         failure_message: str | None = None,
     ) -> None:
-        """Emit one stage event. Never raises; never blocks the data path."""
+        """Emit one stage event. Never raises; never blocks the data path.
+
+        ``failure_code`` takes a :class:`~dis_audit.FailureCode` member (a
+        ``StrEnum``, Slice 30b stable vocabulary); ``duration_ms`` is the
+        pipeline's lap-timer stage span.
+        """
         log = _log.bind(stage=str(stage.value), tenant_id=str(tenant_id), trace_id=str(trace_id))
         try:
             event = AuditEvent(
@@ -64,6 +70,7 @@ class WorkerAudit:
                 event_scope=EventScope.INGRESS_EVENT,
                 outcome=outcome,
                 row_count=row_count,
+                duration_ms=duration_ms,
                 event_data=event_data,
                 failure_code=failure_code,
                 failure_message=failure_message,

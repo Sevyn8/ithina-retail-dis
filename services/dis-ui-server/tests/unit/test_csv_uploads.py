@@ -184,6 +184,8 @@ def test_valid_upload_writes_d53_path_publishes_contract_valid_event_and_audits(
     assert event.auth_principal == "user:user-1"
     assert event.event_data is not None
     assert event.event_data["phase"] == "csv_upload_phase1"
+    # Slice 30b: whole-request elapsed on the single audit row.
+    assert event.duration_ms is not None and event.duration_ms >= 0
 
 
 def test_smuggled_body_tenant_id_is_ignored(
@@ -276,7 +278,14 @@ def test_missing_part_is_400_with_no_side_effects(
     envelope = response.json()["error"]
     assert envelope["code"] == "upload_request"
     assert envelope["details"]["part"] == missing_part
-    assert not storage.uploads and not publisher.published and not writer.events
+    assert not storage.uploads and not publisher.published
+    # Slice 30b: the 4xx family IS audited (emit-then-re-raise; the envelope above
+    # proves the HTTP semantics are unchanged).
+    [event] = writer.events
+    assert event.outcome is Outcome.FAILURE
+    assert event.failure_code == "UPLOAD_REQUEST_MALFORMED"
+    assert event.event_data is not None and event.event_data["step"] == "upload"
+    assert event.auth_principal is not None
 
 
 def test_malformed_template_id_is_400(
@@ -312,7 +321,18 @@ def test_tier0_failure_is_422_with_no_gcs_write_and_no_publish(
     assert envelope["code"] == "upload_structure"
     assert envelope["details"]["reason"] == reason
     assert envelope["trace_id"] is not None  # minted at entry; on every envelope
-    assert not storage.uploads and not publisher.published and not writer.events
+    assert not storage.uploads and not publisher.published
+    # Slice 30b: the tier-0 rejection IS audited, reason-grained stable code.
+    expected_code = {
+        "empty_file": "UPLOAD_EMPTY_FILE",
+        "not_utf8": "UPLOAD_NOT_UTF8",
+        "not_csv": "UPLOAD_NOT_CSV",
+        "below_min_rows": "UPLOAD_BELOW_MIN_ROWS",
+    }[reason]
+    [event] = writer.events
+    assert event.outcome is Outcome.FAILURE
+    assert event.failure_code == expected_code
+    assert event.event_data is not None and event.event_data["reason"] == reason
 
 
 def test_tier0_runs_before_any_resolution(
@@ -342,7 +362,7 @@ def test_unknown_or_cross_tenant_template_is_404(
     mint_token: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client, storage, publisher, _ = harness
+    client, storage, publisher, writer = harness
 
     async def not_found(engine: Any, tenant_id: UUID, template_id: UUID) -> Any:
         raise ResourceNotFoundError(
@@ -357,6 +377,9 @@ def test_unknown_or_cross_tenant_template_is_404(
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "resource_not_found"
     assert not storage.uploads and not publisher.published
+    # Slice 30b: audited with the step-disambiguated code (template, not store).
+    [event] = writer.events
+    assert event.outcome is Outcome.FAILURE and event.failure_code == "TEMPLATE_NOT_FOUND"
 
 
 def test_non_active_template_is_409(
@@ -366,7 +389,7 @@ def test_non_active_template_is_409(
 ) -> None:
     from dis_core.errors import MappingStateConflictError
 
-    client, storage, publisher, _ = harness
+    client, storage, publisher, writer = harness
 
     async def draft_only(engine: Any, tenant_id: UUID, template_id: UUID) -> Any:
         raise MappingStateConflictError(
@@ -384,6 +407,8 @@ def test_non_active_template_is_409(
     assert envelope["code"] == "mapping_state_conflict"
     assert envelope["details"]["actual"] == "DRAFT"
     assert not storage.uploads and not publisher.published
+    [event] = writer.events  # Slice 30b
+    assert event.outcome is Outcome.FAILURE and event.failure_code == "TEMPLATE_NOT_ACTIVE"
 
 
 def test_unresolvable_store_code_is_404(
@@ -391,7 +416,7 @@ def test_unresolvable_store_code_is_404(
     mint_token: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client, storage, publisher, _ = harness
+    client, storage, publisher, writer = harness
 
     async def not_found(engine: Any, tenant_id: UUID, store_code: str) -> Any:
         raise ResourceNotFoundError(
@@ -406,6 +431,8 @@ def test_unresolvable_store_code_is_404(
     assert response.status_code == 404  # a 404, NEVER a 409 oracle
     assert response.json()["error"]["code"] == "resource_not_found"
     assert not storage.uploads and not publisher.published
+    [event] = writer.events  # Slice 30b: store step, not template
+    assert event.outcome is Outcome.FAILURE and event.failure_code == "STORE_NOT_FOUND"
 
 
 @pytest.mark.parametrize("status", ["OPENING", "INACTIVE", "CLOSED"])
@@ -417,7 +444,7 @@ def test_resolved_but_non_active_store_is_409_after_the_404_gate(
 ) -> None:
     # The operator-decided gate: ACTIVE only, 409, applied only AFTER a
     # successful tenant-scoped resolve (this store IS the caller's).
-    client, storage, publisher, _ = harness
+    client, storage, publisher, writer = harness
 
     async def non_active_store(engine: Any, tenant_id: UUID, store_code: str) -> Any:
         return SimpleNamespace(store_id=_STORE_ID, store_code=store_code, status=status)
@@ -430,6 +457,8 @@ def test_resolved_but_non_active_store_is_409_after_the_404_gate(
     assert envelope["details"]["expected"] == "ACTIVE"
     assert envelope["details"]["actual"] == status
     assert not storage.uploads and not publisher.published
+    [event] = writer.events  # Slice 30b
+    assert event.outcome is Outcome.FAILURE and event.failure_code == "STORE_NOT_ACTIVE"
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +477,7 @@ def test_gcs_write_failure_is_503_and_nothing_is_published(
     assert response.json()["error"]["code"] == "storage"
     assert not publisher.published  # write-then-publish: no write, no event
     [event] = [e for e in writer.events if e.outcome is Outcome.FAILURE]
-    assert event.failure_code == "gcs_write_failed"
+    assert event.failure_code == "GCS_WRITE_FAILED"  # Slice 30b stable vocabulary
 
 
 def test_publish_failure_is_503_with_the_object_as_an_accepted_orphan(
@@ -464,7 +493,7 @@ def test_publish_failure_is_503_with_the_object_as_an_accepted_orphan(
     # a client retry converges via the deterministic upload_id instead.
     assert len(storage.uploads) == 1
     [event] = [e for e in writer.events if e.outcome is Outcome.FAILURE]
-    assert event.failure_code == "publish_failed"
+    assert event.failure_code == "PUBLISH_FAILED"  # Slice 30b stable vocabulary
 
 
 def test_exploding_audit_backend_never_blocks_the_upload(
@@ -480,6 +509,53 @@ def test_exploding_audit_backend_never_blocks_the_upload(
     assert response.status_code == 201
     assert len(storage.uploads) == 1
     assert len(publisher.published) == 1
+
+
+def test_exploding_audit_backend_never_changes_a_4xx_response(
+    harness: tuple[TestClient, _FakeStorage, _FakePublisher, _RecordingAuditWriter],
+    mint_token: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Slice 30b HTTP-safety property at the 4xx wrap specifically: the wrap
+    is emit-then-re-raise, so a THROWING audit backend on a rejection path must
+    leave the response the exact original clean 4xx (status + §2.3 envelope,
+    trace_id excluded — it is per-request by design), never a 500, never a
+    wrapped/replaced error. Driven for a 422 (tier-0) and a 404 (template)."""
+    client, storage, publisher, writer = harness
+
+    async def template_not_found(engine: Any, tenant_id: UUID, template_id: UUID) -> Any:
+        raise ResourceNotFoundError(
+            f"mapping template {template_id} not found",
+            resource="mapping_template",
+            identifier=str(template_id),
+            tenant_id=str(tenant_id),
+        )
+
+    def envelope_sans_trace(response: Any) -> dict[str, Any]:
+        envelope = response.json()["error"]
+        envelope.pop("trace_id")  # minted per request; everything else must match
+        if isinstance(envelope.get("details"), dict):
+            envelope["details"].pop("trace_id", None)  # error-class context, also per-request
+        return dict(envelope)
+
+    # 422 tier-0 (empty file): baseline, then byte-identical under explosion.
+    baseline_422 = _post(client, mint_token(), file_payload=b"")
+    writer.explode = True
+    exploded_422 = _post(client, mint_token(), file_payload=b"")
+    assert exploded_422.status_code == baseline_422.status_code == 422
+    assert envelope_sans_trace(exploded_422) == envelope_sans_trace(baseline_422)
+
+    # 404 template: same proof on a resolution-step rejection.
+    writer.explode = False
+    monkeypatch.setattr(f"{_HANDLER_MODULE}.resolve_active_template", template_not_found)
+    baseline_404 = _post(client, mint_token())
+    writer.explode = True
+    exploded_404 = _post(client, mint_token())
+    assert exploded_404.status_code == baseline_404.status_code == 404
+    assert envelope_sans_trace(exploded_404) == envelope_sans_trace(baseline_404)
+
+    # Nothing leaked into side effects on any of the four rejected requests.
+    assert not storage.uploads and not publisher.published
 
 
 def test_every_error_envelope_carries_this_requests_trace(
