@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from typing import Any
+from typing import cast
 
 import anyio
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from dis_ui_server.catalog import build_field_catalog
@@ -28,9 +29,7 @@ CATALOG = build_field_catalog()
 CATALOG_KEYS = {field.key for field in CATALOG}
 
 _BODY = {
-    "columns": [
-        {"name": "qty", "inferred_datatype": "integer", "null_pct": 0.0, "sample_values": ["1", "2"]}
-    ]
+    "columns": [{"name": "qty", "inferred_datatype": "integer", "null_pct": 0.0, "sample_values": ["1", "2"]}]
 }
 
 
@@ -65,20 +64,29 @@ def suggest_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
 # -- handler tests ------------------------------------------------------------------
 
 
+def _set_gemini(client: TestClient, fake: _FakeSuggester) -> None:
+    """Set the fake on the app the fixture built; ``TestClient.app`` is typed as the
+    bare ASGI callable (no ``.state``), so narrow it to the concrete FastAPI app."""
+    cast(FastAPI, client.app).state.gemini = fake
+
+
 def test_handler_returns_llm_suggestions(suggest_client: TestClient, mint_token) -> None:  # type: ignore[no-untyped-def]
-    suggest_client.app.state.gemini = _FakeSuggester(  # type: ignore[attr-defined]
-        (
-            "llm",
-            "gemini-2.5-flash",
-            [
-                Suggestion(
-                    source_column="qty",
-                    suggested_target="quantity",
-                    confidence=0.9,
-                    reasoning="numeric",
-                )
-            ],
-        )
+    _set_gemini(
+        suggest_client,
+        _FakeSuggester(
+            (
+                "llm",
+                "gemini-2.5-flash",
+                [
+                    Suggestion(
+                        source_column="qty",
+                        suggested_target="quantity",
+                        confidence=0.9,
+                        reasoning="numeric",
+                    )
+                ],
+            )
+        ),
     )
     resp = suggest_client.post(
         "/api/v1/mapping-suggestions",
@@ -94,13 +102,13 @@ def test_handler_returns_llm_suggestions(suggest_client: TestClient, mint_token)
 
 
 def test_handler_requires_a_token(suggest_client: TestClient) -> None:
-    suggest_client.app.state.gemini = _FakeSuggester(("fallback", None, []))  # type: ignore[attr-defined]
+    _set_gemini(suggest_client, _FakeSuggester(("fallback", None, [])))
     resp = suggest_client.post("/api/v1/mapping-suggestions", json=_BODY)
     assert resp.status_code == 401
 
 
 def test_handler_rejects_a_non_tenant_token(suggest_client: TestClient, mint_token) -> None:  # type: ignore[no-untyped-def]
-    suggest_client.app.state.gemini = _FakeSuggester(("fallback", None, []))  # type: ignore[attr-defined]
+    _set_gemini(suggest_client, _FakeSuggester(("fallback", None, [])))
     resp = suggest_client.post(
         "/api/v1/mapping-suggestions",
         json=_BODY,
@@ -110,7 +118,7 @@ def test_handler_rejects_a_non_tenant_token(suggest_client: TestClient, mint_tok
 
 
 def test_handler_rejects_a_malformed_profile(suggest_client: TestClient, mint_token) -> None:  # type: ignore[no-untyped-def]
-    suggest_client.app.state.gemini = _FakeSuggester(("fallback", None, []))  # type: ignore[attr-defined]
+    _set_gemini(suggest_client, _FakeSuggester(("fallback", None, [])))
     resp = suggest_client.post(
         "/api/v1/mapping-suggestions",
         json={"columns": []},  # min_length=1 -> 422
@@ -124,9 +132,8 @@ def test_handler_rejects_a_malformed_profile(suggest_client: TestClient, mint_to
 _COLUMNS = [ColumnProfile(name="qty", inferred_datatype="integer", null_pct=0.0, sample_values=["1"])]
 
 
-def test_suggester_falls_back_when_vertex_unconfigured() -> None:
-    # Both project and location unset -> mechanical fallback (no Vertex call).
-    source, model, suggestions = anyio.run(GeminiSuggester(None, None).suggest, _COLUMNS, CATALOG)
+def test_suggester_falls_back_when_no_key() -> None:
+    source, model, suggestions = anyio.run(GeminiSuggester(None).suggest, _COLUMNS, CATALOG)
     assert source == "fallback"
     assert model is None
     assert len(suggestions) == 1
@@ -134,7 +141,7 @@ def test_suggester_falls_back_when_vertex_unconfigured() -> None:
 
 
 def test_suggester_parses_a_clean_llm_response() -> None:
-    suggester = GeminiSuggester("a-project", "us-central1")
+    suggester = GeminiSuggester("a-key")
     suggester._call_model = lambda prompt: json.dumps(  # type: ignore[method-assign]
         {
             "suggestions": [
@@ -157,7 +164,7 @@ def test_suggester_parses_a_clean_llm_response() -> None:
 
 
 def test_suggester_nulls_a_non_catalog_target_and_drops_invented_alternatives() -> None:
-    suggester = GeminiSuggester("a-project", "us-central1")
+    suggester = GeminiSuggester("a-key")
     suggester._call_model = lambda prompt: json.dumps(  # type: ignore[method-assign]
         {
             "suggestions": [
@@ -178,7 +185,7 @@ def test_suggester_nulls_a_non_catalog_target_and_drops_invented_alternatives() 
 
 
 def test_suggester_falls_back_when_the_model_errors() -> None:
-    suggester = GeminiSuggester("a-project", "us-central1")
+    suggester = GeminiSuggester("a-key")
 
     def _boom(prompt: str) -> str:
         raise RuntimeError("model exploded")
@@ -188,81 +195,3 @@ def test_suggester_falls_back_when_the_model_errors() -> None:
     assert source == "fallback"
     assert model is None
     assert suggestions[0].suggested_target in CATALOG_KEYS
-
-def test_suggester_impersonates_the_configured_sa_for_vertex(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With impersonate_sa set, the Vertex client is built with impersonated credentials.
-
-    Mocks google.auth.default + impersonated_credentials.Credentials + genai.Client; NO live
-    call. Asserts the target_principal is the configured SA and the impersonated credentials are
-    passed into the Vertex client.
-    """
-    import google.auth
-    import google.genai
-    from google.auth import impersonated_credentials
-
-    sentinel_source = object()
-    captured: dict[str, Any] = {}
-
-    def _fake_default(scopes: Any = None, **kwargs: Any) -> tuple[object, str]:
-        captured["default_scopes"] = scopes
-        return (sentinel_source, "adc-project")
-
-    def _fake_impersonated(
-        *, source_credentials: Any, target_principal: str, target_scopes: Any, **kwargs: Any
-    ) -> str:
-        captured["source"] = source_credentials
-        captured["target_principal"] = target_principal
-        captured["target_scopes"] = list(target_scopes)
-        return "IMPERSONATED_CREDS"
-
-    class _FakeModels:
-        def generate_content(self, **kwargs: Any) -> object:
-            return type("R", (), {"text": '{"suggestions": []}'})()
-
-    class _FakeClient:
-        def __init__(self, **kwargs: Any) -> None:
-            captured["client_kwargs"] = kwargs
-            self.models = _FakeModels()
-
-    monkeypatch.setattr(google.auth, "default", _fake_default)
-    monkeypatch.setattr(impersonated_credentials, "Credentials", _fake_impersonated)
-    monkeypatch.setattr(google.genai, "Client", _FakeClient)
-
-    suggester = GeminiSuggester("proj", "us-central1", impersonate_sa="gemini-dis@x.iam.gserviceaccount.com")
-    source, _model, _suggestions = anyio.run(suggester.suggest, _COLUMNS, CATALOG)
-
-    assert source == "llm"
-    assert captured["target_principal"] == "gemini-dis@x.iam.gserviceaccount.com"
-    assert "https://www.googleapis.com/auth/cloud-platform" in captured["target_scopes"]
-    assert captured["source"] is sentinel_source
-    client_kwargs = captured["client_kwargs"]
-    assert client_kwargs["vertexai"] is True
-    assert client_kwargs["project"] == "proj"
-    assert client_kwargs["location"] == "us-central1"
-    assert client_kwargs["credentials"] == "IMPERSONATED_CREDS"
-
-
-def test_suggester_uses_ambient_adc_when_no_impersonation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without impersonate_sa, the Vertex client uses ambient ADC (no explicit credentials)."""
-    import google.genai
-
-    captured: dict[str, Any] = {}
-
-    class _FakeModels:
-        def generate_content(self, **kwargs: Any) -> object:
-            return type("R", (), {"text": '{"suggestions": []}'})()
-
-    class _FakeClient:
-        def __init__(self, **kwargs: Any) -> None:
-            captured["client_kwargs"] = kwargs
-            self.models = _FakeModels()
-
-    monkeypatch.setattr(google.genai, "Client", _FakeClient)
-
-    suggester = GeminiSuggester("proj", "us-central1")  # no impersonate_sa
-    source, _model, _suggestions = anyio.run(suggester.suggest, _COLUMNS, CATALOG)
-
-    assert source == "llm"
-    # ambient ADC: no explicit credentials passed (the Cloud Run SA is used directly).
-    assert "credentials" not in captured["client_kwargs"]
-    assert captured["client_kwargs"]["vertexai"] is True
