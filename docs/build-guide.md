@@ -146,6 +146,58 @@ Deferred at Slice 10, reactive-only by design: the named-custom-transform escape
 - `DONE` Slice 8: CSV upload, Phase 1 (dis-ui-server synchronous endpoint). SUPERSEDES the inherited signed-URL design (D72): with the 10 MB ceiling there is no large-file case, so `POST /api/v1/csv-uploads` streams the file THROUGH the server in one multipart request (`file` + `template_id` + `store_code`) — no upload-session object, no signed PUT URL, no completion detection (closes D54's open fork; D36's placement and D54's worker-trust model stand). The handler: tenant + user from the token only; 10 MB enforced MID-STREAM (`upload_stream.py`, the reusable file-body pattern, proven at the ASGI boundary); tier-0 structural gate (D51); template validated ACTIVE via `rls_session` (the ACTIVE row supplies `source_id`); `store_code` resolved via the mirror in-query chokepoint then gated ACTIVE-only (404 resolve before the 409 gate — no existence oracle); object written at the canonical D53 path; audit; `csv.received` published carrying the resolved identity + codes + `trace_id` + required `template_id` (D71) + a DETERMINISTIC `upload_session_id` (`us_` + 12-hex of SHA-256 over tenant|store|template|content-hash) so client retries collapse in the worker's D58 dedup. GCS-write-then-publish; a post-write publish failure leaves an accepted orphan object (no compensating delete; the retry converges). The template_id carry: required on `csv.received` AND `ingress.ready`; the worker passes it through and persists it to bronze (`template_id` column, migration 0006, replay lineage — D73); the streaming consumer PARSES it (envelope drift guard) but its mapping lookup stays template-unaware until Slice 8a (D71 hard gate: no second-ACTIVE-template path before 8a — regression-pinned in the consumer's tests).
 - `DONE` Slice 8a: consumer template-keyed mapping lookup (the fix owed by D71; consumer-only). `load_active_mapping` now keys on `(tenant_id, source_id, template_id, status='ACTIVE')` — the `uq_csm_active_per_source` index makes the lookup single-row, `.first()` exact — so each CSV is processed with the exact template's `mapping_rules` it was uploaded against; a `template_id` naming no ACTIVE row raises a clean template-grained `MappingConfigError` (never a silent wrong-mapping); `template_id` recorded on the `MAPPING_LOOKED_UP` audit `event_data`. The Slice 8 regression pin retired and replaced by its inverse; the core property mutation-proven (removing the predicate fails the two-ACTIVE-templates test, the unknown-template test, and the source pin — three independent kills). `template_id`-absent resolved as structurally unreachable (D74: envelope contract-reject, terminal ack before the pipeline; no fallback code). D22 (`mapping_version_id` stamp) and D33/D65 (dedup) proven unchanged by UNMODIFIED tests now running through the keyed lookup. D71 `RESOLVED`, its hard gate LIFTED: the promote/reject/shadow slice is unblocked.
 
+
+### Audit pipeline
+
+The audit trail (`audit.events` in Cloud SQL, Phase 1; BigQuery archive at Slice 21 per D34)
+must record a complete, queryable story of what happened to every CSV, keyed by `trace_id`,
+including failures. The table and the `dis-audit` writer exist (Slices 1, 6) and the consumer
+success ladder emits well, but coverage has gaps (silent stages, under-populated failure rows)
+and the partition design has a silent write-cliff. These slices make the audit pipeline correct
+for beta. The failure-audit shape defined here is the seam the quarantine work consumes.
+
+- `DONE` Slice 30a: De-partition `audit.events` (remove the silent write-cliff). `audit.events`
+  was range-partitioned by `event_date` with a fixed bootstrap-only set of daily partitions and no
+  DEFAULT partition and no automation (D45); past the last partition, every audit write hit "no
+  partition found", which fire-and-forget swallows, so audit silently stopped recording. Now a
+  plain (non-partitioned) table: a write for any `event_date` always lands (test-proven both
+  sides of the old window); partitioning with automation is re-introduced at Slice 21 (BQ
+  archive + eviction), the slice that actually needs it. Built as migration 0007
+  (drop-and-recreate from `events.sql`, data disposable) + the one-tuple removal from 0001's
+  `PARTITIONED` list, so fresh-bootstrap == migrate-existing (scratch-DB catalog-equality
+  proven). PK `(id, event_date)` → `(id)`; `event_date` stays a column; the event_date-matches
+  CHECK KEPT (column semantics + Slice 21's re-partition invariant); RLS and the non-partition
+  constraints preserved verbatim; the `dis-audit` writer unchanged. Scope was `audit.events`
+  ONLY: the canonical event tables share the scheme but are the D29/D34 eviction substrate and
+  fail LOUD (batch nack) on a missing partition — they keep their partitioning, test-pinned.
+  Registered as D77; D45 → `RESOLVED-for-beta`. Unblocks Slice 30b (coverage on a sink that
+  reliably accepts writes).
+
+- `TODO` Slice 30b: Audit coverage and failure-audit shape. Make every pipeline stage emit, and
+  make failure rows carry the columns they already have. The load-bearing piece: the consumer
+  catch-all (`orchestrate.py`) must populate `bronze_id`, `mapping_version_id`, and
+  `data_ingress_event_id` on failures (it carries only trace/tenant/failure_code/message today),
+  with a stable enumerated `failure_code` vocabulary, this is the failure-audit shape the
+  quarantine work consumes to correlate rows back to their audit story. Also: audit the dis-ui
+  4xx family (multipart, tier-0, template, store rejections, silent today), emit `RETRIED` on
+  redelivery (so retries are legible, not indistinguishable duplicate rows), and fix the small
+  population gaps (worker PII-block `bronze_id`, worker path-mismatch `event_data`). *Trigger:
+  after Slice 30a. Deferred-in-this-slice judgment calls (fold in or hold): extend the outcome
+  CHECK for DUPLICATE_*, promote `prior_trace_id` to a column, populate `duration_ms`, harden the
+  drift guard to type/nullability.*
+
+Deferred / owned elsewhere (named so they are not lost):
+- The `QUARANTINED` audit emitter (the Stage enum has the value, nothing emits it) is owned by
+  the quarantine work, not these slices.
+- Pub/Sub dead-letter + max-delivery-attempts (the backstop that breaks a deterministic-failure
+  redeliver loop, the storm Slice 30a's precursor arrested) is owned by the quarantine / DLQ
+  work; cheap and worth early.
+- BQ archive + partition eviction + the real audit retention policy is Slice 21 (Phase 3); it
+  re-introduces partitioning with automation.
+- The unparseable-envelope silent case (D43 structural: tenant unknowable) is documented as
+  silent-by-design unless a tenant-less audit row is later wanted; decision, not code.
+
+
 ### Daily compute
 
 - `TODO` Slice 18: Daily compute. Produces `store_sku_signal_history` rows per (store, SKU, as_of_date); updates derived columns on `store_sku_current_position`; ROOS has fresh signals every day.

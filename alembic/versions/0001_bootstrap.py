@@ -73,7 +73,10 @@ MANIFEST = [
     "quarantine/quarantined_rows.sql",
 ]
 
-# Partitioned parents -> partition key column. 7 parents (RANGE-partitioned).
+# Partitioned parents -> partition key column. 6 parents (RANGE-partitioned).
+# audit.events is NOT here: de-partitioned for beta (Slice 30a; D45 closed) —
+# schemas/postgres/audit/events.sql declares it plain, so partitioning it here
+# would fail. Partitioning + automation return at Slice 21.
 PARTITIONED = [
     ("canonical", "store_sku_sale_events", "event_date"),
     ("canonical", "store_sku_change_events", "event_date"),
@@ -81,7 +84,6 @@ PARTITIONED = [
     ("staging", "store_sku_sale_events", "event_date"),
     ("staging", "store_sku_change_events", "event_date"),
     ("staging", "store_sku_signal_history", "as_of_date"),
-    ("audit", "events", "event_date"),
 ]
 
 APP_ROLE = "ithina_dis_user"
@@ -124,8 +126,8 @@ def _guard_target() -> None:
 
 
 def _create_initial_partitions() -> None:
-    """Create 7 daily partitions per partitioned parent, CURRENT_DATE-relative.
-    IF NOT EXISTS for cloud-replay safety."""
+    """Create 7 daily partitions per each of the 6 partitioned parents,
+    CURRENT_DATE-relative. IF NOT EXISTS for cloud-replay safety."""
     # cast() only — typing for the scalar() Any|None; SELECT CURRENT_DATE always
     # returns one date row, so the expression itself is untouched (slice-9d rule:
     # never rewrite a committed migration's expressions).
@@ -167,7 +169,7 @@ def upgrade() -> None:
     for rel in MANIFEST:
         _exec((_DDL_ROOT / rel).read_text())
 
-    # 4. Initial daily partitions for the 7 partitioned parents.
+    # 4. Initial daily partitions for the 6 partitioned parents.
     _create_initial_partitions()
 
     # 5. Backstop grants for objects created by the manifest/partition steps

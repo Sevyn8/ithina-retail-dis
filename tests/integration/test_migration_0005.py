@@ -427,8 +427,12 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         # The pin moves with each new revision ON PURPOSE: a new migration's
         # author must revisit this test and confirm the fresh-bootstrap no-op
         # property holds for it too (0006: the bronze template_id ADD COLUMN is
-        # existence-gated, so a manifest-fresh database is untouched).
-        assert head == "0006"
+        # existence-gated, so a manifest-fresh database is untouched. 0007:
+        # drop-and-recreate of audit.events from the SAME manifest file 0001
+        # applied — shape-identical on a manifest-fresh database, and it never
+        # touches config.source_mappings, so the csm shape compared below is
+        # untouched).
+        assert head == "0007"
 
         # 0005 must be a TRUE NO-OP on a manifest-fresh database. Without this,
         # a drifted manifest could bootstrap the WRONG shape and 0005's

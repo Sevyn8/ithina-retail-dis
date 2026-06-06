@@ -171,7 +171,7 @@ async def test_writer_lands_audit_event(engine: AsyncEngine) -> None:
 async def test_writer_lands_event_crossing_utc_date_boundary(engine: AsyncEngine) -> None:
     # 2026-06-04 01:30 +05:30 == 2026-06-03 20:00 UTC: local date and UTC date differ. The live
     # ck_audit_events_event_date_matches CHECK (event_date = (ts AT TIME ZONE 'UTC')::date) must
-    # accept the model's UTC-derived date on a REAL insert (the 2026-06-03 partition exists).
+    # accept the model's UTC-derived date on a REAL insert (plain table since Slice 30a; any date lands).
     ist = timezone(timedelta(hours=5, minutes=30))
     trace_id = new_uuid7()
     event = AuditEvent(

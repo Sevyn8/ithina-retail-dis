@@ -129,7 +129,7 @@ CREATE TABLE audit.events (
 
     -- ---------- Primary key ----------
     CONSTRAINT pk_audit_events
-        PRIMARY KEY (id, event_date),
+        PRIMARY KEY (id),
 
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_audit_events_tenant
@@ -158,26 +158,27 @@ CREATE TABLE audit.events (
 
     CONSTRAINT ck_audit_events_event_date_matches
         CHECK (event_date = (event_timestamp AT TIME ZONE 'UTC')::DATE)
-)
-PARTITION BY RANGE (event_date);
+        -- Not a partition-routing artifact: this CHECK defines event_date's
+        -- semantics (the UTC date of event_timestamp). The dis-audit model
+        -- derives event_date the same way; Slice 21 re-partitions on it.
+);
 
 
 -- ----------------------------------------------------------------------------
--- Partitioning
+-- Partitioning: none for beta (Slice 30a)
 -- ----------------------------------------------------------------------------
--- audit.events grows linearly with pipeline traffic. Partition by event_date
--- to keep query plans tight and enable retention-based partition drop in
--- Phase 3 (after BQ archival).
+-- audit.events is a PLAIN table. It was PARTITION BY RANGE (event_date) with a
+-- fixed bootstrap-created daily window and no automation, so once the calendar
+-- passed the last partition every write hit "no partition found" — which the
+-- audit writer's fire-and-forget swallows (decisions.md D45: silent loss).
+-- De-partitioned for beta to remove that cliff; ~150K events/day sits
+-- comfortably in a plain table.
 --
--- Phase 1 retention: 35 days in Cloud SQL (matches canonical event-table
--- retention; see decisions.md D29). Phase 3: nightly-batch archives older
--- partitions to BigQuery before dropping.
+-- Partitioning returns at Slice 21 (BQ archive + eviction), WITH automation,
+-- as a coherent piece: nightly-batch archives to BigQuery, then drops Cloud
+-- SQL partitions older than the 35-day rolling buffer (decisions.md D29/D34).
+-- event_date stays NOT NULL + CHECK-consistent so that re-partition is safe.
 -- ----------------------------------------------------------------------------
-
--- The parent table above is declared PARTITION BY RANGE (event_date). The
--- bootstrap migration (alembic/versions/0001_bootstrap.py) creates the initial
--- daily partitions; subsequent partitions are created by a Cloud Scheduler job
--- (Phase 1) or a daily-compute side task.
 
 
 -- ----------------------------------------------------------------------------
