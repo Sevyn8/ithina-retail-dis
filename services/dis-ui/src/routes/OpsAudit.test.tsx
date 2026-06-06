@@ -16,7 +16,9 @@ const ops: AuthSnapshot = {
 describe('Ops Audit (cross-tenant mode)', () => {
   it('looks up a cross-tenant trace and shows the tenant + lifecycle', async () => {
     const user = userEvent.setup()
-    renderWithProviders(<AppRoutes />, { snapshot: ops, initialEntries: ['/ops/audit'] })
+    // T9: ops Audit now lives on the canonical /audit route (the component renders
+    // cross-tenant mode for ops); /ops/audit redirects here.
+    renderWithProviders(<AppRoutes />, { snapshot: ops, initialEntries: ['/audit'] })
 
     await user.type(screen.getByLabelText('Trace ID'), OPS_AUDIT_TRACE_IDS.betaHealthy)
     await user.click(screen.getByRole('button', { name: /look up/i }))

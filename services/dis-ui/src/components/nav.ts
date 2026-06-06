@@ -5,7 +5,6 @@ import {
   FileSearch,
   LayoutDashboard,
   Plus,
-  ScanSearch,
   ShieldAlert,
   Terminal,
   Upload,
@@ -46,14 +45,15 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Create Template', to: '/upload', icon: Upload, section: 'DATA' },
   { label: 'Add Source', to: '/connect', icon: Plus, section: 'DATA' },
   { label: 'Ingest Data', to: '/ingest', icon: Database, section: 'DATA' },
-  // MONITORING: the tenant's activity surfaces (always visible to a tenant).
+  // MONITORING: Quarantine and Audit are scope-aware (T9): a tenant sees their own tenant
+  // (scope locked, no tenant filter); an ops user sees the fleet-wide view with a tenant
+  // filter, via the SAME route/screen (the component branches on isOps). Always visible.
   { label: 'Quarantine', to: '/quarantine', icon: ShieldAlert, section: 'MONITORING' },
   { label: 'Audit', to: '/audit', icon: FileSearch, section: 'MONITORING' },
   { label: 'Notifications', to: '/notifications', icon: Bell, section: 'MONITORING' },
-  // OPERATIONS: cross-tenant (fleet) modes, ops-gated. Distinct labels from the tenant
-  // Quarantine/Audit items (an ops persona sees both groups) so accessible names stay unique.
+  // OPERATIONS: ops-only surfaces with no tenant equivalent. T9 retired the separate Fleet
+  // Quarantine / Fleet Audit items - the fleet views now live in the scope-aware MONITORING
+  // Quarantine / Audit (ops mode), so OPERATIONS holds only Ops Fleet + Query.
   { label: 'Ops Fleet', to: '/ops/fleet', icon: Building2, ops: true, section: 'OPERATIONS' },
-  { label: 'Fleet Quarantine', to: '/ops/quarantine', icon: ShieldAlert, ops: true, section: 'OPERATIONS' },
-  { label: 'Fleet Audit', to: '/ops/audit', icon: ScanSearch, ops: true, section: 'OPERATIONS' },
   { label: 'Query', to: '/ops/query', icon: Terminal, ops: true, section: 'OPERATIONS' },
 ]

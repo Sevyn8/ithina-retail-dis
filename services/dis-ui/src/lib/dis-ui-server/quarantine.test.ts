@@ -7,6 +7,7 @@ import {
   getQuarantineRow,
   postResubmit,
 } from './quarantine'
+import { OPS_QUARANTINE_TRACE_IDS } from './ops-cross-tenant'
 
 const UNKNOWN_TRACE_ID = '0190ac0e-1a01-7001-8a01-0000000000ff'
 
@@ -37,6 +38,18 @@ describe('quarantine fixtures (fixture mode)', () => {
 
   it('rejects for an unknown trace_id', async () => {
     await expect(getQuarantineRow(UNKNOWN_TRACE_ID)).rejects.toThrow(/no fixture/)
+  })
+
+  // T9 AUTHORIZATION BOUNDARY: the tenant-scoped getter returns ONLY the caller's rows and
+  // never another tenant's. The fleet fixture (ops-cross-tenant) carries Beta/Delta rows,
+  // but a tenant caller must never see them; fleet scope is requested only when isOps.
+  it('AUTHORIZATION BOUNDARY: the tenant getter never returns another tenant rows', async () => {
+    const acmeTraceIds = (await getQuarantine(tenant)).map((r) => r.trace_id)
+    expect(acmeTraceIds.length).toBeGreaterThan(0)
+    expect(acmeTraceIds).not.toContain(OPS_QUARANTINE_TRACE_IDS.betaCanonical)
+    expect(acmeTraceIds).not.toContain(OPS_QUARANTINE_TRACE_IDS.deltaFk)
+    // a different tenant receives none of Acme's rows
+    expect(await getQuarantine(otherTenant)).toEqual([])
   })
 })
 

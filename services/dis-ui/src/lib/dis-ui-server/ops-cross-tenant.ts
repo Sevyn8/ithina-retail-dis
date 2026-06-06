@@ -18,10 +18,14 @@ import { SERVER_MODE } from './mode'
 // CHAIN_DEPTH_CAP constant from the tenant fixtures - it never edits or mutates them, so
 // tenant mode stays byte-for-byte (FM1).
 //
-// CROSS-TENANT AUTHORIZATION IS NOT MODELED HERE. Whether an ops (PLATFORM) token may read
-// across tenants, and whether it may ACT (resubmit) in another tenant's context, are both
-// Sanjeev's RLS/policy calls and are recorded as open items - not invented. The fixtures
-// simply return multi-tenant data and the ops resubmit carries the row's tenant_id.
+// CROSS-TENANT AUTHORIZATION IS SERVER-ENFORCED, NOT MODELED HERE. The UI requests fleet
+// scope ONLY when isOps (the fleet hooks below are gated by an `enabled` flag the screens set
+// to the isOps result), and the tenant-scoped getters in quarantine.ts / audit.ts key strictly
+// on snapshot.tenantId. That UI gating is NECESSARY BUT NOT SUFFICIENT: the real boundary is
+// the backend, which MUST refuse fleet scope for a non-ops (non-PLATFORM) token and RLS-scope
+// every tenant query so a tenant token can never read another tenant's rows. Whether an ops
+// token may also ACT (resubmit) in another tenant's context is Sanjeev's RLS/policy call (open
+// item) - not invented. These fixtures return multi-tenant data only because the caller is ops.
 
 // 4.1 cross-tenant variant: a fleet-wide quarantine row carries its tenant.
 export type FleetQuarantineRow = QuarantineRow & { tenant_id: string; tenant_name: string }

@@ -1,6 +1,7 @@
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
 import { AUDIT_HEALTHY_TRACE_ID, getAuditTrace } from './audit'
 import { QUARANTINE_TRACE_IDS } from './quarantine'
+import { OPS_AUDIT_TRACE_IDS } from './ops-cross-tenant'
 
 const UNKNOWN_TRACE_ID = '0190ac0e-1a01-7001-8a01-0000000000ff'
 
@@ -34,5 +35,12 @@ describe('audit fixtures (fixture mode)', () => {
 
   it('returns null for a trace owned by another tenant (own-tenant only)', async () => {
     expect(await getAuditTrace(otherTenant, AUDIT_HEALTHY_TRACE_ID)).toBeNull()
+  })
+
+  // T9 AUTHORIZATION BOUNDARY: a tenant cannot look up a trace that belongs to another tenant.
+  // The Beta fleet trace is reachable only via the ops cross-tenant lookup (isOps); the
+  // tenant-scoped getter returns null for it.
+  it('AUTHORIZATION BOUNDARY: a tenant cannot look up another tenant trace', async () => {
+    expect(await getAuditTrace(tenant, OPS_AUDIT_TRACE_IDS.betaHealthy)).toBeNull()
   })
 })

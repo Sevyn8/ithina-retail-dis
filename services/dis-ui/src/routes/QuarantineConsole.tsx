@@ -53,12 +53,17 @@ function tenantNameOf(row: QuarantineRow | FleetQuarantineRow): string {
 
 // Quarantine Console (surface map screen 7), on the design-system craft bar. Failed-row
 // list (demand list 4.1) with filters + a per-row detail (4.2) + the Resubmit action
-// (4.3, confirm Dialog with replay/fixed_file; depth-3 cap per arch 6.5). Tenant-aware
-// (slice 25): in TENANT mode it is the existing tenant-scoped path, UNCHANGED. In OPS
-// mode (isOps) it sources the fleet-wide list, adds a Tenant column + tenant filter, and
-// routes resubmit through the tenant-context mutation (carrying the row's tenant_id). The
-// confirm Dialog, the depth-3 cap, and all shared JSX behave identically in both modes;
-// cross-tenant read/resubmit authorization is Sanjeev's policy (open), not invented here.
+// (4.3, confirm Dialog with replay/fixed_file; depth-3 cap per arch 6.5). ONE scope-aware
+// screen (slice 25 / T9): in TENANT mode the scope is LOCKED to the caller's tenant
+// (tenant-scoped path, no Tenant filter). In OPS mode (isOps) it sources the fleet-wide
+// list, adds a Tenant column + tenant filter, and routes resubmit through the tenant-context
+// mutation (carrying the row's tenant_id). The confirm Dialog, the depth-3 cap, and all
+// shared JSX behave identically in both modes.
+//
+// AUTHORIZATION (T9): fleet scope is requested ONLY when isOps (useFleetQuarantine is gated
+// on `ops`); the tenant getter keys strictly on the caller's tenant. This UI gating is
+// necessary BUT NOT SUFFICIENT - the real boundary is server-enforced: the backend MUST
+// refuse fleet scope for a non-ops token and RLS-scope tenant queries.
 export function QuarantineConsole() {
   const { snapshot } = useAuth()
   const ops = snapshot !== null && isOps(snapshot)

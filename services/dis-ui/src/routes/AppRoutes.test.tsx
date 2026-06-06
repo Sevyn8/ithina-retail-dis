@@ -84,4 +84,17 @@ describe('AppRoutes', () => {
     renderAt('/ops/query')
     expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
   })
+
+  // T9: the retired fleet routes redirect to the canonical scope-aware screens for ops (no
+  // 404). The redirects live inside OpsBoundary, so a non-ops persona is still denied (the
+  // deny tests above still pass for /ops/quarantine and /ops/audit).
+  it('redirects an ops persona from /ops/quarantine to the scope-aware Quarantine', async () => {
+    renderAtAs(opsSnapshot, '/ops/quarantine')
+    expect(await screen.findByRole('heading', { name: 'Quarantine' })).toBeInTheDocument()
+  })
+
+  it('redirects an ops persona from /ops/audit to the scope-aware Audit', async () => {
+    renderAtAs(opsSnapshot, '/ops/audit')
+    expect(await screen.findByRole('heading', { name: 'Audit and Trace Lookup' })).toBeInTheDocument()
+  })
 })

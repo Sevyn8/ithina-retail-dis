@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router'
+import { Navigate, Route, Routes } from 'react-router'
 
 import { AuthBoundary } from '../auth/AuthBoundary'
 import { OpsBoundary } from '../auth/OpsBoundary'
@@ -70,9 +70,13 @@ export function AppRoutes() {
           {/* Ops subtree: OpsBoundary gates ALL /ops/* (non-ops -> PermissionDenied). */}
           <Route path="/ops" element={<OpsBoundary />}>
             <Route path="fleet" element={<OpsFleet />} />
-            {/* Same components in ops mode (isOps branch): fleet-wide + tenant column. */}
-            <Route path="quarantine" element={<QuarantineConsole />} />
-            <Route path="audit" element={<AuditLookup />} />
+            {/* T9: the separate fleet Quarantine/Audit routes are retired. Quarantine and Audit
+                are now ONE scope-aware screen each at /quarantine and /audit (the component
+                branches on isOps into fleet mode for ops). These redirects keep old fleet links
+                working with no 404; they live inside OpsBoundary, so a non-ops user still hits
+                PermissionDenied rather than being redirected. */}
+            <Route path="quarantine" element={<Navigate to="/quarantine" replace />} />
+            <Route path="audit" element={<Navigate to="/audit" replace />} />
             <Route path="query" element={<OpsQuery />} />
             <Route path="*" element={<NotFound />} />
           </Route>

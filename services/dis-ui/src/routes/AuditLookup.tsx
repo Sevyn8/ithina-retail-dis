@@ -19,11 +19,15 @@ import { useCrossTenantAuditTrace } from '../lib/dis-ui-server/ops-cross-tenant'
 
 // Audit and Trace Lookup (surface map screen 8), on the design-system craft bar.
 // trace_id direct lookup (demand list 5.1): enter a trace_id, render its ordered
-// per-stage lifecycle. Tenant-aware (slice 25): in TENANT mode it is the existing
-// own-tenant lookup, UNCHANGED. In OPS mode (isOps) it does a cross-tenant lookup (5.2)
-// and adds a tenant field to the result. Default ops semantics = cross-tenant
-// lookup-by-trace with a tenant column; the richer 5.2 search (by source/stage/time) is
-// a flagged seam, not built. Cross-tenant read authorization is Sanjeev's policy (open).
+// per-stage lifecycle. ONE scope-aware screen (slice 25 / T9): in TENANT mode the scope is
+// LOCKED to the caller's tenant (own-tenant lookup; a foreign trace returns not-found). In
+// OPS mode (isOps) it does a cross-tenant lookup (5.2) and adds a tenant field to the result.
+// The richer 5.2 search (by source/stage/time) is a flagged seam, not built.
+//
+// AUTHORIZATION (T9): the cross-tenant lookup is requested ONLY when isOps (useCrossTenantAuditTrace
+// is gated on `ops`); the tenant getter returns null for any trace whose tenant_id is not the
+// caller's. This UI gating is necessary BUT NOT SUFFICIENT - the real boundary is server-enforced:
+// the backend MUST refuse cross-tenant lookups for a non-ops token and RLS-scope tenant queries.
 export function AuditLookup() {
   const { snapshot } = useAuth()
   const ops = snapshot !== null && isOps(snapshot)

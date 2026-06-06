@@ -15,8 +15,10 @@ const ops: AuthSnapshot = {
   roles: ['dis:ops', 'dis:read', 'dis:mapping_admin'],
 }
 
+// T9: the fleet view now lives on the canonical scope-aware route /quarantine (the component
+// renders fleet mode for an ops user); the old /ops/quarantine route is a redirect to here.
 function renderOpsQuarantine() {
-  return renderWithProviders(<AppRoutes />, { snapshot: ops, initialEntries: ['/ops/quarantine'] })
+  return renderWithProviders(<AppRoutes />, { snapshot: ops, initialEntries: ['/quarantine'] })
 }
 
 describe('Ops Quarantine (cross-tenant mode)', () => {

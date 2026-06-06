@@ -61,14 +61,28 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Ops Fleet' })).toBeInTheDocument()
   })
 
-  it('shows the Fleet Quarantine and Fleet Audit ops items for ops only (default NAV_ITEMS)', () => {
+  it('no longer renders the retired Fleet Quarantine / Fleet Audit items (T9), even for ops', () => {
+    // T9 merged the fleet views into the scope-aware Quarantine / Audit; the separate Fleet
+    // items are gone for everyone.
     const tenantView = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
     expect(screen.queryByRole('link', { name: 'Fleet Quarantine' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Fleet Audit' })).not.toBeInTheDocument()
     tenantView.unmount()
     renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
-    expect(screen.getByRole('link', { name: 'Fleet Quarantine' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Fleet Audit' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Fleet Quarantine' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Fleet Audit' })).not.toBeInTheDocument()
+    // one scope-aware Quarantine + one Audit remain (MONITORING), for ops too
+    expect(screen.getByRole('link', { name: 'Quarantine' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Audit' })).toBeInTheDocument()
+  })
+
+  it('OPERATIONS holds only Ops Fleet + Query for ops (no fleet Quarantine/Audit) (T9)', () => {
+    const { container } = renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
+    const order = Array.from(container.querySelectorAll('h2, a')).map((el) => el.textContent)
+    const opsIdx = order.indexOf('OPERATIONS')
+    expect(opsIdx).toBeGreaterThanOrEqual(0)
+    // everything after the OPERATIONS header is exactly Ops Fleet then Query
+    expect(order.slice(opsIdx + 1)).toEqual(['Ops Fleet', 'Query'])
   })
 
   it('shows the Query ops item for ops only (default NAV_ITEMS)', () => {
