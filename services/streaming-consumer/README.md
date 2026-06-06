@@ -1,17 +1,22 @@
-# `services/streaming-consumer/` — *v1.0 target; Slice 10 (happy path) built*
+# `services/streaming-consumer/` — *v1.0 target; Slice 10 (happy path) + Slice 11a (quarantine direct-write) built*
 
 The ELT pipeline. Reads `ingress.ready`, fetches the chunk from bronze + GCS, looks up the active mapping, validates identity, runs pre-mapping validation, applies the mapping (rename → normalize → cast → derive), runs post-mapping validation, and atomically writes the canonical row (hot upsert + event insert in one Cloud SQL transaction) or routes failures to quarantine. The largest service in DIS by code volume. For a directory-by-directory walkthrough see `build-guide.md`.
 
-> **Build state (Slice 10).** This README describes the v1.0 TARGET. Built now: the
-> happy path — intake, bronze/GCS fetch, per-lookup mapping load + routing, both
+> **Build state (Slice 10 + 11a).** This README describes the v1.0 TARGET. Built now:
+> the happy path — intake, bronze/GCS fetch, per-lookup mapping load + routing, both
 > Pandera gates, the four sub-stages, `mapping_version_id` stamping, the atomic
 > dual-write (D30/D63/D64), read-time-dedup posture (D33/D38/D65), per-stage
-> fire-and-forget audit (D42), and the minimal failure disposition (audit-and-nack).
-> NOT built yet: the quarantine publish + per-row routing (Slice 11),
-> `ingress.resubmit`/replay (Slice 12), the Identity Service `validate()` + D28
-> fallback (Slice 13 — identity arrives resolved on the event; the composite FK is
-> the enforcement, D39), the circuit breaker + `pipeline.dlq` (D27, carried), STAGED
-> shadow reads, and BQ audit. The service `CLAUDE.md` carries the built invariants.
+> fire-and-forget audit (D42) — and the Slice 11a storm stopper: a narrow allowlist
+> of known-deterministic failures is written DIRECTLY to `quarantine.*` (via
+> `libs/dis-quarantine`, fail-loud), the reserved `QUARANTINED` audit stage is
+> emitted, and the message ACKS; everything else keeps audit-and-nack.
+> NOT built yet: the `quarantine` topic publish + drainer (Slice 11b — the direct
+> write is the 11a interim), replay/lifecycle transitions (only status=NEW is
+> written), `ingress.resubmit`/replay (Slice 12), the Identity Service `validate()`
+> + D28 fallback (Slice 13 — identity arrives resolved on the event; the composite
+> FK is the enforcement, D39), the circuit breaker + `pipeline.dlq` (D27, carried),
+> STAGED shadow reads, and BQ audit. The service `CLAUDE.md` carries the built
+> invariants.
 
 **Purpose.** Transform raw chunks into canonical rows with full audit, RLS enforcement, and tenant-scoped batching. The only service that writes to canonical schemas (other than daily-compute which writes signal_history).
 
@@ -36,13 +41,13 @@ The ELT pipeline. Reads `ingress.ready`, fetches the chunk from bronze + GCS, lo
 
 **Exit.**
 - Success: canonical rows written (hot + event); audit events emitted; message acked.
-- Quarantine: invalid rows routed to `quarantine` topic; consumed by §3.8 quarantine-drainer.
+- Quarantine: invalid rows routed to `quarantine` topic; consumed by §3.8 quarantine-drainer. *(11a interim: the consumer writes `quarantine.*` directly and ACKS — the topic-mediated path supersedes the call site in 11b, not the `dis-quarantine` write functions.)*
 - DLQ: Cloud SQL unhealthy → batch routed to `pipeline.dlq`; receivers throttle.
 - Replay: `ingress.resubmit` triggers full reprocess; `mapping_version_id` defaults to the version on the row being replayed (not current ACTIVE).
 - Failure propagation: persistent Cloud SQL outage → repeated nack until DLQ drainer takes over; ops alerted.
 
 **Why this service is large.** Five concerns combined: bronze fetch, mapping execution, validation (pre + post), canonical sink (atomic dual-write), and audit emission. Splitting would scatter the transaction boundary; canonical writes need to be one transaction.
 
-**What's deliberately not here.** No mapping authoring (that's dis-ui-server). No signal computation (daily-compute). No tenant identity management (identity-service). No quarantine row writing (quarantine-drainer).
+**What's deliberately not here.** No mapping authoring (that's dis-ui-server). No signal computation (daily-compute). No tenant identity management (identity-service). No quarantine LIFECYCLE (transitions/replay — the consumer only holds status=NEW via `libs/dis-quarantine`; the drainer takes over row writing in 11b).
 
 ---

@@ -16,6 +16,7 @@ members = [
     "dis-core",
     "dis-mapping",
     "dis-pii",
+    "dis-quarantine",
     "dis-rls",
     "dis-storage",
     "dis-testing",
@@ -703,6 +704,29 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "dis-core", editable = "libs/dis-core" }]
+
+[[package]]
+name = "dis-quarantine"
+version = "0.0.0"
+source = { editable = "libs/dis-quarantine" }
+dependencies = [
+    { name = "dis-audit" },
+    { name = "dis-core" },
+    { name = "dis-rls" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-audit", editable = "libs/dis-audit" },
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-rls", editable = "libs/dis-rls" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
+]
 
 [[package]]
 name = "dis-rls"
@@ -1675,6 +1699,7 @@ dev = [
     { name = "dis-core" },
     { name = "dis-mapping" },
     { name = "dis-pii" },
+    { name = "dis-quarantine" },
     { name = "dis-rls" },
     { name = "dis-storage" },
     { name = "dis-testing" },
@@ -1734,6 +1759,7 @@ dev = [
     { name = "dis-core", editable = "libs/dis-core" },
     { name = "dis-mapping", editable = "libs/dis-mapping" },
     { name = "dis-pii", editable = "libs/dis-pii" },
+    { name = "dis-quarantine", editable = "libs/dis-quarantine" },
     { name = "dis-rls", editable = "libs/dis-rls" },
     { name = "dis-storage", editable = "libs/dis-storage" },
     { name = "dis-testing", editable = "libs/dis-testing" },
@@ -3290,6 +3316,7 @@ dependencies = [
     { name = "dis-canonical" },
     { name = "dis-core" },
     { name = "dis-mapping" },
+    { name = "dis-quarantine" },
     { name = "dis-rls" },
     { name = "dis-storage" },
     { name = "dis-validation" },
@@ -3307,6 +3334,7 @@ requires-dist = [
     { name = "dis-canonical", editable = "libs/dis-canonical" },
     { name = "dis-core", editable = "libs/dis-core" },
     { name = "dis-mapping", editable = "libs/dis-mapping" },
+    { name = "dis-quarantine", editable = "libs/dis-quarantine" },
     { name = "dis-rls", editable = "libs/dis-rls" },
     { name = "dis-storage", editable = "libs/dis-storage" },
     { name = "dis-validation", editable = "libs/dis-validation" },

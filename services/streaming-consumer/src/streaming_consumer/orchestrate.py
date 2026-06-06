@@ -15,14 +15,20 @@ Stage order (one concern per function, code-quality rule 7):
 7. dual-write       — mapping_version_id stamp (D22) + atomic hot+event (D30)
 8. duplicate audit  — D42 ROW events for dedup-key hits (read-time-dedup posture)
 
-**Minimal failure disposition (audit-and-nack):** a failing chunk gets a FAILURE
-audit (fire-and-forget) and a ``failed_*`` disposition the subscriber NACKS —
-never silently dropped (bronze remains the recoverable source, D5; the message
-stays live for Slice 11's quarantine), never partially written (validation
-precedes the write; write failures roll the batch back, D30). Deterministic
-failures therefore redeliver until Slice 11 lands — the accepted interim posture
-(service CLAUDE.md). Exceptions propagate after the FAILURE audit; the subscriber
-nacks those too.
+**Failure disposition (audit-and-nack, with the Slice 11a quarantine carve-out):**
+a failing chunk gets a FAILURE audit (fire-and-forget) and — on a NARROW ALLOWLIST
+of failures KNOWN to be deterministic (retrying genuinely cannot help) — is held in
+the ``quarantine.*`` store, a QUARANTINED audit is emitted, and the chunk returns
+the ``quarantined`` disposition the subscriber ACKS: the storm-class redeliver loop
+is broken at its source. Everything else keeps audit-and-nack: a ``failed_*``
+disposition or a propagated exception NACKS — never silently dropped (bronze
+remains the recoverable source, D5), never partially written (validation precedes
+the write; write failures roll the batch back, D30). The governing principle: a
+failure waiting for a dependency to arrive (catalogue onboarding → the D63
+``HOT_POSITION_MISSING`` miss; mirror-sync lag → the store-miss contract
+violation) is NOT deterministic in the relevant sense — retry is its designed
+recovery — so it stays on the nack path. A QUARANTINE-WRITE failure also nacks
+(fail-loud, never ack-and-lose); the Pub/Sub dead-letter policy backstops.
 
 The consumer reads ``trace_id`` and identity off the event and mints neither
 (hard rule 4); any IDs it does mint (event-row ids) come from dis-core ``ids``.
@@ -56,11 +62,13 @@ from streaming_consumer.pipeline.validate_post import run_post_validation
 from streaming_consumer.pipeline.validate_pre import run_pre_validation
 from streaming_consumer.sinks.audit import ConsumerAudit
 from streaming_consumer.sinks.canonical import WriteReport, write_chunk
+from streaming_consumer.sinks.quarantine import ConsumerQuarantine, GateFailure
 
 _log = get_logger(SERVICE_NAME)
 
 Disposition = Literal[
     "written",
+    "quarantined",
     "failed_pre_validation",
     "failed_mapping",
     "failed_post_validation",
@@ -69,7 +77,11 @@ Disposition = Literal[
 
 @dataclass(frozen=True)
 class ConsumeOutcome:
-    """What one ingress.ready event produced. The subscriber acks ONLY 'written'."""
+    """What one ingress.ready event produced.
+
+    The subscriber acks 'written' and 'quarantined' (the held chunk must leave the
+    queue — that ack IS the Slice 11a storm fix); every other disposition nacks.
+    """
 
     disposition: Disposition
     report: WriteReport | None = None
@@ -82,22 +94,70 @@ _GATE_FAILURE_CODES: dict[Stage, FailureCode] = {
     Stage.POST_MAPPING_VALIDATED: FailureCode.POST_VALIDATION_FAILED,
 }
 
+# Slice 11a storm stopper: the NARROW allowlist of exception-path failures KNOWN to
+# fail identically on every retry (config-deterministic: only a config change + a
+# future replay recovers them), so hold-and-ACK is correct. Deliberately ABSENT —
+# the governing principle (a failure waiting for a dependency self-heals via
+# redelivery; retry is its designed recovery, so it keeps nacking until replay
+# exists):
+#   - FailureCode.HOT_POSITION_MISSING — the D63 miss; the event rows are already
+#     committed and a redelivery completes the hot upsert once the catalogue/
+#     position onboards (service CLAUDE.md).
+#   - the CONTRACT_VIOLATION store-miss case — excluded by field in
+#     _quarantinable() below; mirror-sync lag heals it (the same shape).
+#   - FailureCode.INFRA_FAILURE and every unmapped/transient code.
+# Gate failures (VALIDATION_ROW_FAILED detail) route separately in
+# _quarantine_gate_failure (rows where the index is known; chunk where row-less).
+_CHUNK_QUARANTINE_CODES: frozenset[FailureCode] = frozenset(
+    {
+        FailureCode.MAPPING_CONFIG_INVALID,
+        FailureCode.SUITE_REF_UNSUPPORTED,
+        FailureCode.CONTRACT_VIOLATION,
+    }
+)
+
+
+def _quarantinable(exc: Exception, code: FailureCode, ctx: _FlowContext) -> bool:
+    """Is this exception-path failure on the 11a allowlist AND fully describable?
+
+    Three gates, all of which must pass:
+    - the stable code is in the narrow allowlist;
+    - the known-columns guard: ``dis_channel`` only exists post-fetch (the bronze
+      row carries it), and ``quarantined_chunks.dis_channel`` is NOT NULL — a
+      pre-fetch failure (e.g. the bronze-absent contract violation) cannot be
+      held, so it keeps today's nack;
+    - the store-miss carve-out: ``EventContractError(field='store_id')`` (the
+      sale-path tax read against an unmirrored store) self-heals on mirror-sync
+      lag — the governing principle keeps it on the nack path.
+    """
+    if code not in _CHUNK_QUARANTINE_CODES:
+        return False
+    if ctx.dis_channel is None:
+        return False
+    return not (code is FailureCode.CONTRACT_VIOLATION and getattr(exc, "field", None) == "store_id")
+
 
 @dataclass
 class _FlowContext:
     """What the catch-all needs to know about a partially-processed event.
 
     ``_process`` records the correlation ids as they become known (post-fetch →
-    ``bronze_id``; post-lookup → ``mapping_version_id``) so a FAILURE audit never
-    buries an id it knows in ``failure_message`` (the Slice 30b failure-audit
-    shape — the seam the quarantine work consumes). ``lap()`` is the per-stage
-    duration seam: stages run strictly sequentially, so elapsed-since-the-
-    previous-audit-point IS the stage span (at audit grain — small non-emitting
-    work like the tax read rides the following stage's lap; not micro-profiled).
+    ``bronze_id``, ``dis_channel``, ``row_count``; post-lookup →
+    ``mapping_version_id``) so a FAILURE audit never buries an id it knows in
+    ``failure_message`` (the Slice 30b failure-audit shape — the seam the Slice 11a
+    quarantine records consume: ``dis_channel``/``row_count`` exist exactly so a
+    held chunk satisfies the quarantine table's NOT NULLs, and the allowlist guard
+    keys on ``dis_channel is None`` to refuse pre-fetch holds). ``lap()`` is the
+    per-stage duration seam: stages run strictly sequentially, so elapsed-since-
+    the-previous-audit-point IS the stage span (at audit grain — small
+    non-emitting work like the tax read rides the following stage's lap; not
+    micro-profiled).
     """
 
     bronze_id: UUID | None = None
     mapping_version_id: int | None = None
+    dis_channel: str | None = None
+    row_count: int | None = None
     _mark: float = field(default_factory=time.monotonic)
 
     def lap(self) -> int:
@@ -114,39 +174,83 @@ class ConsumerPipeline:
     engine: AsyncEngine
     storage: ObjectStore
     audit: ConsumerAudit
+    quarantine: ConsumerQuarantine
     bronze_bucket: str
     batch_size: int = BATCH_SIZE_ROW_PAIRS
 
     async def process(self, event: IngressReadyEvent) -> ConsumeOutcome:
         """Run one event through the pipeline.
 
-        Raises on infrastructure/contract errors AFTER emitting a FAILURE audit
-        where identity is known; the subscriber nacks any raise (audit-and-nack).
-        The FAILURE audit carries every correlation id known at the point of
-        failure (``_FlowContext``) and a stable ``FailureCode`` — never a bare
-        exception class name (Slice 30b failure-audit shape).
+        On an exception, emits a FAILURE audit where identity is known, then —
+        Slice 11a — either holds the chunk in quarantine and returns the
+        ``quarantined`` disposition the subscriber ACKS (the narrow deterministic
+        allowlist: the storm fix), or re-raises so the subscriber nacks
+        (audit-and-nack, today's behavior for everything else). The ordering on
+        the quarantine path is load-bearing: quarantine-write-loud → QUARANTINED
+        audit-emit-forget → ack; a failed HOLD falls back to the nack (never
+        ack-and-lose), a failed AUDIT emit never blocks the ack of a
+        successfully-held chunk (hard rule 11). The FAILURE audit carries every
+        correlation id known at the point of failure (``_FlowContext``) and a
+        stable ``FailureCode`` — never a bare exception class name (Slice 30b
+        failure-audit shape).
         """
         stage = Stage.RECEIVED
         ctx = _FlowContext()
         try:
             return await self._process(event, ctx)
         except Exception as exc:
-            stage = getattr(exc, "_dis_stage", stage)
+            tagged = getattr(exc, "_dis_stage", stage)
+            failed_stage = tagged if isinstance(tagged, Stage) else Stage.RECEIVED
+            failure_code = failure_code_for(exc)
             await self.audit.emit(
-                stage=stage if isinstance(stage, Stage) else Stage.RECEIVED,
+                stage=failed_stage,
                 outcome=Outcome.FAILURE,
                 tenant_id=event.tenant_id,
                 trace_id=event.trace_id,
                 bronze_id=ctx.bronze_id,
                 mapping_version_id=ctx.mapping_version_id,
                 duration_ms=ctx.lap(),
-                failure_code=failure_code_for(exc),
+                failure_code=failure_code,
                 failure_message=str(exc)[:2000],
                 # The class name is always preserved (the no-information-loss rule
                 # behind the INFRA_FAILURE fallback; harmless for mapped codes).
                 event_data={"exception_class": type(exc).__name__},
             )
-            raise
+            if not _quarantinable(exc, failure_code, ctx):
+                raise
+            try:
+                await self.quarantine.hold_chunk_failure(
+                    event,
+                    ctx,
+                    stage=failed_stage,
+                    failure_code=failure_code,
+                    message=str(exc)[:2000],
+                    exception_class=type(exc).__name__,
+                )
+            except Exception as hold_exc:
+                # Fail-loud quarantine posture: the held thing did NOT land, so the
+                # message must stay live. Log the hold failure with context, then
+                # re-raise the ORIGINAL failure (hold failure as explicit cause) so
+                # the subscriber nacks exactly as before 11a (the Pub/Sub
+                # dead-letter policy backstops the loop).
+                _log.bind(
+                    stage="quarantine", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id)
+                ).error(
+                    "quarantine hold failed for %s; falling back to nack (never ack-and-lose)",
+                    failure_code,
+                    exc_info=True,
+                )
+                raise exc from hold_exc
+            await self._emit_quarantined(
+                event,
+                ctx,
+                failed_stage=failed_stage,
+                failure_code=failure_code,
+                table="quarantined_chunks",
+                held=1,
+                message=str(exc)[:2000],
+            )
+            return ConsumeOutcome(disposition="quarantined")
 
     async def _process(self, event: IngressReadyEvent, ctx: _FlowContext) -> ConsumeOutcome:
         log = _log.bind(stage="pipeline", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
@@ -163,6 +267,8 @@ class ConsumerPipeline:
             fetch_chunk(self.engine, self.storage, event, bronze_bucket=self.bronze_bucket),
         )
         ctx.bronze_id = fetched.bronze.bronze_id
+        ctx.dis_channel = fetched.bronze.dis_channel
+        ctx.row_count = fetched.frame.height
         await self.audit.emit(
             stage=Stage.RECEIVED,
             outcome=Outcome.RETRIED if seen_before else Outcome.SUCCESS,
@@ -204,15 +310,19 @@ class ConsumerPipeline:
         # 4. Pre-mapping (source-shape) gate — D13: semantic validation lives here.
         pre = run_pre_validation(loaded, fetched.frame, tenant_id=str(tenant_id), trace_id=str(trace_id))
         if not pre.passed:
+            pre_failures: list[GateFailure] = [
+                (f.column, f.row_index, f.check, f.reason) for f in pre.failures
+            ]
             await self._emit_gate_failure(
+                Stage.PRE_MAPPING_VALIDATED, event, fetched, loaded, ctx, failures=pre_failures
+            )
+            return await self._quarantine_gate_failure(
                 Stage.PRE_MAPPING_VALIDATED,
                 event,
-                fetched,
-                loaded,
                 ctx,
-                failures=[(f.column, f.row_index, f.check, f.reason) for f in pre.failures],
+                failures=pre_failures,
+                fallback="failed_pre_validation",
             )
-            return ConsumeOutcome(disposition="failed_pre_validation")
         await self.audit.emit(
             stage=Stage.PRE_MAPPING_VALIDATED,
             outcome=Outcome.SUCCESS,
@@ -228,15 +338,19 @@ class ConsumerPipeline:
         #    the minimal disposition has no per-row split (Slice 11).
         result = apply_loaded_mapping(loaded, fetched.frame, tenant_id=str(tenant_id), trace_id=str(trace_id))
         if result.failures:
+            map_failures: list[GateFailure] = [
+                (f.column, f.row_index, f"{f.stage}:{f.op}", f.reason) for f in result.failures
+            ]
             await self._emit_gate_failure(
+                Stage.MAPPING_EXECUTED, event, fetched, loaded, ctx, failures=map_failures
+            )
+            return await self._quarantine_gate_failure(
                 Stage.MAPPING_EXECUTED,
                 event,
-                fetched,
-                loaded,
                 ctx,
-                failures=[(f.column, f.row_index, f"{f.stage}:{f.op}", f.reason) for f in result.failures],
+                failures=map_failures,
+                fallback="failed_mapping",
             )
-            return ConsumeOutcome(disposition="failed_mapping")
         await self.audit.emit(
             stage=Stage.MAPPING_EXECUTED,
             outcome=Outcome.SUCCESS,
@@ -255,15 +369,19 @@ class ConsumerPipeline:
             loaded, result.contribution, tenant_id=str(tenant_id), trace_id=str(trace_id)
         )
         if not post.passed:
+            post_failures: list[GateFailure] = [
+                (f.column, f.row_index, f.check, f.reason) for f in post.failures
+            ]
             await self._emit_gate_failure(
+                Stage.POST_MAPPING_VALIDATED, event, fetched, loaded, ctx, failures=post_failures
+            )
+            return await self._quarantine_gate_failure(
                 Stage.POST_MAPPING_VALIDATED,
                 event,
-                fetched,
-                loaded,
                 ctx,
-                failures=[(f.column, f.row_index, f.check, f.reason) for f in post.failures],
+                failures=post_failures,
+                fallback="failed_post_validation",
             )
-            return ConsumeOutcome(disposition="failed_post_validation")
         await self.audit.emit(
             stage=Stage.POST_MAPPING_VALIDATED,
             outcome=Outcome.SUCCESS,
@@ -375,6 +493,107 @@ class ConsumerPipeline:
                 # payload, never logged or audited here).
                 failure_message=f"column={column}: {reason}"[:2000],
             )
+
+    async def _quarantine_gate_failure(
+        self,
+        stage: Stage,
+        event: IngressReadyEvent,
+        ctx: _FlowContext,
+        *,
+        failures: list[GateFailure],
+        fallback: Disposition,
+    ) -> ConsumeOutcome:
+        """Hold a gate's failures and ACK, or fall back to today's nack disposition.
+
+        Gate failures are data-deterministic (the same chunk re-validates
+        identically), so they are storm-class too. Routing (Slice 11a):
+
+        - every failure carries a ``row_index`` → one ``quarantined_rows`` record
+          per distinct failing row (``VALIDATION_ROW_FAILED``). The chunk's GOOD
+          rows are NOT written — the whole-chunk processing model is unchanged
+          (no partial success exists; bronze remains the recoverable source for a
+          future replay).
+        - ANY row-less failure (missing column / dtype / frame-grain — the shape
+          that cannot satisfy ``quarantined_rows.row_offset NOT NULL``) → the
+          chunk is held whole in ``quarantined_chunks`` under the gate-summary
+          code.
+
+        A failed HOLD logs and returns ``fallback`` (the pre-11a ``failed_*``
+        disposition → nack): never ack-and-lose. The QUARANTINED audit emit
+        happens only after the hold succeeded, and is fire-and-forget.
+        """
+        gate_code = _GATE_FAILURE_CODES[stage]
+        try:
+            if all(row_index is not None for _, row_index, _, _ in failures):
+                held = await self.quarantine.hold_row_failures(event, ctx, stage=stage, failures=failures)
+                table = "quarantined_rows"
+                code: FailureCode = FailureCode.VALIDATION_ROW_FAILED
+            else:
+                await self.quarantine.hold_chunk_failure(
+                    event,
+                    ctx,
+                    stage=stage,
+                    failure_code=gate_code,
+                    message=f"{len(failures)} gate failure(s); row-less shape held at chunk grain",
+                    failures=failures,
+                )
+                held, table, code = 1, "quarantined_chunks", gate_code
+        except Exception:
+            _log.bind(stage="quarantine", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id)).error(
+                "quarantine hold failed for %s gate; falling back to nack (never ack-and-lose)",
+                gate_code,
+                exc_info=True,
+            )
+            return ConsumeOutcome(disposition=fallback)
+        await self._emit_quarantined(
+            event,
+            ctx,
+            failed_stage=stage,
+            failure_code=code,
+            table=table,
+            held=held,
+            message=f"{len(failures)} gate failure(s) held; chunk acked (Slice 11a)",
+        )
+        return ConsumeOutcome(disposition="quarantined")
+
+    async def _emit_quarantined(
+        self,
+        event: IngressReadyEvent,
+        ctx: _FlowContext,
+        *,
+        failed_stage: Stage,
+        failure_code: FailureCode,
+        table: str,
+        held: int,
+        message: str | None = None,
+    ) -> None:
+        """The QUARANTINED disposition record (the Slice 11a emitter for the
+        reserved stage), carrying the D78 failure-audit shape.
+
+        ``outcome=SUCCESS``: the FAILURE row already recorded the failure at the
+        stage it died in; this row records that the quarantine ACTION succeeded —
+        the trail reads "failed at stage X → QUARANTINED". Fire-and-forget like
+        every audit emit (hard rule 11): a failed emit never blocks the ack of a
+        successfully-held chunk.
+        """
+        await self.audit.emit(
+            stage=Stage.QUARANTINED,
+            outcome=Outcome.SUCCESS,
+            tenant_id=event.tenant_id,
+            trace_id=event.trace_id,
+            bronze_id=ctx.bronze_id,
+            mapping_version_id=ctx.mapping_version_id,
+            row_count=ctx.row_count,
+            rows_failed=held if table == "quarantined_rows" else None,
+            duration_ms=ctx.lap(),
+            failure_code=failure_code,
+            failure_message=message,
+            event_data={
+                "quarantine_table": table,
+                "held": held,
+                "failed_stage": failed_stage.value,
+            },
+        )
 
     async def _seen_before(self, tenant_id: UUID, trace_id: UUID) -> bool:
         """Best-effort redelivery detection for the RETRIED outcome (Slice 30b).

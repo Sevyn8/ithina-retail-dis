@@ -14,8 +14,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from dis_quarantine import PostgresQuarantineWriter
 from streaming_consumer.orchestrate import ConsumerPipeline
 from streaming_consumer.sinks.audit import ConsumerAudit
+from streaming_consumer.sinks.quarantine import ConsumerQuarantine
 
 _TENANT = UUID("019e89f9-dbd5-7703-8221-ae6b811599bb")
 _TRACE = UUID("019e99bb-f661-7f22-b21c-aac635797592")
@@ -31,6 +33,7 @@ async def test_seen_before_degrades_to_false_on_readback_failure() -> None:
         engine=cast(AsyncEngine, object()),  # any rls_session use explodes
         storage=cast("object", None),  # type: ignore[arg-type]
         audit=ConsumerAudit(_NullWriter()),
+        quarantine=ConsumerQuarantine(PostgresQuarantineWriter(cast(AsyncEngine, object()))),
         bronze_bucket="unused",
     )
     assert await pipeline._seen_before(_TENANT, _TRACE) is False  # noqa: SLF001

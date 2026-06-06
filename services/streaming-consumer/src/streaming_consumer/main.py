@@ -19,12 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from dis_audit import AuditBackend, select_writer
 from dis_core.errors import DisError
 from dis_core.logging import configure_logging, get_logger
+from dis_quarantine import PostgresQuarantineWriter
 from dis_rls import create_rls_engine
 from dis_storage import StorageClient
 from streaming_consumer.clients.pubsub import Subscriber
 from streaming_consumer.config import SERVICE_NAME, ConsumerConfig
 from streaming_consumer.orchestrate import ConsumerPipeline
 from streaming_consumer.sinks.audit import ConsumerAudit
+from streaming_consumer.sinks.quarantine import ConsumerQuarantine
 
 EXIT_OK = 0
 EXIT_CONFIG = 2
@@ -55,6 +57,7 @@ async def _run() -> int:
             engine=engine,
             storage=StorageClient(bucket=config.bronze_bucket),
             audit=ConsumerAudit(select_writer(AuditBackend.POSTGRES, engine=engine)),
+            quarantine=ConsumerQuarantine(PostgresQuarantineWriter(engine)),
             bronze_bucket=config.bronze_bucket,
         )
         subscriber = Subscriber(project_id=config.pubsub_project_id, pipeline=pipeline)

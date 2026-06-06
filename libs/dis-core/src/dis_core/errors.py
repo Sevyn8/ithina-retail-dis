@@ -198,6 +198,39 @@ class AuditWriteError(DisError):
         self.failure_code = failure_code
 
 
+# -- Quarantine error (Slice 11a) ------------------------------------------------
+# Raised by dis-quarantine. The OPPOSITE posture to AuditWriteError's path: the
+# quarantine write is the data path (the held thing itself, not a record of it), so
+# a failed write RAISES loudly — the consumer must NACK the message rather than
+# ack-and-lose it. Never swallowed.
+
+
+class QuarantineWriteError(DisError):
+    """A ``quarantine.*`` write could not be performed.
+
+    Raised by ``dis-quarantine``'s writer on any insert failure (store down, FK
+    rejection, RLS misconfiguration) and on a tenant-less record (the same D43-shaped
+    contract: there is no tenant-less quarantine path). Deliberately NOT
+    fire-and-forget — quarantine holds the failed data itself, so the caller must
+    see the failure and keep the message live (nack; the Pub/Sub dead-letter policy
+    backstops). Carries ``tenant_id`` / ``trace_id`` / ``failure_code`` for diagnosis.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+        failure_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+        self.failure_code = failure_code
+
+
 # -- Pipeline-mechanics errors (Slice 5) ----------------------------------------
 # Raised by dis-mapping and dis-validation. Both libs are pure (no I/O); these are
 # *config / contract* errors raised loudly at construction or materialization time

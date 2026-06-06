@@ -82,6 +82,7 @@ dev = [
   "dis-pii",
   "dis-storage",
   "dis-audit",
+  "dis-quarantine",
   "dis-mapping",
   "dis-validation",
   "mirror-sync-consumer",
@@ -114,6 +115,7 @@ known-first-party = [
   "dis_audit",
   "dis_canonical",
   "dis_mapping",
+  "dis_quarantine",
   "dis_pii",
   "dis_rls",
   "dis_storage",
@@ -175,6 +177,7 @@ forbidden_modules = [
   "dis_pii",
   "dis_storage",
   "dis_audit",
+  "dis_quarantine",
   "dis_testing",
   "sqlalchemy",
   "psycopg",
@@ -193,6 +196,7 @@ forbidden_modules = [
   "dis_pii",
   "dis_storage",
   "dis_audit",
+  "dis_quarantine",
   "dis_testing",
   "sqlalchemy",
   "psycopg",
@@ -216,6 +220,7 @@ members = [
   "libs/dis-pii",
   "libs/dis-storage",
   "libs/dis-audit",
+  "libs/dis-quarantine",
   "libs/dis-mapping",
   "libs/dis-validation",
   "services/mirror-sync-consumer",
@@ -235,6 +240,7 @@ dis-rls = { workspace = true }
 dis-pii = { workspace = true }
 dis-storage = { workspace = true }
 dis-audit = { workspace = true }
+dis-quarantine = { workspace = true }
 dis-mapping = { workspace = true }
 dis-validation = { workspace = true }
 mirror-sync-consumer = { workspace = true }

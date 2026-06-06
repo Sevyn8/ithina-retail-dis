@@ -18,6 +18,8 @@ dependencies = [
   "dis-validation",
   # Fire-and-forget audit to Cloud SQL audit.events (hard rule 11, D43/D44).
   "dis-audit",
+  # Fail-loud quarantine writes to quarantine.* (the Slice 11a storm stopper).
+  "dis-quarantine",
   # ingress.ready subscriber (emulator-guarded locally; cloud wiring deferred).
   "google-cloud-pubsub>=2.23",
   # Async engine + connection for the dual-write (psycopg v3 async).

@@ -1,13 +1,18 @@
-"""AC5: both validation gates, both ways — and the D13 posture.
+"""AC5: both validation gates, both ways — and the D13 posture (11a disposition).
 
 - Pre-mapping (source-shape) REJECTS a structurally wrong chunk (a required
   source column absent) and ACCEPTS a well-formed one.
 - Post-mapping (canonical-shape) REJECTS a contribution that maps to an invalid
   canonical frame (the bad-subtype mapping derives ``event_subtype='GIFT'``,
   off the model's enum vocab) and ACCEPTS a valid one.
-- Failures take the minimal disposition: a ``failed_*`` outcome (the subscriber
-  nacks it), ZERO canonical rows, and FAILURE audit rows (D13: the consumer is
-  where semantic validation lives — the receiver stayed permissive).
+- Gate failures are data-deterministic, so since Slice 11a they take the
+  QUARANTINED disposition (the subscriber ACKS — the storm fix): a row-less
+  failure shape (the absent column) is held at CHUNK grain in
+  ``quarantined_chunks``; a row-indexed shape (the GIFT subtype, per-row enum
+  check) is held in ``quarantined_rows``. Either way: ZERO canonical rows (the
+  whole-chunk model is unchanged — no partial success) and the FAILURE audit
+  rows still land (D13: the consumer is where semantic validation lives — the
+  receiver stayed permissive).
 """
 
 from __future__ import annotations
@@ -114,10 +119,25 @@ async def test_pre_validation_rejects_structurally_wrong_chunk(
         bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
     )
     outcome = await pipeline.process(chunk.event)
-    assert outcome.disposition == "failed_pre_validation"
+    assert outcome.disposition == "quarantined"
     assert _no_canonical_rows(dis_admin, chunk.trace_id)
     assert _failure_audit_rows(dis_admin, chunk.trace_id, "PRE_MAPPING_VALIDATED") >= 1
     _assert_gate_failure_shape(dis_admin, chunk.trace_id, "PRE_MAPPING_VALIDATED", "PRE_VALIDATION_FAILED")
+    # The row-less failure shape (column absent — no row_offset exists) is held
+    # at CHUNK grain under the gate-summary code.
+    with dis_admin.begin() as conn:
+        held = conn.execute(
+            text(
+                "SELECT status, failure_stage, failure_reason "
+                "FROM quarantine.quarantined_chunks WHERE trace_id = CAST(:t AS uuid)"
+            ),
+            {"t": str(chunk.trace_id)},
+        ).one()
+    assert (held.status, held.failure_stage, held.failure_reason) == (
+        "NEW",
+        "PRE_MAPPING_VALIDATION",
+        "PRE_VALIDATION_FAILED",
+    )
 
 
 async def test_pre_validation_accepts_well_formed_chunk(
@@ -162,7 +182,23 @@ async def test_post_validation_rejects_invalid_canonical_frame(
         bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
     )
     outcome = await pipeline.process(chunk.event)
-    assert outcome.disposition == "failed_post_validation"
+    assert outcome.disposition == "quarantined"
     assert _no_canonical_rows(dis_admin, chunk.trace_id)
     assert _failure_audit_rows(dis_admin, chunk.trace_id, "POST_MAPPING_VALIDATED") >= 1
     _assert_gate_failure_shape(dis_admin, chunk.trace_id, "POST_MAPPING_VALIDATED", "POST_VALIDATION_FAILED")
+    # The row-indexed failure shape (a per-row enum check) is held per ROW.
+    with dis_admin.begin() as conn:
+        held = conn.execute(
+            text(
+                "SELECT status, failure_stage, failure_reason, row_offset, mapping_version_id "
+                "FROM quarantine.quarantined_rows WHERE trace_id = CAST(:t AS uuid)"
+            ),
+            {"t": str(chunk.trace_id)},
+        ).all()
+    assert held, "the failing rows must be held in quarantined_rows"
+    for row in held:
+        assert row.status == "NEW"
+        assert row.failure_stage == "POST_MAPPING_VALIDATION"
+        assert row.failure_reason == "VALIDATION_ROW_FAILED"
+        assert row.row_offset >= 0
+        assert row.mapping_version_id is not None  # NOT NULL + FK on the live table

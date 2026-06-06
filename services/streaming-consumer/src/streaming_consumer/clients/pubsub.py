@@ -5,16 +5,26 @@ provisioning lives in ``tools/local/create_topics.py`` (``make topics-create``),
 NEVER in consumer runtime code. Cloud subscription wiring is deferred infra; the
 runtime client refuses to run without ``PUBSUB_EMULATOR_HOST``.
 
-Message routing (the Slice 10 minimal failure disposition — see orchestrate.py):
+Message routing (the Slice 10 disposition + the Slice 11a quarantine carve-out —
+see orchestrate.py):
 
 - ``written`` → ack.
+- ``quarantined`` → **ack**. The chunk is HELD in the quarantine store (the
+  fail-loud write already succeeded) and the QUARANTINED audit emitted; the ack
+  is the storm fix — the deterministic-failure redeliver loop is broken at its
+  source.
 - any failed disposition or any raised pipeline error → **nack** (the pipeline
-  already emitted the FAILURE audit; bronze remains the recoverable source, D5;
-  the message stays live for Slice 11's quarantine path). Deterministic failures
-  therefore redeliver until Slice 11 — the accepted, documented interim posture.
-- the ONE ack-on-failure: an unparseable envelope (``EventContractError`` at
-  parse). Identity may be unknowable there, so a D43-conformant audit row may be
-  impossible, and a redelivery fails identically (the 9b precedent).
+  already emitted the FAILURE audit; bronze remains the recoverable source, D5).
+  This includes a FAILED QUARANTINE WRITE (the pipeline falls back to raise /
+  ``failed_*`` so the held data is never acked-and-lost) and the self-heal
+  exclusions (``HOT_POSITION_MISSING``, the store-miss contract violation) —
+  redelivery is their designed recovery; the Pub/Sub dead-letter policy
+  backstops.
+- the ONE pre-pipeline ack-on-failure: an unparseable envelope
+  (``EventContractError`` at parse). Identity may be unknowable there, so a
+  D43-conformant audit row may be impossible, and a redelivery fails identically
+  (the 9b precedent). No quarantine either — the tables' ``tenant_id`` is NOT
+  NULL (unchanged in 11a).
 
 No ordering key is consumed: D60 resolved as STRIKE (canonical correctness is
 event-time-based — D33 read-time dedup + the D64 conditional upsert; an ordering
@@ -57,6 +67,11 @@ async def process_message(pipeline: ConsumerPipeline, data: bytes) -> Decision:
     except Exception as exc:
         log.error("chunk failed (nacked; FAILURE audit emitted — audit-and-nack): %s", exc)
         return "nack"
+    if outcome.disposition == "quarantined":
+        # The Slice 11a storm fix: the chunk is held (fail-loud write succeeded),
+        # so the ack breaks the redeliver loop at its source.
+        log.info("chunk quarantined (acked; held in quarantine.* with QUARANTINED audit)")
+        return "ack"
     if outcome.disposition != "written":
         log.error("chunk failed validation: %s (nacked — audit-and-nack)", outcome.disposition)
         return "nack"

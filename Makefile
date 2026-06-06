@@ -59,6 +59,7 @@ MYPY_PACKAGES = \
 	libs/dis-core \
 	libs/dis-mapping \
 	libs/dis-pii \
+	libs/dis-quarantine \
 	libs/dis-rls \
 	libs/dis-storage \
 	libs/dis-testing \

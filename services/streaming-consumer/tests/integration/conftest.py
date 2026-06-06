@@ -211,7 +211,7 @@ def dis_admin(admin_engine_session: Engine) -> Engine:
 
 @dataclass
 class Cleanup:
-    """Trace ids + SKUs to scrub in teardown (canonical + audit + bronze)."""
+    """Trace ids + SKUs to scrub in teardown (canonical + audit + bronze + quarantine)."""
 
     traces: list[UUID] = field(default_factory=list)
     skus: list[str] = field(default_factory=list)
@@ -235,6 +235,14 @@ def cleanup(dis_admin: Engine) -> Iterator[Cleanup]:
                 params,
             )
             conn.execute(text("DELETE FROM audit.events WHERE trace_id = ANY(:tids)"), params)
+            conn.execute(
+                text("DELETE FROM quarantine.quarantined_rows WHERE trace_id = ANY(:tids)"),
+                params,
+            )
+            conn.execute(
+                text("DELETE FROM quarantine.quarantined_chunks WHERE trace_id = ANY(:tids)"),
+                params,
+            )
             conn.execute(
                 text("DELETE FROM bronze.data_ingress_events WHERE trace_id = ANY(:tids)"),
                 params,
@@ -277,13 +285,16 @@ def pipeline(
 ) -> ConsumerPipeline:
     """A fully wired consumer pipeline against the live stack."""
     from dis_audit import AuditBackend, select_writer
+    from dis_quarantine import PostgresQuarantineWriter
     from streaming_consumer.orchestrate import ConsumerPipeline
     from streaming_consumer.sinks.audit import ConsumerAudit
+    from streaming_consumer.sinks.quarantine import ConsumerQuarantine
 
     return ConsumerPipeline(
         engine=engine,
         storage=storage,
         audit=ConsumerAudit(select_writer(AuditBackend.POSTGRES, engine=engine)),
+        quarantine=ConsumerQuarantine(PostgresQuarantineWriter(engine)),
         bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
     )
 
@@ -462,11 +473,12 @@ def event_date_of(day_offset: int = 0) -> date:
 def drain_subscription(project_id: str) -> int:
     """Pull-and-ACK everything currently on the consumer's real subscription.
 
-    Test hygiene only: audit-and-nack deliberately leaves a deterministically
-    failing message REDELIVERING (the Slice 10 interim posture) — without a
-    drain it poisons later subscriber-level tests on the shared subscription.
-    The production consumer never acks a failure; this helper is the test
-    stand-in for Slice 11's quarantine drain.
+    Test hygiene only: non-allowlisted failures still nack-and-redeliver (the
+    11a posture quarantines only the deterministic allowlist), and OTHER suites
+    (the worker) publish ingress.ready messages nobody consumes — without a
+    drain either poisons later subscriber-level tests on the shared
+    subscription. Subscriber-level assertions must additionally be PER-TRACE
+    (held/audit counts for the test's own trace), never poll-count-based.
     """
     from google.cloud import pubsub_v1
 

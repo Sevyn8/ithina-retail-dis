@@ -6,9 +6,10 @@ resolves to ITS OWN template's ``mapping_rules``, proven by distinguishable
 rules (the ``currency`` derive-constant) and the per-template
 ``mapping_version_id`` stamp on the canonical rows (D22 unchanged: the stamp is
 still the loaded mapping's version, now the RIGHT mapping's). A ``template_id``
-naming no ACTIVE row raises the clean ``MappingConfigError`` (audit-and-nack),
-never a silent wrong-mapping. The ``MAPPING_LOOKED_UP`` audit ``event_data``
-carries the template the lookup keyed on (additive).
+naming no ACTIVE row fails loud with ``MAPPING_CONFIG_INVALID`` — since Slice 11a
+held in quarantine and acked (the deterministic allowlist), never a silent
+wrong-mapping. The ``MAPPING_LOOKED_UP`` audit ``event_data`` carries the
+template the lookup keyed on (additive).
 
 The template_id-ABSENT case is deliberately NOT here: it is structurally
 unreachable at the lookup — the contract requires the field, so an absent value
@@ -26,7 +27,6 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import text
 
-from dis_core.errors import MappingConfigError
 from dis_core.ids import new_uuid7
 from dis_testing.fixtures import PRIMARY_TENANT
 from streaming_consumer.orchestrate import ConsumerPipeline
@@ -198,7 +198,13 @@ async def test_unknown_template_raises_clean_mapping_config_error(
     stack_env: dict[str, str],
     consumer_mappings: dict[str, int],
 ) -> None:
-    """A template_id naming no ACTIVE row fails loud — never a silent wrong-mapping."""
+    """A template_id naming no ACTIVE row fails loud — never a silent wrong-mapping.
+
+    Since Slice 11a the loud failure is HELD, not re-raised: MAPPING_CONFIG_INVALID
+    is on the deterministic allowlist, so the chunk lands in quarantined_chunks and
+    the disposition acks (the storm fix). Loudness is unchanged — the FAILURE audit
+    still carries the template id, and nothing reaches canonical.
+    """
     ghost_template = new_uuid7()  # no ACTIVE row anywhere carries this id
     chunk = seed_chunk(
         dis_admin,
@@ -210,11 +216,11 @@ async def test_unknown_template_raises_clean_mapping_config_error(
         template_id=ghost_template,
     )
 
-    with pytest.raises(MappingConfigError, match=str(ghost_template)):
-        await pipeline.process(chunk.event)
+    outcome = await pipeline.process(chunk.event)
+    assert outcome.disposition == "quarantined"
 
-    # Audit-and-nack: the FAILURE landed at the lookup stage with the template
-    # in the message (code-quality rule 5); nothing reached canonical.
+    # The FAILURE landed at the lookup stage with the template in the message
+    # (code-quality rule 5); the chunk is held; nothing reached canonical.
     with dis_admin.begin() as conn:
         failure = conn.execute(
             text(
@@ -241,11 +247,21 @@ async def test_unknown_template_raises_clean_mapping_config_error(
             )
         }
 
+        held = conn.execute(
+            text(
+                "SELECT status, failure_reason FROM quarantine.quarantined_chunks "
+                "WHERE trace_id = CAST(:t AS uuid)"
+            ),
+            {"t": str(chunk.trace_id)},
+        ).one()
+
     # Slice 30b: the stable vocabulary replaces the exception class name, and the
     # catch-all carries the bronze id it knows (the lookup runs AFTER the fetch).
     assert failure.failure_code == "MAPPING_CONFIG_INVALID"
     assert failure.data_ingress_event_id is not None
     assert str(ghost_template) in failure.failure_message
+    # Slice 11a: the deterministic lookup failure is held (status=NEW) and acked.
+    assert (held.status, held.failure_reason) == ("NEW", "MAPPING_CONFIG_INVALID")
     assert written == {
         "store_sku_sale_events": 0,
         "store_sku_change_events": 0,
