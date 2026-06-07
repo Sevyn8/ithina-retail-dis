@@ -20,8 +20,11 @@ dependencies = [
   "dis-audit",
   # Fail-loud quarantine writes to quarantine.* (the Slice 11a storm stopper).
   "dis-quarantine",
-  # ingress.ready subscriber (emulator-guarded locally; cloud wiring deferred).
+  # ingress.ready subscriber (emulator-or-ambient, slice 40a).
   "google-cloud-pubsub>=2.23",
+  # The toggled readiness-healthz server (slice 40a): RUN_HEALTH_SERVER=true ->
+  # /healthz alongside the pull loop (Cloud Run Service mode); off -> pure loop.
+  "uvicorn>=0.32",
   # Async engine + connection for the dual-write (psycopg v3 async).
   "sqlalchemy[asyncio]>=2.0.36",
   "psycopg[binary]>=3.2",

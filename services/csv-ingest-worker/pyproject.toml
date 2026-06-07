@@ -18,8 +18,11 @@ dependencies = [
   # Structural preflight (D13/D16). Behaviour-sensitive: contained in preflight.py
   # with canary tests asserting the relied-on sniff behaviour (Slice 5 pattern).
   "duckdb>=1.0",
-  # csv.received subscriber + ingress.ready publisher (emulator-guarded locally).
+  # csv.received subscriber + ingress.ready publisher (emulator-or-ambient, slice 40a).
   "google-cloud-pubsub>=2.23",
+  # The toggled readiness-healthz server (slice 40a): RUN_HEALTH_SERVER=true ->
+  # /healthz alongside the pull loop (Cloud Run Service mode); off -> pure loop.
+  "uvicorn>=0.32",
   # Async engine + connection for the bronze write (psycopg v3 async).
   "sqlalchemy[asyncio]>=2.0.36",
   "psycopg[binary]>=3.2",

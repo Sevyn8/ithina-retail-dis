@@ -18,6 +18,16 @@ rule 10), and the subscription is provisioned by ``tools/local/create_topics.py`
 is a loud startup error, not a silent auto-repair.
 
 The dedup window is a decision value (24h, build-guide Slice 9b), not config.
+
+Optional env (slice 40a, the toggled readiness-healthz wrapper):
+
+- ``RUN_HEALTH_SERVER`` — ``"true"``/``"1"`` → run the /healthz HTTP server
+  alongside the pull loop (Cloud Run Service mode). Unset/other → pure loop
+  (local dev; future Worker Pools). A legitimately-optional boolean with a
+  default-off, not a rule-4 silent fallback: absence is a valid configuration.
+- ``PORT`` — the healthz server's port (Cloud Run injects it). REQUIRED — raises —
+  only when ``RUN_HEALTH_SERVER`` is on; never read otherwise (no new required
+  local env).
 """
 
 from __future__ import annotations
@@ -30,6 +40,8 @@ from dis_core.errors import CsvIngestError
 _POSTGRES_URL = "POSTGRES_URL"
 _PUBSUB_PROJECT_ID = "PUBSUB_PROJECT_ID"
 _GCS_BUCKET_BRONZE = "GCS_BUCKET_BRONZE"
+_RUN_HEALTH_SERVER = "RUN_HEALTH_SERVER"
+_PORT = "PORT"
 
 SERVICE_NAME = "csv-ingest-worker"
 
@@ -46,6 +58,12 @@ CSV_RECEIVED_SUBSCRIPTION = "csv-ingest-worker.csv.received"
 # redelivery / late delivery.
 DEDUP_WINDOW_HOURS = 24
 
+# Readiness staleness threshold (slice 40a): /healthz reports stale past this many
+# seconds since the loop's last heartbeat. Sized above the worst expected loop
+# iteration (10s pull timeout + 1s error sleep + chunk-processing headroom) — a
+# long pure-CPU stretch must not flap readiness; a dead loop must trip it.
+HEALTH_STALENESS_SECONDS = 60.0
+
 
 @dataclass(frozen=True)
 class WorkerConfig:
@@ -54,6 +72,8 @@ class WorkerConfig:
     postgres_url: str
     pubsub_project_id: str
     bronze_bucket: str
+    run_health_server: bool
+    health_port: int | None
 
     @classmethod
     def from_env(cls) -> WorkerConfig:
@@ -75,8 +95,23 @@ class WorkerConfig:
                 f"{_GCS_BUCKET_BRONZE} is not set; cannot cross-check the event's "
                 "gcs_uri bucket or read the uploaded object"
             )
+        run_health_server = os.environ.get(_RUN_HEALTH_SERVER, "").lower() in ("1", "true")
+        health_port: int | None = None
+        if run_health_server:
+            port_raw = os.environ.get(_PORT)
+            if not port_raw:
+                raise CsvIngestError(
+                    f"{_PORT} is not set but {_RUN_HEALTH_SERVER} is on; the healthz "
+                    "server needs the Cloud-Run-injected port"
+                )
+            try:
+                health_port = int(port_raw)
+            except ValueError as exc:
+                raise CsvIngestError(f"{_PORT}={port_raw!r} is not an integer port") from exc
         return cls(
             postgres_url=postgres_url,
             pubsub_project_id=pubsub_project_id,
             bronze_bucket=bronze_bucket,
+            run_health_server=run_health_server,
+            health_port=health_port,
         )

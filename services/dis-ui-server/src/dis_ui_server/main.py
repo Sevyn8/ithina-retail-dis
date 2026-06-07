@@ -54,9 +54,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Slice 8 upload dependencies — all construction-lazy like the engine (no
     # network I/O until first use), so the liveness/readiness split holds: a
     # missing env var crashloops here, an unreachable backend degrades later.
-    # PubsubPublisher refuses to construct without PUBSUB_EMULATOR_HOST (cloud
-    # wiring is deferred infra, the 9b posture). Tests override these state
-    # entries with fakes after startup.
+    # PubsubPublisher is emulator-or-ambient (slice 40a): the emulator when
+    # PUBSUB_EMULATOR_HOST is set, real Pub/Sub via ambient credentials when not.
+    # Tests override these state entries with fakes after startup.
     app.state.storage = StorageClient(bucket=config.gcs_bucket_bronze)
     app.state.publisher = PubsubPublisher(project_id=config.pubsub_project_id)
     app.state.audit = UiAudit(select_writer(AuditBackend.POSTGRES, engine=engine))

@@ -1,5 +1,5 @@
 """ingress.ready envelope: frozen-contract population + drift guard (AC6) and the
-real-Pub/Sub refuse guard."""
+emulator-or-ambient construction (slice 40a)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from csv_ingest_worker.publisher import (
     PubsubPublisher,
     build_ingress_ready,
 )
-from dis_core.errors import CsvIngestError
 
 _CONTRACTS = Path(__file__).resolve().parents[3].parent / "contracts" / "pubsub"
 _SCHEMA = json.loads((_CONTRACTS / "ingress.ready.schema.json").read_text())
@@ -144,11 +143,33 @@ def test_contract_is_additional_properties_false() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Runtime publisher refuses real Pub/Sub (cloud wiring is deferred infra).
+# Runtime publisher is emulator-or-ambient (slice 40a): no-emulator constructs.
 # ---------------------------------------------------------------------------
 
 
-def test_publisher_refuses_real_pubsub(monkeypatch: pytest.MonkeyPatch) -> None:
+class _RecordingPublisherClient:
+    """Stands in for pubsub_v1.PublisherClient; records construction kwargs."""
+
+    last: _RecordingPublisherClient | None = None
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.args = args
+        self.kwargs = kwargs
+        _RecordingPublisherClient.last = self
+
+
+def test_publisher_constructs_without_emulator_var_ambient_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The branch that pre-40a raised now constructs a bare client (ambient ADC =
+    # pass nothing; pubsub_v1 honours PUBSUB_EMULATOR_HOST natively, so both
+    # branches are the identical no-kwargs construction).
+    from google.cloud import pubsub_v1
+
     monkeypatch.delenv("PUBSUB_EMULATOR_HOST", raising=False)
-    with pytest.raises(CsvIngestError, match="PUBSUB_EMULATOR_HOST"):
-        PubsubPublisher(project_id="local-dis")
+    monkeypatch.setattr(pubsub_v1, "PublisherClient", _RecordingPublisherClient)
+    PubsubPublisher(project_id="real-project")
+    client = _RecordingPublisherClient.last
+    assert client is not None
+    assert client.args == ()
+    assert client.kwargs == {}

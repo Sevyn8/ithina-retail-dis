@@ -1234,3 +1234,21 @@ dis-ui-server `repos/stores.py` + its isolation tests + this entry; no DDL.
 **The write-failure asymmetry.** Audit = the RECORD of what happened = fire-and-forget (hard rule 11, unchanged); quarantine = the HELD THING itself = fail-loud (`QuarantineWriteError`, dis-core). A failed hold NACKS — never ack-and-lose — and the ordering is load-bearing: quarantine-write-loud → QUARANTINED-audit-emit-forget → ack. A failed audit emit never blocks the ack of a successfully-held chunk; an unheld chunk leaves no disposition trail. Good rows of a held chunk are NOT written (the whole-chunk processing model is unchanged — no partial success exists; bronze is the recoverable source for the future replay).
 
 **Architecture.** Direct write (11a, operator-decided): the consumer writes the store and acks. The `quarantine` topic + drainer (the original topic-mediated Slice 11 design) is Slice 11b — not built here; the frozen `quarantine.schema.json` contract and the docs-only `services/quarantine-drainer/` await it. **Zero schema change**: the live tables sufficed; `row_sha256` stays NULL by design (no row hash exists at gate time). **DDL-header drift recorded, not patched**: the headers attribute writes to the 11b drainer and describe an "otherwise-successful chunk" partial-success rows model that does not exist — a `quarantined_rows` entry currently means "held because these rows failed; siblings unwritten, recoverable from bronze". **Known test-emulator flake** (not a production-code issue): a drain-vs-deadline-0-redelivery race on the shared test subscription, twice observed and unreproduced in 7+ subsequent full runs, defended by per-trace assertions and an at-least-once-tolerant no-sustained-redelivery form. **Cross-refs.** D78 (the shape both records carry), D79 (the stable `failure_reason` vocabulary), D63 (the excluded self-heal miss), D43/D44 (audit posture, unchanged), hard rule 11.
+
+### D83: Cloud-wiring posture (Slice 40a). The four Pub/Sub clients (dis-ui-server publisher,
+csv-ingest-worker publisher + subscriber, streaming-consumer subscriber) use emulator-or-ambient:
+emulator when PUBSUB_EMULATOR_HOST is set, real GCP via ambient service-account credentials when
+not, mirroring dis-storage. The pre-40a emulator-required guard (a deliberate "cloud wiring
+deferred" raise) is removed; the pubsub_v1 clients self-honor the emulator var so both branches
+construct identically. The two pull-loop workers (csv-ingest-worker, streaming-consumer) run a
+readiness /healthz HTTP server (uvicorn + raw ASGI) behind a runtime env-var toggle
+(RUN_HEALTH_SERVER) around an unchanged core loop: toggle on = healthz + loop as sibling asyncio
+tasks under one event loop (Cloud Run Service mode); toggle off/unset = the verbatim pure loop
+(local dev, and future Cloud Run Worker Pools, the switch is config-only, no app change). Readiness
+not liveness: the loop writes a heartbeat each cycle UNCONDITIONALLY, /healthz returns 200 if fresh
+(within HEALTH_STALENESS_SECONDS=60) and 503 if stale, so a dead loop (HTTP up, loop crashed) is
+restarted by Cloud Run, closing the zombie-worker silent stall. mirror-sync-consumer (DB pull job,
+no Pub/Sub) is untouched. Infra is out (Amit): the health-check contract (port $PORT, GET /healthz,
+readiness), csv-ingest-worker max-instances=1 as a CORRECTNESS constraint (D58 query-dedup is
+single-instance only), and the new pubsub.subscriptions.get IAM requirement (the subscribers'
+_require_subscription now runs against real GCP). Cross-refs D58.

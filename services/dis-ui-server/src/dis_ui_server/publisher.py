@@ -10,9 +10,10 @@ deterministic per-upload lineage id (the worker's D58 idempotency component —
 see ``handlers/csv_uploads.py`` ``derive_upload_session_id``).
 
 ``Publisher`` is the seam tests inject against; ``PubsubPublisher`` is the runtime
-implementation, emulator-guarded exactly like the 9b worker's: cloud wiring is
-deferred infra, so it refuses to construct without ``PUBSUB_EMULATOR_HOST`` rather
-than silently publishing to real GCP.
+implementation, emulator-or-ambient exactly like ``dis-storage`` (slice 40a): the
+emulator when ``PUBSUB_EMULATOR_HOST`` is set (the ``pubsub_v1`` client honours the
+env var natively), real Pub/Sub via ambient service-account credentials when it is
+not.
 """
 
 from __future__ import annotations
@@ -25,8 +26,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dis_core.errors import DisError
+from dis_core.logging import get_logger
 from dis_core.timestamps import ensure_utc
+
+_log = get_logger("dis-ui-server")
 
 
 class Publisher(Protocol):
@@ -93,20 +96,18 @@ def build_csv_received(
 
 
 class PubsubPublisher:
-    """Runtime publisher against the local Pub/Sub emulator (the 9b pattern).
+    """Runtime publisher, emulator-or-ambient (the dis-storage pattern, slice 40a).
 
-    Refuses to construct without ``PUBSUB_EMULATOR_HOST`` (cloud publish wiring is
-    deferred infra; silently reaching real GCP would be a silent fallback).
-    Construction is offline — the gRPC channel connects on first publish — so app
-    startup stays lazy, matching the engine posture.
+    ``pubsub_v1.PublisherClient`` honours ``PUBSUB_EMULATOR_HOST`` natively: set →
+    the emulator (local, unchanged); unset → real Pub/Sub via ambient
+    application-default credentials. Construction is identical either way and
+    offline — the gRPC channel connects on first publish — so app startup stays
+    lazy, matching the engine posture.
     """
 
     def __init__(self, *, project_id: str) -> None:
-        if not os.environ.get("PUBSUB_EMULATOR_HOST"):
-            raise DisError(
-                "PUBSUB_EMULATOR_HOST is not set; refusing to publish to real Pub/Sub "
-                "(cloud wiring is deferred infra)"
-            )
+        mode = "emulator" if os.environ.get("PUBSUB_EMULATOR_HOST") else "ambient"
+        _log.bind(stage="startup").info("pubsub publisher constructed", extra={"pubsub_mode": mode})
         from google.cloud import pubsub_v1  # lazy: only the runtime path needs it
 
         self._project_id = project_id

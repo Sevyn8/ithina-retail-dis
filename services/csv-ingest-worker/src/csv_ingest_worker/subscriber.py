@@ -3,8 +3,9 @@
 Startup REQUIRES the subscription to exist and raises loudly if it does not —
 provisioning lives in ``tools/local/create_topics.py`` (``make topics-create``),
 NEVER in worker runtime code, so an absent subscription is a configuration error,
-not a silent auto-repair. Cloud subscription wiring is deferred infra; the runtime
-client refuses to run without ``PUBSUB_EMULATOR_HOST``.
+not a silent auto-repair. The client is emulator-or-ambient (slice 40a): the
+emulator when ``PUBSUB_EMULATOR_HOST`` is set (the ``pubsub_v1`` client honours it
+natively), real Pub/Sub via ambient service-account credentials when it is not.
 
 Message routing:
 
@@ -21,7 +22,7 @@ Message routing:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from csv_ingest_worker.config import (
@@ -29,6 +30,7 @@ from csv_ingest_worker.config import (
     SERVICE_NAME,
 )
 from csv_ingest_worker.envelope import parse_csv_received
+from csv_ingest_worker.health import Heartbeat
 from csv_ingest_worker.pipeline import IngestPipeline
 from dis_core.errors import (
     CsvIngestError,
@@ -79,15 +81,15 @@ class Subscriber:
     project_id: str
     pipeline: IngestPipeline
     max_messages: int = 10
+    # Slice 40a: beaten once per loop cycle UNCONDITIONALLY (all modes — the loop
+    # never branches on environment; only the healthz SERVER is toggled, main.py).
+    heartbeat: Heartbeat = field(default_factory=Heartbeat)
 
     def __post_init__(self) -> None:
         import os
 
-        if not os.environ.get("PUBSUB_EMULATOR_HOST"):
-            raise CsvIngestError(
-                "PUBSUB_EMULATOR_HOST is not set; refusing to subscribe to real Pub/Sub "
-                "(cloud wiring is deferred infra)"
-            )
+        mode = "emulator" if os.environ.get("PUBSUB_EMULATOR_HOST") else "ambient"
+        _log.bind(stage="startup").info("pubsub subscriber constructed", extra={"pubsub_mode": mode})
         from google.cloud import pubsub_v1
 
         self._client = pubsub_v1.SubscriberClient()
@@ -143,10 +145,15 @@ class Subscriber:
             )
         return len(received)
 
-    async def run_forever(self) -> None:  # pragma: no cover - thin loop over poll_once
+    async def run_forever(self) -> None:
         log = _log.bind(stage="subscriber")
         log.info("subscribed; pulling from %s", self._sub_path)
         while True:
+            # Slice 40a: the readiness heartbeat, written unconditionally in every
+            # mode (local / Cloud Run Service / Worker Pools) — only the healthz
+            # server that READS it is toggled. A dead/hung loop stops beating and
+            # /healthz goes stale.
+            self.heartbeat.beat()
             try:
                 await self.poll_once()
             except Exception:

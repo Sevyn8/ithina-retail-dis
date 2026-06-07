@@ -233,6 +233,10 @@ Deferred / owned elsewhere (named so they are not lost):
 
 **Phase 1 exit criterion.** All non-DEFERRED slices DONE. A tenant can upload a CSV via the UI, have it land in canonical, see failures in the quarantine console, and audit events for every pipeline step are queryable from Cloud SQL via dis-ui-server. BigQuery archive is deferred to Phase 3.
 
+### GCP Staging Deployment
+
+\- `TODO` Slice 40a: Cloud-wiring (app side). The three Pub/Sub clients (dis-ui-server publisher, csv-ingest-worker + streaming-consumer subscribers) gain a real-GCP mode: emulator when `PUBSUB_EMULATOR_HOST` is set (local, unchanged), ambient service-account credentials against real Pub/Sub when it is not, mirroring the dis-storage emulator-or-ambient pattern (resolves audit finding A2; the workers and the upload publish currently refuse real GCP by design). The two pull-loop workers gain a readiness `/healthz` HTTP server (reads `$PORT`, serves `/healthz`, returns unhealthy when the pull loop's heartbeat is stale) so they pass Cloud Run Service health checks while the loop runs in the background (resolves A5 for the Service shape). Built switch-ready: the healthz server is behind a runtime env-var toggle around an unchanged core loop, so the later move to Cloud Run Worker Pools (requested, invitation-only) is a terraform/config change with no app code change. mirror-sync is a Cloud Run Job + Scheduler (infra), unchanged here. *Depends on / hands off to: the infra-side fixes (env-var names, contract topic/subscription names, Dockerfile/Cloud Build paths, secret values, the ui-server publisher role, the Pub/Sub DLQ policy, the worker Cloud Run shapes) are Amit's terraform, tracked separately; the health-check contract (port `$PORT`, path `/healthz`, readiness) is documented and shared with Amit so his Service config matches.*
+
 ---
 
 ### DIS UI
