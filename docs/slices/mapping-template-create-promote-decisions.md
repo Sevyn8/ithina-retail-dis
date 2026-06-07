@@ -13,21 +13,27 @@ Sanjeev before the corresponding server endpoints are built.
 
 ## Decisions (the brief Section 3 open questions)
 
-### (a) Go-live behavior: CREATE-AS-DRAFT. LOCKED.
+### (a) Go-live behavior: CREATE-AS-ACTIVE. REVERSED (was CREATE-AS-DRAFT; see D88).
 
-Go-live calls the real `createMappingTemplate()` and the result is a DRAFT. There
-is no create-and-stage-in-one-step. The frontend assembles the full
+Go-live calls the real `createMappingTemplate()` and the result is LIVE in one
+step: `POST /api/v1/mapping-templates` writes the v1 version `status='ACTIVE'`
+(+`activated_at`), and the response carries `active_version=1`. There is no
+draft -> activate ceremony. The frontend assembles the full
 `{version, rename, normalize, cast, derive}` document from the wizard state and
-POSTs it; the server returns a DRAFT `MappingTemplateDetail`, exactly as the
-create endpoint already behaves. Promotion to STAGED/ACTIVE is a separate action.
+POSTs it. (Previously this was CREATE-AS-DRAFT with a separate activate step; that
+is reversed by D88, recorded in `docs/decisions.md`.) Edit (PATCH) still writes a
+DRAFT (the D17 lifecycle for changes, unchanged). Safe without supersede because
+create mints a fresh `template_id` (the `uq_csm_active_per_source` partial unique
+cannot collide) and without `mapping.changed` because the consumer reads ACTIVE
+fresh per chunk (no cache). The D17 STAGED shadow rollout is bypassed for the
+create path (accepted for beta).
 
-### (d) Go-live success semantics: HONEST DRAFT. LOCKED (follows from (a)).
+### (d) Go-live success semantics: CREATED AND LIVE. REVERSED (follows from (a); see D88).
 
-The Go-live success copy says "Created (draft)", not "staged". The prior fixture
-returned `status: 'staged'`, which implied approve-maps-to-staged; that wording
-is retired. Until a real stage step exists, the UI states plainly that the
-template was created as a draft. This resolves the brief's DRAFT-vs-staged
-semantic mismatch on the UI side.
+The Go-live success copy says "Created and live" (was "Created (draft)"), never
+"staged". The template is active immediately, so the UI states plainly that new
+files for the source are now processed through this mapping. No "(draft)" copy and
+no Activate button remain in the go-live step.
 
 ### (b) Promotion granularity: ONE-STEP DRAFT to ACTIVE (STAGED dropped). PROVISIONAL, pending-Sanjeev.
 

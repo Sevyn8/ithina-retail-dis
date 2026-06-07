@@ -2,9 +2,11 @@
 
 Each test works under a scratch ``source_id`` unique to the run; teardown
 deletes those rows via the admin role (BYPASSRLS — cleanup only, never the path
-under test). Lifecycle states beyond DRAFT (ACTIVE/DEPRECATED heads) are staged
-by direct admin UPDATE — simulating the future promote slice's output — because
-no endpoint may produce them (that absence is itself asserted).
+under test). Create-as-ACTIVE (D88): create writes the v1 ACTIVE, so the create
+endpoint itself produces the lineage's single ACTIVE head. The DEPRECATED head
+(and re-forcing ACTIVE in edit tests) is staged by direct admin UPDATE; edits
+still write DRAFT (the D17 lifecycle for changes), and the single-ACTIVE
+invariant (no second ACTIVE) is asserted.
 """
 
 from __future__ import annotations
@@ -135,7 +137,7 @@ def _force_status(admin_engine: Engine, mapping_version_id: int, status: str) ->
 # -- create (d) ---------------------------------------------------------------------
 
 
-def test_create_writes_a_valid_draft_with_a_minted_uuid7(
+def test_create_writes_a_valid_active_with_a_minted_uuid7(
     live_client: TestClient,
     mint_token: Callable[..., str],
     scratch_source: str,
@@ -150,29 +152,32 @@ def test_create_writes_a_valid_draft_with_a_minted_uuid7(
     assert body["template_name"] == "sales"
     assert body["template_type"] == "sales"  # captured + surfaced (Slice 14d)
     assert body["latest_version"] == 1  # trigger-assigned, lineage starts at 1
-    assert body["draft_version"] == 1
-    assert body["active_version"] is None and body["staged_version"] is None
+    # Create-as-ACTIVE (D88): the v1 is live in one step, no DRAFT.
+    assert body["active_version"] == 1
+    assert body["draft_version"] is None and body["staged_version"] is None
     assert body["versions_count"] == 1
 
     (version,) = body["versions"]
-    assert version["status"] == "draft"
+    assert version["status"] == "active"
     assert version["version"] == 1
+    assert version["activated_at"] is not None  # ck_csm_activated_at: ACTIVE requires it
     assert version["predecessor_version_id"] is None
     assert version["mapping_rules"] == _canonical(_sale_rules())  # the validated document round-trips
     assert version["field_count"] == 6
     assert version["transform_count"] == 6  # 2 normalize lists' ops + 2 casts + 2 derive ops
 
-    # The stored row, off the database directly (admin read): DRAFT, seq 1, tenant A.
+    # The stored row, off the database directly (admin read): ACTIVE, seq 1, tenant A.
     with admin_engine.connect() as conn:
         row = conn.execute(
             text(
                 "SELECT tenant_id, status, version_seq_per_source, predecessor_version_id, "
-                "template_type FROM config.source_mappings WHERE source_id = :sid"
+                "activated_at, template_type FROM config.source_mappings WHERE source_id = :sid"
             ),
             {"sid": scratch_source},
         ).one()
     assert str(row.tenant_id) == TENANT_A
-    assert row.status == "DRAFT"
+    assert row.status == "ACTIVE"
+    assert row.activated_at is not None
     assert row.version_seq_per_source == 1
     assert row.predecessor_version_id is None
     assert row.template_type == "sales"  # stored, not inferred (Slice 14d)
@@ -296,36 +301,48 @@ def test_non_uuid_token_sub_creates_with_null_created_by(
 def test_patch_edits_a_draft_in_place(
     live_client: TestClient, mint_token: Callable[..., str], scratch_source: str
 ) -> None:
-    created = _create(live_client, mint_token, scratch_source).json()
-    template_id = created["template_id"]
-    original_mvid = created["versions"][0]["mapping_version_id"]
+    # Create-as-ACTIVE (D88): create yields a live ACTIVE v1, no DRAFT. The FIRST
+    # rules PATCH chains a DRAFT v2 off the ACTIVE head; a SECOND rules PATCH then
+    # edits that existing DRAFT v2 IN PLACE (the write-path convention: at most one
+    # DRAFT per lineage). This test exercises the in-place edit on the chained DRAFT.
+    template_id = _create(live_client, mint_token, scratch_source).json()["template_id"]
+    headers = _bearer(mint_token(tenant_id=TENANT_A))
+
+    chained = live_client.patch(
+        f"/api/v1/mapping-templates/{template_id}",
+        headers=headers,
+        json={"mapping_rules": _sale_rules(constant_currency="GBP")},
+    )
+    assert chained.status_code == 200, chained.text
+    draft_v2_mvid = next(
+        v["mapping_version_id"] for v in chained.json()["versions"] if v["status"] == "draft"
+    )
 
     response = live_client.patch(
         f"/api/v1/mapping-templates/{template_id}",
-        headers=_bearer(mint_token(tenant_id=TENANT_A)),
-        json={"mapping_rules": _sale_rules(constant_currency="GBP")},
+        headers=headers,
+        json={"mapping_rules": _sale_rules(constant_currency="USD")},
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    # In place: no new version, same surrogate id, same seq, rules replaced.
-    assert body["versions_count"] == 1
-    (version,) = body["versions"]
-    assert version["mapping_version_id"] == original_mvid
-    assert version["version"] == 1
-    assert version["status"] == "draft"
-    assert version["mapping_rules"]["derive"]["currency"][0]["args"]["value"] == "GBP"
+    # In place: no new version (still 2: the ACTIVE v1 + the one DRAFT v2), same
+    # DRAFT surrogate id, same seq, rules replaced.
+    assert body["versions_count"] == 2
+    draft = next(v for v in body["versions"] if v["status"] == "draft")
+    assert draft["mapping_version_id"] == draft_v2_mvid
+    assert draft["version"] == 2
+    assert draft["mapping_rules"]["derive"]["currency"][0]["args"]["value"] == "USD"
+    assert sum(1 for v in body["versions"] if v["status"] == "active") == 1  # the one ACTIVE is untouched
 
 
 def test_patch_on_an_active_head_chains_a_new_draft(
     live_client: TestClient,
     mint_token: Callable[..., str],
     scratch_source: str,
-    admin_engine: Engine,
 ) -> None:
     created = _create(live_client, mint_token, scratch_source).json()
     template_id = created["template_id"]
-    active_mvid = created["versions"][0]["mapping_version_id"]
-    _force_status(admin_engine, active_mvid, "ACTIVE")  # the future promote slice's output
+    active_mvid = created["versions"][0]["mapping_version_id"]  # create-as-ACTIVE: v1 is the ACTIVE head
 
     response = live_client.patch(
         f"/api/v1/mapping-templates/{template_id}",
@@ -401,7 +418,7 @@ def test_patch_with_invalid_rules_is_400_and_writes_nothing(
     assert detail.status_code == 200
     body = detail.json()
     assert body["versions_count"] == 1, "no new DRAFT was chained by the rejected PATCH"
-    assert body["draft_version"] == 1
+    assert body["active_version"] == 1 and body["draft_version"] is None  # create-as-ACTIVE, unchanged
     assert body["versions"][0]["mapping_rules"] == _canonical(_sale_rules()), "rules unchanged"
 
 
@@ -598,18 +615,24 @@ def test_well_formed_unknown_tenant_reads_empty_writes_403(
     assert "not provisioned" in body["message"]
 
 
-def test_no_endpoint_can_mint_active_or_staged(
+def test_create_is_active_and_edits_keep_exactly_one_active(
     live_client: TestClient, mint_token: Callable[..., str], scratch_source: str
 ) -> None:
-    # The 14a consumer `.first()` hazard guard: across a create + an in-place edit
-    # + a rename, every stored row is still DRAFT (lifecycle transitions belong
-    # to the promote slice — no path here writes ACTIVE/STAGED).
+    # Create-as-ACTIVE (D88) + the 14a consumer `.first()` hazard guard: create
+    # yields exactly one ACTIVE (v1), and an edit (rules + rename) chains a DRAFT
+    # off the immutable ACTIVE head without ever minting a SECOND ACTIVE (or any
+    # STAGED). The single-ACTIVE-per-template invariant holds across the edit.
     headers = _bearer(mint_token(tenant_id=TENANT_A))
-    template_id = _create(live_client, mint_token, scratch_source).json()["template_id"]
+    created = _create(live_client, mint_token, scratch_source).json()
+    assert {v["status"] for v in created["versions"]} == {"active"}  # create is live
+
+    template_id = created["template_id"]
     live_client.patch(
         f"/api/v1/mapping-templates/{template_id}",
         headers=headers,
         json={"mapping_rules": _sale_rules(constant_currency="USD"), "template_name": "renamed"},
     )
     detail = live_client.get(f"/api/v1/mapping-templates/{template_id}", headers=headers).json()
-    assert {v["status"] for v in detail["versions"]} == {"draft"}
+    statuses = [v["status"] for v in detail["versions"]]
+    assert sorted(statuses) == ["active", "draft"]  # one ACTIVE + the chained DRAFT
+    assert statuses.count("active") == 1 and "staged" not in statuses

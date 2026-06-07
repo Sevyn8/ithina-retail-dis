@@ -132,7 +132,7 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect(screen.getAllByText('A123').length).toBeGreaterThan(0)
   })
 
-  it('Go-live creates a DRAFT with honest "Created (draft)" copy (not staged)', async () => {
+  it('Go-live creates a LIVE template in one step with "Created and live" copy (no activate step)', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
@@ -140,29 +140,15 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     await user.click(screen.getByRole('button', { name: /continue to preview/i }))
     await user.click(await screen.findByRole('button', { name: /go live/i }))
     const status = await screen.findByRole('status')
-    // Decision (d): honest DRAFT copy, never "staged".
-    expect(status).toHaveTextContent(/Created \(draft\)/i)
+    // Create-as-ACTIVE (D88): live in one step, honest "Created and live" copy, no "(draft)"/"staged".
+    expect(status).toHaveTextContent(/Created and live/i)
     expect(status).toHaveTextContent(/Sales/)
+    expect(status).not.toHaveTextContent(/draft/i)
     expect(status).not.toHaveTextContent(/staged/i)
-  })
-
-  it('fixture mode activates DRAFT -> ACTIVE in one step via synth (demo-marked)', async () => {
-    const user = userEvent.setup()
-    renderReview('smp_acme0001')
-    await screen.findByRole('heading', { name: 'Review mapping' })
-    await declareRequiredRules(user)
-    await user.click(screen.getByRole('button', { name: /continue to preview/i }))
-    await user.click(await screen.findByRole('button', { name: /go live/i }))
-    await screen.findByRole('status')
-    expect(screen.getByText(/Demo transition \(fixture mode\)/)).toBeInTheDocument()
-    // One step: no Stage, a single Activate takes DRAFT -> ACTIVE.
-    expect(screen.queryByRole('button', { name: 'Stage' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Activate' }))
-    // ACTIVE: honest active state, no further activate button.
-    expect(
-      await screen.findByText(/New files for this source are now processed/),
-    ).toBeInTheDocument()
+    // No draft -> activate ceremony: no Activate/Stage button, and the live confirmation shows.
     expect(screen.queryByRole('button', { name: 'Activate' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Stage' })).not.toBeInTheDocument()
+    expect(screen.getByText(/New files for this source are now processed/)).toBeInTheDocument()
   })
 
   it('shows a clean empty state (not an error) for an unknown sample id', async () => {

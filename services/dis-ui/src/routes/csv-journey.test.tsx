@@ -56,22 +56,21 @@ describe('CSV journey (one guided flow)', () => {
     await screen.findByRole('heading', { name: 'Preview' })
     await user.click(screen.getByRole('button', { name: /go live/i }))
 
-    // Go live: create-as-DRAFT with honest "Created (draft)" copy (decision a+d), no fake
-    // "staged", no ingestion metrics. The source id is derived from the source name.
+    // Go live: create-as-ACTIVE (D88) is live in ONE step, honest "Created and live" copy, no
+    // "(draft)"/"staged", no ingestion metrics. The source id is derived from the source name.
     const status = await screen.findByRole('status')
-    expect(status).toHaveTextContent(/Created \(draft\)/i)
+    expect(status).toHaveTextContent(/Created and live/i)
     expect(status).toHaveTextContent(/pos_csv_main/)
+    expect(status).not.toHaveTextContent(/draft/i)
     expect(status).not.toHaveTextContent(/staged/i)
     expect(
       screen.queryByText(/rows ingested|ingestion|throughput|events\/day/i),
     ).not.toBeInTheDocument()
 
-    // Activate: fixture mode synthesizes a one-step DRAFT -> ACTIVE (demo transition).
+    // No draft -> activate ceremony: no Activate/Stage button; the live confirmation shows directly.
+    expect(screen.queryByRole('button', { name: 'Activate' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Stage' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Activate' }))
-    expect(
-      await screen.findByText(/New files for this source are now processed/),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/New files for this source are now processed/)).toBeInTheDocument()
   })
 
   it('renders the journey under the dark theme class (both modes)', async () => {

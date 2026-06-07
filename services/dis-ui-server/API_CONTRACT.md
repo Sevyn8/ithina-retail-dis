@@ -897,7 +897,7 @@ contract these shapes are designed clean, not reverse-engineered).
 | GET `/v1/template-mapping-fields` | any authenticated | 200 `TemplateMappingField[]` | Tenant-independent; no `rls_session`, no DB — built at startup from `dis_validation.mapping_produced_columns` over the two event models + authored labels (both-directions drift check fails boot). One entry per (section, column); `mandatory` = "must be PROVIDED by rename or constant/copy/date_from_datetime derive". |
 | GET `/v1/mapping-templates?source_id=` | tenant | 200 `MappingTemplate[]` | Lineage summaries via `rls_session`. Order: source_id, template_name. |
 | GET `/v1/mapping-templates/{template_id}` | tenant | 200 `MappingTemplateDetail` | Full version lineage (version desc, DRAFT + DEPRECATED included), rules raw. 404 throw-style. |
-| POST `/v1/mapping-templates` | tenant | **201** `MappingTemplateDetail` | Mints UUIDv7 `template_id`; writes the v1 DRAFT (seq trigger-assigned). `source_id` validated well-formed (`^[a-z0-9_]{1,128}$`) only — no source registry exists (Blocker 2; deliberate slice limit). |
+| POST `/v1/mapping-templates` | tenant | **201** `MappingTemplateDetail` | Mints UUIDv7 `template_id`; writes the v1 **ACTIVE** (create-as-ACTIVE, D88: `status='ACTIVE'`, `activated_at` stamped, seq trigger-assigned), so the response carries `active_version=1` and the template is live in one step. Request body requires `template_type` (the packet axis, Slice 14d): validated against the in-code vocabulary `dis_validation.TEMPLATE_TYPES` (`sales`/`inventory_change`/`snapshot`), a clean 400 on an unknown value, then the rules are validated against that type's legal targets; it is lineage-fixed (set at creation, immutable thereafter) and surfaced on every read. `source_id` validated well-formed (`^[a-z0-9_]{1,128}$`) only; no source registry exists (Blocker 2; deliberate slice limit). |
 | PATCH `/v1/mapping-templates/{template_id}` | tenant | 200 `MappingTemplateDetail` | See 7.3. |
 
 Wire models: `schemas/` (`OnboardedStore`, `TemplateMappingField`, `MappingTemplate`,
@@ -909,16 +909,28 @@ enforced (D25/D56 pending).
 
 ### 7.3 Write semantics (the recorded boundary calls)
 
-- Create and edit write **DRAFT rows only** — no path writes ACTIVE/STAGED, so this surface
-  can never produce a second ACTIVE (the 14a consumer `.first()` ordering hazard stays
-  untriggered) and publishes **no `mapping.changed`** (DRAFTs are invisible to the consumer;
-  the publish belongs to the lifecycle-transition slice).
+- **Create writes the v1 ACTIVE** (create-as-ACTIVE, D88); **edit writes DRAFT** (the D17
+  lifecycle for changes). Create needs no supersede (a fresh `template_id` cannot collide with
+  the `(tenant, source, template) WHERE status='ACTIVE'` partial unique `uq_csm_active_per_source`,
+  so at most one ACTIVE per template is preserved by construction; the 14a consumer `.first()`
+  ordering hazard stays untriggered). It publishes **no `mapping.changed`**: the current Slice-10
+  streaming consumer selects the active mapping per-chunk with a fresh keyed SELECT and **no cache**
+  (`mapping.changed`/D6 side-input refresh is DEFERRED), so the next batch sees the committed ACTIVE
+  immediately. NOTE: any future activate-a-new-version-in-an-existing-lineage path MUST deprecate
+  the prior ACTIVE in the same transaction (supersede) and, once the consumer adopts a cached
+  side-input, publish `mapping.changed`; the §7.x `/activate` spec covers that future path.
 - `mapping_rules` pass a four-step gate BEFORE any write (400 `MappingConfigError`): D49
   shape/args (`SourceMapping`), non-empty rename, targets fit exactly ONE event model,
   mandatory coverage (required ∩ mapping-produced of the routed model — derived live, the
   same source as the field catalog). The row-level `value_before OR value_after` CHECK is
   deliberately NOT lifted to config validation (strictly NOT-NULL-derived; an authored
   change-template lint is a surfaced later refinement).
+- **`template_type` is the packet axis (Slice 14d), lineage-fixed:** captured on create
+  (required body field), validated against `dis_validation.TEMPLATE_TYPES`
+  (`sales`/`inventory_change`/`snapshot`), where an unknown value is a clean 400 (not a 422), and
+  the `mapping_rules` four-step gate validates targets against THIS type's legal set. It is
+  immutable for the lineage (a PATCH re-validates the edited rules against the STORED type,
+  never changes it) and is surfaced on every `MappingTemplate`/`MappingTemplateDetail` read.
 - **PATCH lifecycle (D17):** a DRAFT edits in place; with no DRAFT, a STAGED/ACTIVE head
   yields a NEW version — status DRAFT, `predecessor_version_id` = head's
   `mapping_version_id`, seq trigger-assigned; an all-DEPRECATED lineage is 409
@@ -928,7 +940,8 @@ enforced (D25/D56 pending).
   the label) and does not mint a version. Cross-template uniqueness is the DB's EXCLUDE
   constraint → 409 `MappingTemplateNameConflictError`, never a 500.
 - **At most one DRAFT per template is a write-path convention** (not a DB invariant): create
-  mints the first; edit reuses it or chains exactly one. Concurrent PATCHes serialize on a
+  writes the ACTIVE head (no DRAFT); edit chains exactly one DRAFT off the head, then reuses it
+  in place on subsequent edits. Concurrent PATCHes serialize on a
   **lock-then-reread** (two `FOR UPDATE` statements; the second, fresh-snapshot read is the
   one decided on — a single locked read resumes on a stale statement snapshot and was shown
   live to mint a double-DRAFT, since the seq trigger's `MAX` runs on a fresh snapshot and

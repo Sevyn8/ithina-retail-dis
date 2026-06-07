@@ -370,21 +370,22 @@ function normalizeDetail(raw: RawMappingTemplateDetail): MappingTemplateDetail {
   return { ...raw, ingestion_mode: raw.ingestion_mode ?? 'file' }
 }
 
-// Fixture-mode synthesis (T10): build a v1 DRAFT detail from a create/edit request. No
-// mutable store - the fixture create/edit return a plausible DRAFT (there is no screen
-// consumer reading it back yet; real mode is the source of truth for writes).
+// Fixture-mode synthesis (T10): build a plausible v1 detail from a create/edit request. No
+// mutable store - real mode is the source of truth for writes. `live` mirrors the backend
+// lifecycle: create writes the v1 ACTIVE (create-as-ACTIVE, D88), edit writes a DRAFT.
 const FIXTURE_DRAFT_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-00000000fff1'
-function synthDraftDetail(
+function synthV1Detail(
   templateId: string,
   sourceId: string,
   templateName: string,
   rules: SourceMappingRules,
+  live: boolean,
 ): MappingTemplateDetail {
   const createdAt = '2026-06-06T00:00:00Z'
   const version: MappingTemplateVersion = {
     mapping_version_id: 9001,
     version: 1,
-    status: 'draft',
+    status: live ? 'active' : 'draft',
     mapping_rules: rules,
     field_count: Object.keys(rules.rename).length,
     transform_count:
@@ -394,7 +395,7 @@ function synthDraftDetail(
     predecessor_version_id: null,
     created_at: createdAt,
     created_by_user_id: null,
-    activated_at: null,
+    activated_at: live ? createdAt : null,
     deprecated_at: null,
   }
   return {
@@ -403,9 +404,9 @@ function synthDraftDetail(
     template_name: templateName,
     ingestion_mode: 'file',
     latest_version: 1,
-    active_version: null,
+    active_version: live ? 1 : null,
     staged_version: null,
-    draft_version: 1,
+    draft_version: live ? null : 1,
     versions_count: 1,
     created_at: createdAt,
     latest_version_created_at: createdAt,
@@ -473,8 +474,9 @@ export async function getMappingTemplate(
   return found
 }
 
-// POST /api/v1/mapping-templates -> 201 MappingTemplateDetail (writes a v1 DRAFT). Additive
-// (T10): no screen consumer yet. Real mode posts the body; fixture synthesizes a DRAFT.
+// POST /api/v1/mapping-templates -> 201 MappingTemplateDetail (writes a v1 ACTIVE, create-as-
+// ACTIVE D88: go-live is live in one step). Real mode posts the body; fixture synthesizes an
+// ACTIVE v1 to mirror the contract.
 export async function createMappingTemplate(
   body: MappingTemplateCreate,
 ): Promise<MappingTemplateDetail> {
@@ -483,11 +485,12 @@ export async function createMappingTemplate(
       await postJson<RawMappingTemplateDetail>('/api/v1/mapping-templates', body),
     )
   }
-  return synthDraftDetail(
+  return synthV1Detail(
     FIXTURE_DRAFT_TEMPLATE_ID,
     body.source_id,
     body.template_name,
     body.mapping_rules,
+    true, // create-as-ACTIVE
   )
 }
 
@@ -506,51 +509,19 @@ export async function patchMappingTemplate(
       ),
     )
   }
-  return synthDraftDetail(
+  return synthV1Detail(
     templateId,
     'manual_csv_upload',
     body.template_name ?? 'Template',
     body.mapping_rules ?? EMPTY_RULES,
+    false, // edit writes a DRAFT (the D17 lifecycle for changes)
   )
 }
 
-// Fixture-mode synthesis of activation: advance the held detail's single version DRAFT -> ACTIVE
-// directly (one-step lifecycle; STAGED was dropped from the create/promote flow). Clearly a demo
-// transition (real mode never synthesizes; see promoteMappingTemplate). Stamps activated_at.
-function synthActivatedDetail(current: MappingTemplateDetail): MappingTemplateDetail {
-  const versions = current.versions.map((v) =>
-    v.version === current.latest_version
-      ? { ...v, status: 'active' as TemplateStatus, activated_at: '2026-06-06T00:00:00Z' }
-      : v,
-  )
-  return {
-    ...current,
-    versions,
-    draft_version: null,
-    staged_version: null,
-    active_version: current.latest_version,
-  }
-}
-
-// Activate a template (one-step DRAFT -> ACTIVE; STAGED dropped from this flow). REAL mode POSTs
-// to the PROVISIONAL endpoint path (/activate) - not yet built on dis-ui-server (pending Sanjeev;
-// this UI now expects a SINGLE /activate endpoint, no /stage), so a real call is expected to fail
-// (404) until it ships: the caller treats any error as honest "not yet available" and MUST NOT
-// display ACTIVE without a real 2xx (FM1/FM2, no fake ACTIVE). FIXTURE mode synthesizes the
-// transition so the full flow is walkable locally (clearly a demo transition).
-export async function promoteMappingTemplate(
-  current: MappingTemplateDetail,
-): Promise<MappingTemplateDetail> {
-  if (isRealMode()) {
-    return normalizeDetail(
-      await postJson<RawMappingTemplateDetail>(
-        `/api/v1/mapping-templates/${encodeURIComponent(current.template_id)}/activate`,
-        {},
-      ),
-    )
-  }
-  return synthActivatedDetail(current)
-}
+// Activation is no longer a separate step: create-as-ACTIVE (D88) writes the v1 ACTIVE in one
+// step, so go-live is immediately live and the draft -> activate ceremony was removed. Any future
+// activate-a-new-version-in-an-existing-lineage path lives on dis-ui-server (and must deprecate
+// the prior active in one transaction); the UI does not call a separate /activate endpoint.
 
 const TEMPLATES_KEY = ['dis-ui-server', 'mapping-templates'] as const
 

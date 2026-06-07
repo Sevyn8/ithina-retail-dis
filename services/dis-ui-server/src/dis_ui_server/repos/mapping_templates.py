@@ -12,12 +12,19 @@ Write semantics owned here (the slice's two recorded boundary calls):
   immutability covers ``mapping_rules``/``source_id``/seq/predecessor. Updating
   every row keeps the lineage label coherent; the EXCLUDE constraint arbitrates
   cross-template uniqueness atomically.
-- **At most one DRAFT per template is a WRITE-PATH convention**, not a DB
-  invariant: create mints the lineage's first DRAFT; edit updates the existing
-  DRAFT in place or chains exactly one new DRAFT off the STAGED/ACTIVE head.
-  Nothing here ever writes ``status`` ``ACTIVE``/``STAGED``, so these paths can
-  never produce a second ACTIVE (the 14a consumer ``.first()`` hazard stays
-  untriggered).
+- **Create writes the lineage's first version as ACTIVE** (create-as-ACTIVE,
+  D88): go-live is immediately live, no DRAFT/activate ceremony. This is safe
+  WITHOUT supersede because create mints a FRESH ``template_id``, so the partial
+  unique ``uq_csm_active_per_source`` (``(tenant, source, template) WHERE
+  status='ACTIVE'``) cannot collide and no prior ACTIVE for that template can
+  exist; the streaming consumer keys its active lookup by ``template_id``, so a
+  new ACTIVE template never produces a second ACTIVE for an existing template
+  (the 14a consumer ``.first()`` hazard stays untriggered). Edit still writes
+  DRAFT: ``patch_template`` updates the existing DRAFT in place or chains exactly
+  one new DRAFT off the ACTIVE head (the D17 lifecycle for changes). NOTE: any
+  future "activate a NEW version inside an EXISTING lineage" path MUST deprecate
+  the prior ACTIVE in the same transaction (supersede) to keep the partial
+  unique satisfied; create needs no such handling.
 
 IntegrityError translation (and nothing broader — rule 6): the EXCLUDE
 constraint ``ex_csm_template_name_per_source`` → 409 name conflict; the
@@ -35,7 +42,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Row, insert, select, update
+from sqlalchemy import Row, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -138,7 +145,15 @@ async def create_template(
     mapping_rules: dict[str, Any],
     created_by_user_id: UUID | None,
 ) -> Row[Any]:
-    """Insert the lineage's first version: DRAFT, seq trigger-assigned, no predecessor."""
+    """Insert the lineage's first version: ACTIVE, seq trigger-assigned, no predecessor.
+
+    Create-as-ACTIVE (D88): the v1 is written ``ACTIVE`` with ``activated_at``
+    stamped (the ``ck_csm_activated_at`` CHECK requires a non-NULL ``activated_at``
+    for an ACTIVE row), so go-live is immediately live. Safe without supersede:
+    ``template_id`` is freshly minted by the caller, so the ``(tenant, source,
+    template) WHERE status='ACTIVE'`` partial unique cannot collide and no prior
+    ACTIVE exists for this template.
+    """
     statement = (
         insert(SourceMappingRow)
         .values(
@@ -149,7 +164,8 @@ async def create_template(
             template_type=template_type,  # lineage-fixed (Slice 14d)
             # version_seq_per_source deliberately OMITTED: NULL reaches the
             # BEFORE-INSERT trigger, which assigns the per-template sequence.
-            status=_STATUS_DRAFT,
+            status=_STATUS_ACTIVE,
+            activated_at=func.now(),
             mapping_rules=mapping_rules,
             created_by_user_id=created_by_user_id,
         )

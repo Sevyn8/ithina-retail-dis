@@ -25,11 +25,7 @@ import {
 import { dryRunSample, patchSampleMapping, useSample } from '../lib/dis-ui-server/onboarding'
 import type { DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
 import { DisUiServerHttpError } from '../lib/dis-ui-server/client'
-import { isRealMode } from '../lib/dis-ui-server/mode'
-import {
-  createMappingTemplate,
-  promoteMappingTemplate,
-} from '../lib/dis-ui-server/mapping-templates'
+import { createMappingTemplate } from '../lib/dis-ui-server/mapping-templates'
 import type { MappingTemplateDetail } from '../lib/dis-ui-server/mapping-templates'
 import { assembleMappingRules } from '../lib/onboarding/assemble-mapping-rules'
 import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
@@ -70,13 +66,6 @@ function createErrorMessage(err: unknown): string {
     }
   }
   return 'Could not create the template. Please try again.'
-}
-
-// The lifecycle position of a created template, from its version pointers. One-step lifecycle:
-// a created template is either a DRAFT or (after activation) ACTIVE (STAGED dropped from this
-// flow; the wire type still carries staged_version for the D17 rollout screens).
-function lifecycleStatus(detail: MappingTemplateDetail): 'draft' | 'active' {
-  return detail.active_version !== null ? 'active' : 'draft'
 }
 
 // High-confidence columns are auto-mapped and shown calmly; the rest are pulled out for
@@ -123,12 +112,10 @@ export function MappingReview() {
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
   // The created template (DRAFT) returned by Go-live; its lifecycle pointers advance as the
   // operator promotes (fixture synth; real mode only on a real 2xx, never faked).
+  // The template created at go-live. Create-as-ACTIVE (D88): it is live in one step, so there is
+  // no separate activate action and no promote/activation state.
   const [created, setCreated] = useState<MappingTemplateDetail | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  // Activation is honest-pending in real mode (the /activate endpoint does not exist yet):
-  // this message is shown when a real activate call fails, and the lifecycle is NOT advanced.
-  const [promoteError, setPromoteError] = useState<string | null>(null)
-  const [promoting, setPromoting] = useState(false)
   // Per-column UI expanders (T8): the format-rule "more examples" reveal, and the auto-mapped
   // row's "change" reveal of the canonical select. Keyed by source_col; default collapsed.
   const [showAllExamples, setShowAllExamples] = useState<Record<string, boolean>>({})
@@ -243,8 +230,9 @@ export function MappingReview() {
   }
 
   // Go-live: assemble the full mapping_rules from the wizard state, then CREATE the template
-  // for real (mode-aware: real POST / fixture synth). The result is a DRAFT (decision a); the
-  // success copy says "Created (draft)" (decision d), never "staged".
+  // for real (mode-aware: real POST / fixture synth). Create-as-ACTIVE (D88): the result is
+  // LIVE in one step (active_version=1), so the success copy says "Created and live" and there
+  // is no separate activate step.
   async function goLive(): Promise<void> {
     setActionError(null)
     const assembled = assembleMappingRules(
@@ -266,32 +254,9 @@ export function MappingReview() {
         mapping_rules: assembled.rules,
       })
       setCreated(detail)
-      setPromoteError(null)
       setStep('golive')
     } catch (err) {
       setActionError(createErrorMessage(err))
-    }
-  }
-
-  // Activate the created template (one-step DRAFT -> ACTIVE). FIXTURE mode synthesizes the
-  // transition (demo) and advances the displayed lifecycle. REAL mode POSTs to the provisional
-  // /activate endpoint; it does not exist yet, so any error is honest-pending and the lifecycle
-  // is NOT advanced (FM1/FM2: never display ACTIVE without a real 2xx, no fake ACTIVE).
-  async function activate(): Promise<void> {
-    if (created === null) {
-      return
-    }
-    setPromoteError(null)
-    setPromoting(true)
-    try {
-      const next = await promoteMappingTemplate(created)
-      setCreated(next)
-    } catch {
-      setPromoteError(
-        'Activation is not yet available. The template was created as a draft; activation ships with dis-ui-server.',
-      )
-    } finally {
-      setPromoting(false)
     }
   }
 
@@ -721,56 +686,22 @@ export function MappingReview() {
 
       {step === 'golive' && created !== null
         ? (() => {
-            const status = lifecycleStatus(created)
-            const version =
-              created.active_version ?? created.draft_version ?? created.latest_version
+            const version = created.active_version ?? created.latest_version
             return (
               <Card>
                 <CardContent className="flex flex-col gap-3">
-                  {/* Decision (d): honest DRAFT copy, never "staged". */}
+                  {/* Create-as-ACTIVE (D88): live in one step, no draft/activate ceremony. */}
                   <p role="status" className="text-body-strong text-success">
-                    Created (draft): {created.template_name} v{version} for {created.source_id}.
+                    Created and live: {created.template_name} v{version} for {created.source_id}.
                   </p>
                   <p className="text-caption text-muted-foreground">
-                    The template was created as a draft. Activate it; new files for this source are
-                    processed through the active version.
+                    New files for this source are now processed through this mapping.
                   </p>
 
                   <div className="flex items-center gap-2">
                     <span className="text-label text-muted-foreground">Lifecycle</span>
-                    <StatusBadge tone={status === 'active' ? 'success' : 'neutral'}>
-                      {status}
-                    </StatusBadge>
+                    <StatusBadge tone="success">active</StatusBadge>
                   </div>
-
-                  {/* One-step activate (DRAFT -> ACTIVE; STAGED dropped, pending-Sanjeev: a single
-                      /activate endpoint). Honesty guard (FM1/FM2): real mode has no activate
-                      endpoint yet, so the attempt is honest-pending and the lifecycle is NOT
-                      advanced without a real 2xx; fixture mode synthesizes the transition (a
-                      clearly-marked demo). No fake ACTIVE. */}
-                  {status !== 'active' ? (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex gap-3">
-                        <Button type="button" disabled={promoting} onClick={() => void activate()}>
-                          Activate
-                        </Button>
-                      </div>
-                      {!isRealMode() ? (
-                        <p className="text-caption text-muted-foreground">
-                          Demo transition (fixture mode).
-                        </p>
-                      ) : null}
-                      {promoteError !== null ? (
-                        <p role="alert" className="text-caption text-warning">
-                          {promoteError}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="text-caption text-success">
-                      Active. New files for this source are now processed through this mapping.
-                    </p>
-                  )}
 
                   <div>
                     <Link

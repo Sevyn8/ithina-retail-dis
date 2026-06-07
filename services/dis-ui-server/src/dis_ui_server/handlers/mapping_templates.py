@@ -4,10 +4,11 @@ The resource is the TEMPLATE (a lineage of versions, D68); ``{template_id}`` is
 the only URL key. Reads and writes run through ``repos/mapping_templates.py``
 (``rls_session``, tenant from token). Detail/PATCH lookups are throw-style 404
 (``ResourceNotFoundError``) — under RLS, absent and other-tenant are the same
-404, no existence oracle. Create and edit write DRAFT rows only; lifecycle
-transitions (promote/reject) and the ``mapping.changed`` publish are a later
-slice — DRAFT writes are invisible to the streaming consumer, which reads
-``status='ACTIVE'`` only.
+404, no existence oracle. Create writes the v1 ACTIVE (create-as-ACTIVE, D88):
+go-live is immediately live and picked up by the streaming consumer (which reads
+``status='ACTIVE'`` fresh per chunk, no cache, so no ``mapping.changed`` publish
+is needed). Edit writes DRAFT (the D17 lifecycle for changes); other lifecycle
+transitions for the edit path are a later slice.
 """
 
 from __future__ import annotations
@@ -156,7 +157,12 @@ async def create_mapping_template(
     identity: Annotated[Identity, Depends(require_tenant)],
     body: MappingTemplateCreate,
 ) -> MappingTemplateDetail:
-    """Create a template: mint the UUIDv7 ``template_id``, write its v1 DRAFT.
+    """Create a template: mint the UUIDv7 ``template_id``, write its v1 ACTIVE.
+
+    Create-as-ACTIVE (D88): the v1 is written live in one step (status ACTIVE,
+    ``activated_at`` stamped), so the response carries ``active_version=1`` and the
+    template is immediately usable for upload/ingest. Safe without supersede (a
+    fresh ``template_id`` cannot collide with the single-ACTIVE partial unique).
 
     The rules document passes the full four-step gate (D49 shape, non-empty
     rename, exactly-one-model routing, mandatory coverage) BEFORE any write; the
