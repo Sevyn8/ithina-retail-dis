@@ -6,12 +6,11 @@ env or unreachable emulator is a loud ERROR (``StackRequiredError``), never a sk
 Everything runs against ``ithina_dis_db`` on 5433; Customer Master (5432) is never
 touched.
 
-Date robustness (M-D38/D64 gate finding): the event tables are RANGE-partitioned
-by ``event_date`` with NO rolling partition manager and NO DEFAULT partition, so
-``ensure_event_partitions`` idempotently creates the daily partitions the tests'
-event dates need (test-fixture provisioning of the local DB, mirroring the 0001
-bootstrap's naming — not service DDL). The suite never depends on the bootstrap
-partition window.
+Date robustness (M-D38/D64 gate finding, RESOLVED by migration 0009): the event
+tables are PLAIN for beta (D77's scope clause revised — partitioning returns at
+Slice 21 with automation), so any event date lands and the suite needs no
+partition provisioning. The former ``event_partitions`` fixture (which created
+the daily partitions the tests' dates needed) is retired with the partitions.
 
 Each test mints a unique trace and uses per-test SKUs/transaction ids so runs
 cannot couple; created canonical/audit/bronze rows are deleted in teardown via
@@ -82,8 +81,9 @@ _TEMPLATE_IDS = {
     BAD_SUBTYPE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a3"),
 }
 
-# All test event timestamps anchor here: today at a mid-day hour, so the chunk's
-# rows and a ±1-day spread stay inside the partitions ensure_event_partitions makes.
+# All test event timestamps anchor here: today at a mid-day hour, so a ±1-day
+# spread stays deterministic across the suite (the event tables are plain —
+# migration 0009 — so no partition window constrains the dates).
 BASE_TS = datetime.now(tz=UTC).replace(hour=12, minute=0, second=0, microsecond=0)
 
 
@@ -112,7 +112,7 @@ def seeded(stack_env: dict[str, str]) -> None:
 
 @pytest.fixture(scope="session")
 def admin_engine_session(stack_env: dict[str, str]) -> Iterator[Engine]:
-    """Session-scoped admin engine (partition + mapping provisioning, cleanup)."""
+    """Session-scoped admin engine (mapping provisioning, cleanup)."""
     url = make_url(stack_env["POSTGRES_ADMIN_URL"])
     assert url.database == "ithina_dis_db"  # target safety for the fixture itself
     assert url.port == 5433
@@ -121,24 +121,6 @@ def admin_engine_session(stack_env: dict[str, str]) -> Iterator[Engine]:
         yield eng
     finally:
         eng.dispose()
-
-
-@pytest.fixture(scope="session")
-def event_partitions(admin_engine_session: Engine) -> None:
-    """Idempotently create the daily event partitions the tests' dates need."""
-    dates = [BASE_TS.date() + timedelta(days=offset) for offset in (-1, 0, 1)]
-    parents = ("store_sku_sale_events", "store_sku_change_events")
-    with admin_engine_session.begin() as conn:
-        for day in dates:
-            upper = day + timedelta(days=1)
-            for parent in parents:
-                conn.execute(
-                    text(
-                        f"CREATE TABLE IF NOT EXISTS canonical.{parent}_p{day:%Y%m%d} "  # noqa: S608
-                        f"PARTITION OF canonical.{parent} "
-                        f"FOR VALUES FROM ('{day:%Y-%m-%d}') TO ('{upper:%Y-%m-%d}')"
-                    )
-                )
 
 
 @pytest.fixture(scope="session")
@@ -280,7 +262,6 @@ def pipeline(
     engine: AsyncEngine,
     storage: StorageClient,
     stack_env: dict[str, str],
-    event_partitions: None,
     consumer_mappings: dict[str, int],
 ) -> ConsumerPipeline:
     """A fully wired consumer pipeline against the live stack."""
@@ -461,7 +442,7 @@ def change_csv(rows: list[tuple[str, str, str]]) -> bytes:
 
 
 def ts(offset_minutes: int = 0, *, day_offset: int = 0) -> str:
-    """A chunk timestamp string anchored at BASE_TS (partition-window safe)."""
+    """A chunk timestamp string anchored at BASE_TS."""
     moment = BASE_TS + timedelta(days=day_offset, minutes=offset_minutes)
     return f"{moment:%Y-%m-%d %H:%M:%S}"
 

@@ -21,14 +21,17 @@
 -- Every row carries mapping_version_id (architecture B1, v0.6).
 --
 -- ----------------------------------------------------------------------------
--- Partitioning
+-- Partitioning: none for beta (D77 scope revised)
 -- ----------------------------------------------------------------------------
--- PARTITION BY RANGE (event_date). Daily partitions.
--- - Partition creation: scheduled (next-day partition created the day before).
--- - Eviction: after successful BQ export of a day's partition, DROP TABLE the
---   partition. Avoids row-level DELETE entirely.
--- - PK is composite (id, event_date) because Postgres requires the partition
---   key to be part of every unique constraint.
+-- This is a PLAIN table. It was PARTITION BY RANGE (event_date) with a fixed
+-- bootstrap-created daily window, no DEFAULT partition, and no automation —
+-- the same write-cliff shape Slice 30a removed from audit.events (D77), except
+-- here the miss failed LOUD (batch nack), not silently. De-partitioned for
+-- beta on the same disposable-rows/drop-recreate pattern (migration 0009).
+--
+-- Partitioning returns at Slice 21 (BQ archive + eviction), WITH automation
+-- (decisions.md D29/D34). event_date stays NOT NULL + CHECK-consistent
+-- (ck_ssce_event_date_matches_source_ts) so that re-partition is safe.
 --
 -- ----------------------------------------------------------------------------
 -- Timestamps
@@ -94,7 +97,6 @@
 -- 3. Target FK tables exist: identity_mirror.tenants,
 --    identity_mirror.stores, config.source_mappings.
 -- 4. Apply this DDL.
--- 5. Set up partition-creation job.
 --
 -- ----------------------------------------------------------------------------
 -- Dependencies
@@ -107,7 +109,7 @@
 
 
 -- ----------------------------------------------------------------------------
--- Table (partitioned by event_date)
+-- Table (plain for beta; Slice 21 re-partitions by event_date)
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE canonical.store_sku_change_events (
@@ -115,7 +117,7 @@ CREATE TABLE canonical.store_sku_change_events (
     -- ---------- Surrogate key ----------
     id                              UUID                            NOT NULL DEFAULT uuidv7(),
 
-    -- ---------- Partition key ----------
+    -- ---------- Event date (Slice 21's re-partition key) ----------
     event_date                      DATE                            NOT NULL,
         -- Derived from source_event_timestamp::date at UTC. CHECK enforces.
 
@@ -219,7 +221,9 @@ CREATE TABLE canonical.store_sku_change_events (
 
     -- ---------- Primary key ----------
     CONSTRAINT pk_ssce
-        PRIMARY KEY (id, event_date),
+        PRIMARY KEY (id),
+        -- (id, event_date) while partitioned — the composite existed only to
+        -- satisfy the partition-key-in-PK requirement (the D77 PK precedent).
 
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_ssce_tenant
@@ -254,24 +258,11 @@ CREATE TABLE canonical.store_sku_change_events (
     CONSTRAINT ck_ssce_at_least_one_value_present
         CHECK (value_before IS NOT NULL OR value_after IS NOT NULL)
 
-) PARTITION BY RANGE (event_date);
+);
 
 
 -- ----------------------------------------------------------------------------
--- Initial partition (template; real partitions created by scheduled job)
---
--- Pattern for daily partitions:
---   CREATE TABLE canonical.store_sku_change_events_yyyymmdd
---       PARTITION OF canonical.store_sku_change_events
---       FOR VALUES FROM ('YYYY-MM-DD') TO ('YYYY-MM-DD+1');
---
--- Eviction:
---   DROP TABLE canonical.store_sku_change_events_yyyymmdd;
--- ----------------------------------------------------------------------------
-
-
--- ----------------------------------------------------------------------------
--- Indexes (declared on parent; auto-created on every child partition)
+-- Indexes
 -- ----------------------------------------------------------------------------
 
 -- Primary daily-compute access pattern: latest event of a category for a SKU,
@@ -355,13 +346,13 @@ CREATE POLICY tenant_isolation
 -- ----------------------------------------------------------------------------
 
 COMMENT ON TABLE canonical.store_sku_change_events IS
-'Append-only event log of every non-sale change to a SKU''s state at a store: inventory, price, cost, regulatory, status, catalogue. Partitioned by event_date, daily partitions, dropped after BQ export. Written atomically with store_sku_current_position upserts by the streaming consumer. Tenant-isolated via RLS. Polymorphic structure: event_category + event_subtype classify the change; JSONB and numeric-shortcut columns carry the change payload.';
+'Append-only event log of every non-sale change to a SKU''s state at a store: inventory, price, cost, regulatory, status, catalogue. Plain (non-partitioned) for beta; Slice 21 re-partitions by event_date for BQ archive + eviction. Written atomically with store_sku_current_position upserts by the streaming consumer. Tenant-isolated via RLS. Polymorphic structure: event_category + event_subtype classify the change; JSONB and numeric-shortcut columns carry the change payload.';
 
 COMMENT ON COLUMN canonical.store_sku_change_events.id IS
-'Surrogate identifier. UUIDv7. Composite PK with event_date due to partitioning.';
+'Surrogate identifier. UUIDv7. Primary key.';
 
 COMMENT ON COLUMN canonical.store_sku_change_events.event_date IS
-'Partition key. DATE derived from source_event_timestamp::date at UTC. CHECK constraint enforces the derivation.';
+'DATE derived from source_event_timestamp::date at UTC. CHECK constraint enforces the derivation. Slice 21''s re-partition key.';
 
 COMMENT ON COLUMN canonical.store_sku_change_events.tenant_id IS
 'Tenant owning this row. FK to identity_mirror.tenants. RLS scopes every read and write.';

@@ -433,8 +433,11 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         # touches config.source_mappings, so the csm shape compared below is
         # untouched. 0008: existence-gated ADD COLUMN + definition-gated CHECK
         # swap on audit.events — both no-ops on a manifest-fresh database, and
-        # config.source_mappings is untouched).
-        assert head == "0008"
+        # config.source_mappings is untouched. 0009: drop-and-recreate of the
+        # six canonical/staging parents from the SAME manifest files 0001
+        # applied — shape-identical on a manifest-fresh database, and it never
+        # touches config.source_mappings).
+        assert head == "0009"
 
         # 0005 must be a TRUE NO-OP on a manifest-fresh database. Without this,
         # a drifted manifest could bootstrap the WRONG shape and 0005's

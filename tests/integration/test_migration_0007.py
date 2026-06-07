@@ -22,10 +22,11 @@ Layers (the 0002..0005 migration-test conventions):
     recreates the partitioned form with a fresh CURRENT_DATE-relative window;
     ``upgrade head`` returns to the plain shape. Errors — never skips — when
     the stack is absent (the load-bearing-proof rule from Slices 4/7).
-  * **Scope boundary (the slice's hard limit).** The other 6 partitioned
-    parents (canonical/staging event + signal_history tables) still report
-    their live partition keys after the cycle — audit.events is the ONLY
-    table this slice converts.
+  * **Scope boundary — MOVED.** The 30a boundary test (the other 6 parents
+    stay partitioned) was repealed when migration 0009 consciously revised
+    D77's scope clause and de-partitioned those parents too; the at-head
+    boundary now lives in test_migration_0009.py
+    (test_scope_boundary_nothing_else_moved).
   * **Fresh-bootstrap convergence on a scratch DB (the 9a lesson).** A scratch
     database on the same 5433 instance runs ``alembic upgrade head`` (0001
     applies the now-plain manifest; 0007 re-applies the same file) and its
@@ -82,16 +83,6 @@ _AUDIT_INDEXES = (
     "ix_audit_events_data_ingress_event",
     "ix_audit_events_failures",
 )
-
-# The slice's scope boundary: these 6 parents stay partitioned, verbatim keys.
-_OTHER_PARTITIONED_PARENTS = {
-    "canonical.store_sku_sale_events": "RANGE (event_date)",
-    "canonical.store_sku_change_events": "RANGE (event_date)",
-    "canonical.store_sku_signal_history": "RANGE (as_of_date)",
-    "staging.store_sku_sale_events": "RANGE (event_date)",
-    "staging.store_sku_change_events": "RANGE (event_date)",
-    "staging.store_sku_signal_history": "RANGE (as_of_date)",
-}
 
 
 class StackRequiredError(RuntimeError):
@@ -451,16 +442,6 @@ def test_migration_cycle_departition_and_back(admin_engine: Engine) -> None:
     assert _audit_shape(admin_engine) == plain_shape
 
 
-def test_scope_boundary_no_other_parent_departitioned(admin_engine: Engine) -> None:
-    """The slice's hard limit: audit.events ONLY. The other 6 partitioned
-    parents (the D29/D34 eviction substrate) keep their live partition keys."""
-    _alembic("upgrade", "head")
-    for relation, expected_key in _OTHER_PARTITIONED_PARENTS.items():
-        assert _partkey(admin_engine, relation) == expected_key, (
-            f"{relation} partitioning changed — Slice 30a must touch audit.events only"
-        )
-
-
 # ---------------------------------------------------------------------------
 # Fresh-bootstrap convergence on a scratch DB (the 9a lesson).
 # ---------------------------------------------------------------------------
@@ -507,12 +488,13 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         # 0007 on a manifest-fresh database: drop-and-recreate from the SAME
         # file — shape-identical, so manifest-as-source-of-truth holds. 0008
         # (existence-gated ADD COLUMN + def-gated CHECK swap) is likewise a
-        # true no-op on the manifest-fresh shape, so the equality still pins
-        # both migrations' no-op property.
+        # true no-op on the manifest-fresh shape, and 0009 (the six
+        # canonical/staging parents) never touches audit.events, so the
+        # equality still pins all three migrations' audit no-op property.
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0008"
+        assert head == "0009"
         assert _audit_shape(scratch_engine) == manifest_shape, (
             "migrations 0007/0008 CHANGED a manifest-fresh database — the manifest "
             "no longer carries their end state (drift self-healed)"

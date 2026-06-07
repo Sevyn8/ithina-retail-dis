@@ -3,12 +3,11 @@
 --
 -- Shadow mirror of canonical.store_sku_sale_events. The streaming consumer
 -- writes here when the active mapping for (tenant, source) has status=STAGED.
--- Identical shape, partitioning, constraints, and RLS to canonical; lets the
--- operator inspect realistic event output before promoting the mapping to
--- ACTIVE.
+-- Identical shape, constraints, and RLS to canonical; lets the operator
+-- inspect realistic event output before promoting the mapping to ACTIVE.
 --
--- Same partitioning posture as canonical (by event_date, daily partitions,
--- BQ export + partition drop). Same atomic dual-write pattern (paired with
+-- Same partitioning posture as canonical (plain for beta; Slice 21
+-- re-partitions by event_date). Same atomic dual-write pattern (paired with
 -- staging.store_sku_current_position in one Cloud SQL transaction).
 --
 -- Constraint and index names prefixed with `_st_` to distinguish from
@@ -18,15 +17,17 @@
 -- Every row carries mapping_version_id (architecture B1, v0.6).
 --
 -- ----------------------------------------------------------------------------
--- Partitioning
+-- Partitioning: none for beta (D77 scope revised)
 -- ----------------------------------------------------------------------------
--- PARTITION BY RANGE (event_date). Daily partitions.
--- - Partition creation: scheduled (next-day partition created the day before).
--- - Eviction: after successful BQ export of a day's partition, DROP TABLE the
---   partition. Avoids row-level DELETE entirely.
--- - PK is composite (id, event_date) because Postgres requires the partition
---   key to be part of every unique constraint, including the PK.
--- - UNIQUE constraints across all partitions must include event_date.
+-- This is a PLAIN table. It was PARTITION BY RANGE (event_date) with a fixed
+-- bootstrap-created daily window, no DEFAULT partition, and no automation —
+-- the same write-cliff shape Slice 30a removed from audit.events (D77), except
+-- here the miss failed LOUD (batch nack), not silently. De-partitioned for
+-- beta on the same disposable-rows/drop-recreate pattern (migration 0009).
+--
+-- Partitioning returns at Slice 21 (BQ archive + eviction), WITH automation
+-- (decisions.md D29/D34). event_date stays NOT NULL + CHECK-consistent
+-- (ck_st_ssse_event_date_matches_sale_timestamp) so that re-partition is safe.
 --
 -- ----------------------------------------------------------------------------
 -- Phase 0 migration order (required for this DDL to succeed)
@@ -39,7 +40,6 @@
 -- 4. staging.tax_treatment_enum exists (created by the
 --    store_sku_current_position DDL, or here if applied first).
 -- 5. Apply this DDL.
--- 6. Set up partition-creation job (creates next day's partition daily).
 --
 -- ----------------------------------------------------------------------------
 -- Dependencies
@@ -53,7 +53,7 @@
 
 
 -- ----------------------------------------------------------------------------
--- Table (partitioned by event_date)
+-- Table (plain for beta; Slice 21 re-partitions by event_date)
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE staging.store_sku_sale_events (
@@ -61,7 +61,7 @@ CREATE TABLE staging.store_sku_sale_events (
     -- ---------- Surrogate key ----------
     id                          UUID                                NOT NULL DEFAULT uuidv7(),
 
-    -- ---------- Partition key ----------
+    -- ---------- Event date (Slice 21's re-partition key) ----------
     event_date                  DATE                                NOT NULL,
 
     -- ---------- Identity ----------
@@ -154,7 +154,9 @@ CREATE TABLE staging.store_sku_sale_events (
 
     -- ---------- Primary key ----------
     CONSTRAINT pk_st_ssse
-        PRIMARY KEY (id, event_date),
+        PRIMARY KEY (id),
+        -- (id, event_date) while partitioned — the composite existed only to
+        -- satisfy the partition-key-in-PK requirement (the D77 PK precedent).
 
     -- ---------- Foreign keys ----------
     CONSTRAINT fk_st_ssse_tenant
@@ -207,24 +209,11 @@ CREATE TABLE staging.store_sku_sale_events (
     CONSTRAINT ck_st_ssse_event_date_matches_sale_timestamp
         CHECK (event_date = (source_sale_timestamp AT TIME ZONE 'UTC')::date)
 
-) PARTITION BY RANGE (event_date);
+);
 
 
 -- ----------------------------------------------------------------------------
--- Initial partition (template; real partitions created by scheduled job)
---
--- Pattern for daily partitions:
---   CREATE TABLE staging.store_sku_sale_events_yyyymmdd
---       PARTITION OF staging.store_sku_sale_events
---       FOR VALUES FROM ('YYYY-MM-DD') TO ('YYYY-MM-DD+1');
---
--- Eviction:
---   DROP TABLE staging.store_sku_sale_events_yyyymmdd;
--- ----------------------------------------------------------------------------
-
-
--- ----------------------------------------------------------------------------
--- Indexes (declared on parent; auto-created on every child partition)
+-- Indexes
 -- ----------------------------------------------------------------------------
 
 -- Primary analytics access pattern: per-SKU sales over a time window.
@@ -313,13 +302,13 @@ CREATE POLICY tenant_isolation
 -- ----------------------------------------------------------------------------
 
 COMMENT ON TABLE staging.store_sku_sale_events IS
-'Shadow mirror of canonical.store_sku_sale_events. Written by the streaming consumer when the active mapping has status=STAGED. Identical partitioning and constraints to canonical. Tenant-isolated via RLS. Lets the operator inspect realistic event output before promoting the mapping to ACTIVE.';
+'Shadow mirror of canonical.store_sku_sale_events. Written by the streaming consumer when the active mapping has status=STAGED. Identical shape and constraints to canonical: plain (non-partitioned) for beta; Slice 21 re-partitions by event_date. Tenant-isolated via RLS. Lets the operator inspect realistic event output before promoting the mapping to ACTIVE.';
 
 COMMENT ON COLUMN staging.store_sku_sale_events.id IS
-'Surrogate identifier. UUIDv7. Composite PK with event_date due to partitioning.';
+'Surrogate identifier. UUIDv7. Primary key.';
 
 COMMENT ON COLUMN staging.store_sku_sale_events.event_date IS
-'Partition key. DATE derived from source_sale_timestamp::date at UTC. CHECK constraint enforces the derivation. Cheap to drop a partition for eviction.';
+'DATE derived from source_sale_timestamp::date at UTC. CHECK constraint enforces the derivation. Slice 21''s re-partition key.';
 
 COMMENT ON COLUMN staging.store_sku_sale_events.tenant_id IS
 'Tenant owning this row. FK to identity_mirror.tenants. RLS scopes every read and write by this column.';

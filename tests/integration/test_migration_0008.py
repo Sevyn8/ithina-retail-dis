@@ -365,11 +365,13 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         )
         assert _outcome_vocab(scratch_engine) == _NEW_VOCAB
 
-        # 0008 on a manifest-fresh database must be a TRUE NO-OP.
+        # 0008 on a manifest-fresh database must be a TRUE NO-OP (0009, the six
+        # canonical/staging parents, never touches audit.events — the shape
+        # compared below is untouched).
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0008"
+        assert head == "0009"
         assert _audit_shape(scratch_engine) == manifest_shape, (
             "migration 0008 CHANGED a manifest-fresh database — the manifest no "
             "longer carries the 0008 end state (drift self-healed by 0008)"

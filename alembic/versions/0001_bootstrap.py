@@ -73,18 +73,13 @@ MANIFEST = [
     "quarantine/quarantined_rows.sql",
 ]
 
-# Partitioned parents -> partition key column. 6 parents (RANGE-partitioned).
-# audit.events is NOT here: de-partitioned for beta (Slice 30a; D45 closed) —
-# schemas/postgres/audit/events.sql declares it plain, so partitioning it here
-# would fail. Partitioning + automation return at Slice 21.
-PARTITIONED = [
-    ("canonical", "store_sku_sale_events", "event_date"),
-    ("canonical", "store_sku_change_events", "event_date"),
-    ("canonical", "store_sku_signal_history", "as_of_date"),
-    ("staging", "store_sku_sale_events", "event_date"),
-    ("staging", "store_sku_change_events", "event_date"),
-    ("staging", "store_sku_signal_history", "as_of_date"),
-]
+# Partitioned parents -> partition key column. EMPTY: every parent is now
+# plain for beta. audit.events left first (Slice 30a; D45 closed, D77); the 6
+# canonical/staging event + signal_history parents followed (migration 0009;
+# D77's scope clause consciously revised) — their DDL files declare the plain
+# shape, so partitioning them here would fail. Partitioning + automation
+# return at Slice 21 for all 7 tables.
+PARTITIONED: list[tuple[str, str, str]] = []
 
 APP_ROLE = "ithina_dis_user"
 

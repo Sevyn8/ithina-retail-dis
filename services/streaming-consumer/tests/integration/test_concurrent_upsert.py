@@ -223,7 +223,6 @@ async def test_concurrent_insert_takes_update_branch(
     consumer_mappings: dict[str, int],
     dis_admin: Engine,
     cleanup: Cleanup,
-    event_partitions: None,
 ) -> None:
     sku = f"RACE3A-{new_uuid7().hex[:10]}"
     cleanup.skus.append(sku)
@@ -251,7 +250,6 @@ async def test_concurrent_older_event_cannot_overwrite(
     consumer_mappings: dict[str, int],
     dis_admin: Engine,
     cleanup: Cleanup,
-    event_partitions: None,
 ) -> None:
     sku = f"RACE3B-{new_uuid7().hex[:10]}"
     cleanup.skus.append(sku)
@@ -327,7 +325,6 @@ async def test_concurrent_older_event_cannot_overwrite_event_path(
     consumer_mappings: dict[str, int],
     dis_admin: Engine,
     cleanup: Cleanup,
-    event_partitions: None,
 ) -> None:
     """3b on the INCOMPLETE (production) path: the conditional UPDATE's WHERE is
     re-evaluated via EvalPlanQual against the LOCKED current row — same
@@ -407,7 +404,6 @@ async def test_completeness_dispatch_and_missing_outcome(
     consumer_mappings: dict[str, int],
     dis_admin: Engine,
     cleanup: Cleanup,
-    event_partitions: None,
 ) -> None:
     """The dispatch is the LOAD-TIME flag (REVISED D63), and the incomplete
     path's unseen-SKU outcome is a read-only ``missing`` — NO INSERT, no row,

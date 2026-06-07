@@ -1,7 +1,8 @@
 """``canonical.store_sku_sale_events`` — sale line-items (SALE, RETURN, VOID).
 
 Introspected facts:
-- PK ``(id, event_date)``; partitioned ``RANGE(event_date)``; **no** UNIQUE
+- PK ``(id)``; plain for beta (migration 0009, D77 scope revised — Slice 21
+  re-partitions by ``event_date``); **no** UNIQUE
   (strictly append-only, D33 — corrections are separate rows, latest-wins at read).
 - FKs: ``(tenant_id) -> tenants``; ``(tenant_id, store_id) -> stores``;
   ``(mapping_version_id) -> source_mappings``.

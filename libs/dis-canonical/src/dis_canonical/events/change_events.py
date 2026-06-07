@@ -1,8 +1,8 @@
 """``canonical.store_sku_change_events`` — non-sale state changes (polymorphic).
 
 Introspected facts:
-- PK ``(id, event_date)``; partitioned ``RANGE(event_date)``; **no** UNIQUE
-  (append-only, D33).
+- PK ``(id)``; plain for beta (migration 0009, D77 scope revised — Slice 21
+  re-partitions by ``event_date``); **no** UNIQUE (append-only, D33).
 - FKs: ``(tenant_id) -> tenants``; ``(tenant_id, store_id) -> stores``;
   ``(mapping_version_id) -> source_mappings``.
 - ``event_category`` CHECK vocab {INVENTORY, PRICE, COST, REGULATORY, STATUS,

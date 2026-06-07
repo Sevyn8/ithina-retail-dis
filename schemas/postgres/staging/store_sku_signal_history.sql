@@ -8,19 +8,23 @@
 -- table exists to keep the staging schema a clean structural mirror of
 -- canonical.
 --
--- Same shape, partitioning, constraints, and RLS as canonical. Constraint
--- and index names prefixed with `_st_` to distinguish from canonical when
--- investigating across schemas.
+-- Same shape, constraints, and RLS as canonical. Constraint and index names
+-- prefixed with `_st_` to distinguish from canonical when investigating
+-- across schemas.
 --
 -- ----------------------------------------------------------------------------
--- Partitioning
+-- Partitioning: none for beta (D77 scope revised)
 -- ----------------------------------------------------------------------------
--- PARTITION BY RANGE (as_of_date). Daily partitions.
--- - Partition creation: scheduled (next-day partition created the day before).
--- - Eviction: after successful BQ export, DROP TABLE the partition.
--- - PK is composite (id, as_of_date) because Postgres requires the partition
---   key to be part of every unique constraint.
--- - The natural-key UNIQUE also includes as_of_date.
+-- This is a PLAIN table. It was PARTITION BY RANGE (as_of_date) with a fixed
+-- bootstrap-created daily window, no DEFAULT partition, and no automation —
+-- the same write-cliff shape Slice 30a removed from audit.events (D77).
+-- De-partitioned for beta on the same disposable-rows/drop-recreate pattern
+-- (migration 0009).
+--
+-- Partitioning returns at Slice 21 (BQ archive + eviction), WITH automation
+-- (decisions.md D29/D34). as_of_date stays NOT NULL; the natural-key UNIQUE
+-- keeps as_of_date (the daily-snapshot grain, not a partition artifact), so
+-- the Slice 21 re-partition is safe.
 --
 -- ----------------------------------------------------------------------------
 -- Phase 0 migration order
@@ -31,7 +35,6 @@
 -- 3. Target FK tables exist: identity_mirror.tenants,
 --    identity_mirror.stores.
 -- 4. Apply this DDL.
--- 5. Set up partition-creation job (creates next day's partition daily).
 --
 -- ----------------------------------------------------------------------------
 -- Dependencies
@@ -43,7 +46,7 @@
 
 
 -- ----------------------------------------------------------------------------
--- Table (partitioned by as_of_date)
+-- Table (plain for beta; Slice 21 re-partitions by as_of_date)
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE staging.store_sku_signal_history (
@@ -51,7 +54,7 @@ CREATE TABLE staging.store_sku_signal_history (
     -- ---------- Surrogate key ----------
     id                              UUID                            NOT NULL DEFAULT uuidv7(),
 
-    -- ---------- Partition key ----------
+    -- ---------- As-of date (Slice 21's re-partition key) ----------
     as_of_date                      DATE                            NOT NULL,
         -- The date these signals describe. NOT the date the compute job ran.
         -- A row with as_of_date = 2026-05-27 was computed on 2026-05-28 (the
@@ -100,7 +103,9 @@ CREATE TABLE staging.store_sku_signal_history (
 
     -- ---------- Primary key ----------
     CONSTRAINT pk_st_sssh
-        PRIMARY KEY (id, as_of_date),
+        PRIMARY KEY (id),
+        -- (id, as_of_date) while partitioned — the composite existed only to
+        -- satisfy the partition-key-in-PK requirement (the D77 PK precedent).
 
     -- ---------- Natural key (one signal row per SKU per day) ----------
     CONSTRAINT uq_st_sssh_natural
@@ -126,20 +131,7 @@ CREATE TABLE staging.store_sku_signal_history (
     CONSTRAINT ck_st_sssh_as_of_date_not_future
         CHECK (as_of_date <= CURRENT_DATE)
 
-) PARTITION BY RANGE (as_of_date);
-
-
--- ----------------------------------------------------------------------------
--- Initial partition (template; real partitions created by scheduled job)
---
--- Pattern for daily partitions:
---   CREATE TABLE staging.store_sku_signal_history_yyyymmdd
---       PARTITION OF staging.store_sku_signal_history
---       FOR VALUES FROM ('YYYY-MM-DD') TO ('YYYY-MM-DD+1');
---
--- Eviction:
---   DROP TABLE staging.store_sku_signal_history_yyyymmdd;
--- ----------------------------------------------------------------------------
+);
 
 
 -- ----------------------------------------------------------------------------
@@ -199,13 +191,13 @@ CREATE POLICY tenant_isolation
 -- ----------------------------------------------------------------------------
 
 COMMENT ON TABLE staging.store_sku_signal_history IS
-'Shadow mirror of canonical.store_sku_signal_history. Created for shape parity with canonical so a future shadow-compute path could populate it during STAGED rollouts. In v1.0 the daily compute job runs only against canonical; staging signal_history rows are not produced. Same shape, partitioning, and RLS as canonical.';
+'Shadow mirror of canonical.store_sku_signal_history. Created for shape parity with canonical so a future shadow-compute path could populate it during STAGED rollouts. In v1.0 the daily compute job runs only against canonical; staging signal_history rows are not produced. Same shape and RLS as canonical: plain (non-partitioned) for beta; Slice 21 re-partitions by as_of_date.';
 
 COMMENT ON COLUMN staging.store_sku_signal_history.id IS
-'Surrogate identifier. UUIDv7. Composite PK with as_of_date due to partitioning.';
+'Surrogate identifier. UUIDv7. Primary key.';
 
 COMMENT ON COLUMN staging.store_sku_signal_history.as_of_date IS
-'Partition key. The date these signals describe, not the date the compute job ran. A row with as_of_date = 2026-05-27 was typically computed on 2026-05-28.';
+'The date these signals describe, not the date the compute job ran. A row with as_of_date = 2026-05-27 was typically computed on 2026-05-28. Slice 21''s re-partition key.';
 
 COMMENT ON COLUMN staging.store_sku_signal_history.tenant_id IS
 'Tenant owning this row. FK to identity_mirror.tenants. RLS scopes every read and write by this column.';

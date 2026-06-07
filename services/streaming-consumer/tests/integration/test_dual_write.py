@@ -218,7 +218,7 @@ async def test_mid_transaction_failure_rolls_back_both(
     # SKU is deliberately NOT a rollback case any more (the miss commits the
     # batch and raises after — event history retained; see
     # test_first_seen_sku_quarantines_loud_event_history_retained). A GENUINE
-    # hot-side error inside the transaction (CHECK/partition/infra) still rolls
+    # hot-side error inside the transaction (CHECK/infra) still rolls
     # both sides back via the shared rls_session.
     chunk = seed_chunk(
         dis_admin,
