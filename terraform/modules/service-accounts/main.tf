@@ -19,6 +19,7 @@ locals {
       "roles/cloudsql.client",
       "roles/secretmanager.secretAccessor",
       "roles/storage.objectAdmin", # signed URL issuance for uploads
+      "roles/pubsub.publisher",    # D83: publishes csv.received to real Pub/Sub now
     ]
     "csv-ingest-worker" = [
       "roles/cloudsql.client",
@@ -26,6 +27,7 @@ locals {
       "roles/storage.objectAdmin",
       "roles/pubsub.publisher",
       "roles/pubsub.subscriber",
+      "roles/pubsub.viewer", # D83: _require_subscription needs pubsub.subscriptions.get
     ]
     "streaming-consumer" = [
       "roles/cloudsql.client",
@@ -33,6 +35,7 @@ locals {
       "roles/storage.objectViewer",
       "roles/pubsub.publisher",
       "roles/pubsub.subscriber",
+      "roles/pubsub.viewer", # D83: _require_subscription needs pubsub.subscriptions.get
     ]
     "mirror-sync-consumer" = [
       "roles/cloudsql.client",

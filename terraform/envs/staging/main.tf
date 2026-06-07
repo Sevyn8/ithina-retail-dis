@@ -98,20 +98,34 @@ module "dis_ui_server" {
   vpc_connector_id         = module.network.vpc_connector_id
   cloudsql_connection_name = module.cloud_sql.connection_name
 
-  env = {
-    ENV           = "staging"
-    DIS_DB_NAME   = var.dis_db_name
-    DIS_DB_USER   = var.dis_db_user
-    CLOUDSQL_CONN = module.cloud_sql.connection_name
-    # CORS points at the frontend URL (admin pattern, 14c explicit origins).
-    CORS_ALLOWED_ORIGINS = var.dis_ui_url
-    # App-level auth is STUB until real OIDC (D25).
-    AUTH_CLIENT_MODE = "STUB"
-  }
+  # Grounded in dis-ui-server config.py (the EXACT env the app reads). REQUIRED
+  # (the app crashloops on startup without these): POSTGRES_URL, GCS_BUCKET_BRONZE,
+  # PUBSUB_PROJECT_ID. POSTGRES_URL is secret-backed (it carries the password); the
+  # rest are plain. PUBSUB_EMULATOR_HOST is deliberately UNSET so the publisher uses
+  # real Pub/Sub via ambient credentials (D83 emulator-or-ambient).
+  env = merge(
+    {
+      GCS_BUCKET_BRONZE = module.buckets.names["bronze"]
+      PUBSUB_PROJECT_ID = var.project_id
+      # Vertex AI (GCP-native auth, no API key). project+location turn the suggester
+      # on; GEMINI_IMPERSONATE_SA makes the Vertex calls run as gemini-dis (dis-ui-server
+      # keeps its own SA for everything else). All optional: if the grants are not yet
+      # in place the suggester degrades to the mechanical fallback, never crashes.
+      GEMINI_VERTEX_PROJECT  = var.project_id
+      GEMINI_VERTEX_LOCATION = var.gemini_vertex_location
+      GEMINI_IMPERSONATE_SA  = var.gemini_dis_sa_email
+    },
+    # CORS_ALLOWED_ORIGINS raises in the app when SET-BUT-EMPTY, so only set it once
+    # the frontend URL is known (14c: explicit origins, no wildcard). Unset -> the
+    # app's dev default; empty-string would crashloop.
+    var.dis_ui_url == "" ? {} : { CORS_ALLOWED_ORIGINS = var.dis_ui_url }
+  )
 
+  # POSTGRES_URL is the full SQLAlchemy URL (carries the db password), so it is
+  # secret-backed, not a plain env. The dev-stub JWT verifier reads NO env (real
+  # JWKS is slice 13b, deferred), so dis-jwt-jwks is intentionally NOT wired here.
   secret_env = {
-    DIS_DB_PASSWORD = "dis-db-app-password"
-    JWT_JWKS        = "dis-jwt-jwks"
+    POSTGRES_URL = "dis-database-url"
   }
 
   # Public Cloud Run + app-level JWT/CORS auth, matching ithina-retail-admin.
@@ -160,11 +174,21 @@ module "csv_ingest_worker" {
   vpc_connector_id         = module.network.vpc_connector_id
   cloudsql_connection_name = module.cloud_sql.connection_name
 
+  # D58: the query-based dedup is single-instance only, so this worker is pinned to
+  # ONE instance. This is a CORRECTNESS constraint (D83), not a scaling preference.
+  max_instances = 1
+
+  # Grounded in csv-ingest-worker config.py (REQUIRED: POSTGRES_URL, PUBSUB_PROJECT_ID,
+  # GCS_BUCKET_BRONZE). RUN_HEALTH_SERVER=true runs the readiness /healthz on the
+  # Cloud-Run-injected $PORT so the Service health check passes (D83). PUBSUB_EMULATOR_HOST
+  # unset -> real Pub/Sub via ambient credentials.
   env = {
-    ENV = "staging"
+    PUBSUB_PROJECT_ID = var.project_id
+    GCS_BUCKET_BRONZE = module.buckets.names["bronze"]
+    RUN_HEALTH_SERVER = "true"
   }
   secret_env = {
-    DIS_DB_PASSWORD = "dis-db-app-password"
+    POSTGRES_URL = "dis-database-url"
   }
   allow_public = false
 }
@@ -181,11 +205,17 @@ module "streaming_consumer" {
   vpc_connector_id         = module.network.vpc_connector_id
   cloudsql_connection_name = module.cloud_sql.connection_name
 
+  # Grounded in streaming-consumer config.py (REQUIRED: POSTGRES_URL, PUBSUB_PROJECT_ID,
+  # GCS_BUCKET_BRONZE). RUN_HEALTH_SERVER=true runs the readiness /healthz on the
+  # Cloud-Run-injected $PORT so the Service health check passes (D83). PUBSUB_EMULATOR_HOST
+  # unset -> real Pub/Sub via ambient credentials.
   env = {
-    ENV = "staging"
+    PUBSUB_PROJECT_ID = var.project_id
+    GCS_BUCKET_BRONZE = module.buckets.names["bronze"]
+    RUN_HEALTH_SERVER = "true"
   }
   secret_env = {
-    DIS_DB_PASSWORD = "dis-db-app-password"
+    POSTGRES_URL = "dis-database-url"
   }
   allow_public = false
 }

@@ -115,7 +115,15 @@ variable "secret_names" {
     "dis-db-app-password",
     "dis-cm-mirror-reader-conn",
     "dis-jwt-jwks",
-    "dis-gemini-api-key",
+    # The full DIS POSTGRES_URL the apps read directly (dis-ui-server + the two
+    # subscriber workers): a SQLAlchemy URL of the form
+    # postgresql+psycopg://USER:PASSWORD@/DBNAME?host=/cloudsql/CONNECTION_NAME.
+    # Container only; the operator populates the version at deploy with the
+    # generated db password (module.secrets.db_app_password) and the cloud-sql
+    # connection name. The app reads ONE url, so the secret carries the whole url.
+    "dis-database-url",
+    # dis-gemini-api-key REMOVED: the mapping-suggester moved to Vertex AI
+    # (GCP-native ADC + gemini-dis impersonation, no API key). Nothing reads it.
   ]
 }
 
@@ -175,6 +183,22 @@ variable "dis_ui_url" {
   description = "Public URL of the dis-ui frontend, used for dis-ui-server's CORS_ALLOWED_ORIGINS allowlist (14c: explicit origins only, no wildcard). Known after the frontend deploys; set on a second apply."
   type        = string
   default     = ""
+}
+
+###############################################################################
+# Vertex AI (mapping-suggestions; GCP-native auth, no API key)
+###############################################################################
+
+variable "gemini_vertex_location" {
+  description = "Vertex AI location for the mapping-suggestion model (GEMINI_VERTEX_LOCATION). Default asia-south1 (Mumbai), verified to serve Gemini on Vertex. Override to us-central1 if the specific model is not available in Mumbai."
+  type        = string
+  default     = "asia-south1"
+}
+
+variable "gemini_dis_sa_email" {
+  description = "Email of the gemini-dis service account that dis-ui-server impersonates for Vertex calls (GEMINI_IMPERSONATE_SA). Hand-created out of band, not managed by the service-accounts module. VERIFY this matches the actual SA when the image lands."
+  type        = string
+  default     = "gemini-dis@ithina-retail-dis.iam.gserviceaccount.com"
 }
 
 ###############################################################################
