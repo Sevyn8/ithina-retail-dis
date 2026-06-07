@@ -54,7 +54,8 @@ export type ColumnOverride = {
   authoritative?: boolean
 }
 
-// 2.4 POST .../dry-run. PROVISIONAL: still a fixture (Preview step has no backend yet).
+// Preview rows: canonical-keyed projection of the sample. Now computed CLIENT-SIDE
+// (lib/onboarding/dry-run-local.ts, best-effort/non-blocking); no backend dry-run endpoint.
 export type DryRunResult = { rows: Record<string, unknown>[] }
 
 // 2.5 POST .../approve. Still a fixture (Go-live step has no backend yet).
@@ -140,18 +141,6 @@ export async function patchSampleMapping(
   // The draft lives in the screen's local state; this echoes the override for contract parity.
   void sampleId
   return override
-}
-
-export async function dryRunSample(sampleId: string): Promise<DryRunResult> {
-  ensureFixtureMode('dryRunSample()')
-  void sampleId
-  return {
-    rows: [
-      { sku_id: 'A123', quantity: 12, source_sale_timestamp: '2025-12-03', store_id: 'T-2A' },
-      { sku_id: 'B456', quantity: 3, source_sale_timestamp: '2025-12-03', store_id: 'T-2A' },
-      { sku_id: 'C789', quantity: 1, source_sale_timestamp: '2025-12-04', store_id: 'T-2A' },
-    ],
-  }
 }
 
 export async function approveSample(sampleId: string): Promise<ApproveResult> {

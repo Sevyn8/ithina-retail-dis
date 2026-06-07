@@ -122,14 +122,17 @@ describe('MappingReview (Review mapping / Preview / Go live)', () => {
     expect((select as HTMLSelectElement).value).toBe('unit_sale_price')
   })
 
-  it('renders dry-run preview rows on the Preview step', async () => {
+  it('renders the client-side coercion preview rows on the Preview step', async () => {
     const user = userEvent.setup()
     renderReview('smp_acme0001')
     await screen.findByRole('heading', { name: 'Review mapping' })
     await declareRequiredRules(user)
     await user.click(screen.getByRole('button', { name: /continue to preview/i }))
     expect(await screen.findByRole('heading', { name: 'Preview' })).toBeInTheDocument()
+    // Canonical-keyed projection: item_code -> sku_id keeps the raw text; txn_date ->
+    // source_sale_timestamp coerces 03-12-2025 (%d-%m-%Y) to ISO 2025-12-03 (client-side).
     expect(screen.getAllByText('A123').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('2025-12-03').length).toBeGreaterThan(0)
   })
 
   it('Go-live creates a LIVE template in one step with "Created and live" copy (no activate step)', async () => {

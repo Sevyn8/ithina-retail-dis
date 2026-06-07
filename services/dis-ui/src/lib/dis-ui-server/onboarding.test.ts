@@ -5,7 +5,6 @@ import {
   __resetSampleStore,
   approveSample,
   assembleAnalysis,
-  dryRunSample,
   getSample,
   nextSampleId,
   putSampleAnalysis,
@@ -31,15 +30,31 @@ const RESPONSE: MappingSuggestionResponse = {
   source: 'llm',
   model: 'gemini-2.5-flash',
   suggestions: [
-    { source_column: 'item_code', suggested_target: 'sku_id', confidence: 0.95, reasoning: 'sku-ish' },
-    { source_column: 'qty', suggested_target: 'quantity', confidence: 0.9, alternatives: ['unit_sale_price'] },
+    {
+      source_column: 'item_code',
+      suggested_target: 'sku_id',
+      confidence: 0.95,
+      reasoning: 'sku-ish',
+    },
+    {
+      source_column: 'qty',
+      suggested_target: 'quantity',
+      confidence: 0.9,
+      alternatives: ['unit_sale_price'],
+    },
     { source_column: 'mystery', suggested_target: null, confidence: 0.1 }, // "do not map"
   ],
 }
 
 describe('onboarding analyzed-sample store (T11)', () => {
   it('round-trips an analysis through the in-memory store', async () => {
-    const analysis: SampleAnalysis = assembleAnalysis(PARSED, RESPONSE, 'smp_local_1', 'manual_csv_upload', 'Sales')
+    const analysis: SampleAnalysis = assembleAnalysis(
+      PARSED,
+      RESPONSE,
+      'smp_local_1',
+      'manual_csv_upload',
+      'Sales',
+    )
     putSampleAnalysis(analysis)
     const got = await getSample('smp_local_1')
     expect(got).not.toBeNull()
@@ -76,11 +91,6 @@ describe('assembleAnalysis (merge parse + suggestions)', () => {
 })
 
 describe('onboarding fixtures still pending the backend', () => {
-  it('dryRunSample returns preview rows (fixture)', async () => {
-    const result = await dryRunSample('smp_local_1')
-    expect(result.rows.length).toBeGreaterThan(0)
-  })
-
   it('approveSample returns staged with the seeded source id (fixture)', async () => {
     const result = await approveSample('smp_local_1')
     expect(result).toEqual({ source_id: 'manual_csv_upload', mapping_version: 1, status: 'staged' })

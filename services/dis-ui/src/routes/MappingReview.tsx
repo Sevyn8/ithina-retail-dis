@@ -22,12 +22,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { dryRunSample, patchSampleMapping, useSample } from '../lib/dis-ui-server/onboarding'
+import { patchSampleMapping, useSample } from '../lib/dis-ui-server/onboarding'
 import type { DryRunResult, SampleColumn } from '../lib/dis-ui-server/onboarding'
 import { DisUiServerHttpError } from '../lib/dis-ui-server/client'
 import { createMappingTemplate } from '../lib/dis-ui-server/mapping-templates'
 import type { MappingTemplateDetail } from '../lib/dis-ui-server/mapping-templates'
 import { assembleMappingRules } from '../lib/onboarding/assemble-mapping-rules'
+import { localDryRun } from '../lib/onboarding/dry-run-local'
 import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
 import type {
   FieldDatatype,
@@ -219,14 +220,24 @@ export function MappingReview() {
     return datatype === undefined ? null : requiredRuleKind(datatype)
   }
 
-  async function continueToPreview(): Promise<void> {
+  function continueToPreview(): void {
     setActionError(null)
-    try {
-      setDryRun(await dryRunSample(sampleId as string))
-      setStep('preview')
-    } catch {
-      setActionError('Dry-run failed.')
+    // Client-side, best-effort coercion preview (non-blocking): project the parsed sample rows
+    // through the current mapping + locale rules and ALWAYS advance to preview. The server's
+    // pipeline is the authoritative coercion; this preview never gates reaching go-live.
+    const renameMap: Record<string, string> = {}
+    for (const column of analysis.columns) {
+      renameMap[column.source_col] = overrideFor(column).proposed_canonical
     }
+    setDryRun(
+      localDryRun({
+        sampleRows: analysis.sample_rows,
+        renameMap,
+        localeRules,
+        catalogByKey,
+      }),
+    )
+    setStep('preview')
   }
 
   // Go-live: assemble the full mapping_rules from the wizard state, then CREATE the template
@@ -636,11 +647,7 @@ export function MappingReview() {
             <Button type="button" variant="ghost" onClick={() => navigate('/upload')}>
               Back
             </Button>
-            <Button
-              type="button"
-              disabled={!allRulesDeclared}
-              onClick={() => void continueToPreview()}
-            >
+            <Button type="button" disabled={!allRulesDeclared} onClick={() => continueToPreview()}>
               Continue to preview
             </Button>
           </div>
