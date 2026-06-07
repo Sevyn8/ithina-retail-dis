@@ -3,15 +3,14 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { PERSONAS } from '../auth/dev/personas'
-import { signStubToken } from '../auth/dev/signStubToken'
 import { useAuth } from '../auth/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
-// Dev-only login, on the design-system craft bar. Mints a stub JWT for the chosen
-// persona, hands it to AuthProvider via login(), and navigates to the protected home.
-// There is no real Customer Master here; this route exists only in dev (signStubToken
-// refuses to run in a production build).
+// Dev-only login. Logs in the chosen persona with its PRE-SUPPLIED dev-stub token
+// (baked at build via VITE_STUB_TOKEN_* build args), hands it to AuthProvider via
+// login(), and navigates to the protected home. No client-side minting and no real
+// Customer Master here; this route is dev/staging only.
 export function DevLogin() {
   const { login } = useAuth()
   const navigate = useNavigate()
@@ -24,8 +23,19 @@ export function DevLogin() {
       setError('Unknown persona')
       return
     }
+    // Per-persona pre-supplied dev-stub tokens, baked at build time via VITE_ build
+    // args (literal import.meta.env accesses so Vite statically replaces them). No
+    // client-side minting: each persona logs in with its own pre-supplied token.
+    const PERSONA_TOKENS: Record<string, string | undefined> = {
+      tenant: import.meta.env.VITE_STUB_TOKEN_TENANT,
+      ops: import.meta.env.VITE_STUB_TOKEN_OPS,
+    }
+    const token = PERSONA_TOKENS[persona.id]
+    if (token === undefined || token === '') {
+      setError('Could not sign in with the selected persona')
+      return
+    }
     try {
-      const token = await signStubToken(persona)
       await login(token)
       navigate('/', { replace: true })
     } catch {

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # dis-ui (frontend)
 #
 # Builds the Vite SPA and serves the static assets with nginx, with SPA
@@ -22,7 +23,7 @@ FROM node:20-slim AS build
 WORKDIR /app
 
 # pnpm (the repo uses pnpm for the UI).
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -31,10 +32,16 @@ COPY . .
 
 # Build-time Vite vars (ARG -> ENV -> baked by `vite build`). Mode defaults to
 # 'fixture' (safe); staging passes 'real' + the base URL via cloudbuild substitutions.
+# VITE_STUB_TOKEN_TENANT / VITE_STUB_TOKEN_OPS are the pre-supplied dev-login persona
+# tokens (staging only); pass via .env.local or build-arg, never committed.
 ARG VITE_DIS_UI_SERVER_MODE="fixture"
 ARG VITE_DIS_UI_SERVER_BASE_URL=""
+ARG VITE_STUB_TOKEN_TENANT=""
+ARG VITE_STUB_TOKEN_OPS=""
 ENV VITE_DIS_UI_SERVER_MODE=${VITE_DIS_UI_SERVER_MODE}
 ENV VITE_DIS_UI_SERVER_BASE_URL=${VITE_DIS_UI_SERVER_BASE_URL}
+ENV VITE_STUB_TOKEN_TENANT=${VITE_STUB_TOKEN_TENANT}
+ENV VITE_STUB_TOKEN_OPS=${VITE_STUB_TOKEN_OPS}
 RUN pnpm build
 
 # --- serve ---

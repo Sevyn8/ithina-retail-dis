@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { AuthProvider } from '../auth/AuthProvider'
+import { PERSONAS } from '../auth/dev/personas'
+import { signStubToken } from '../auth/dev/signStubToken'
 import { ME_FIXTURES } from '../lib/dis-ui-server/fixtures'
 import { AppRoutes } from './AppRoutes'
 
@@ -23,8 +25,22 @@ function renderApp() {
 }
 
 describe('DevLogin persona switch', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear()
+    // pick() now logs in with pre-supplied per-persona tokens from VITE_STUB_TOKEN_*
+    // (no client-side minting). Mint valid dev-stub tokens for the test and expose
+    // them via the env the UI reads.
+    const tenant = PERSONAS.find((p) => p.id === 'tenant')
+    const ops = PERSONAS.find((p) => p.id === 'ops')
+    if (tenant === undefined || ops === undefined) {
+      throw new Error('expected tenant and ops personas')
+    }
+    vi.stubEnv('VITE_STUB_TOKEN_TENANT', await signStubToken(tenant))
+    vi.stubEnv('VITE_STUB_TOKEN_OPS', await signStubToken(ops))
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   it('signs in as one persona, then switches to another', async () => {
