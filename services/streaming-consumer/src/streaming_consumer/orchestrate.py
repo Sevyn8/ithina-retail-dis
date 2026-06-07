@@ -51,7 +51,13 @@ from dis_core.logging import get_logger
 from dis_rls import rls_session
 from streaming_consumer.config import BATCH_SIZE_ROW_PAIRS, SERVICE_NAME
 from streaming_consumer.envelope import IngressReadyEvent
-from streaming_consumer.pipeline.fetch import FetchedChunk, ObjectStore, fetch_chunk, read_store_tax_treatment
+from streaming_consumer.pipeline.fetch import (
+    BronzeMeta,
+    FetchedChunk,
+    ObjectStore,
+    fetch_chunk,
+    read_store_tax_treatment,
+)
 from streaming_consumer.pipeline.mapping import (
     LoadedMapping,
     apply_loaded_mapping,
@@ -160,6 +166,18 @@ class _FlowContext:
     row_count: int | None = None
     _mark: float = field(default_factory=time.monotonic)
 
+    def note_bronze(self, bronze: BronzeMeta) -> None:
+        """Record the bronze identity the moment the row is read (mid-fetch).
+
+        The fetch stage can still fail AFTER this point (download/parse); such a
+        failure is genuinely post-fetch and must not lose ``dis_channel`` — the
+        ``_quarantinable`` known-columns guard keys on it, and losing it would
+        misclassify a deterministic post-fetch failure as pre-fetch (nack-forever,
+        the storm class Slice 11a holds).
+        """
+        self.bronze_id = bronze.bronze_id
+        self.dis_channel = bronze.dis_channel
+
     def lap(self) -> int:
         now = time.monotonic()
         elapsed_ms = int((now - self._mark) * 1000)
@@ -262,12 +280,18 @@ class ConsumerPipeline:
         seen_before = await self._seen_before(tenant_id, trace_id)
 
         # 1. Fetch (intake + bronze + GCS; the chunk arrives tokenized, D24).
+        #    ctx learns the bronze identity MID-stage via note_bronze, so a
+        #    download/parse failure still classifies as post-fetch (11a guard).
         fetched = await self._staged(
             Stage.RECEIVED,
-            fetch_chunk(self.engine, self.storage, event, bronze_bucket=self.bronze_bucket),
+            fetch_chunk(
+                self.engine,
+                self.storage,
+                event,
+                bronze_bucket=self.bronze_bucket,
+                on_bronze=ctx.note_bronze,
+            ),
         )
-        ctx.bronze_id = fetched.bronze.bronze_id
-        ctx.dis_channel = fetched.bronze.dis_channel
         ctx.row_count = fetched.frame.height
         await self.audit.emit(
             stage=Stage.RECEIVED,

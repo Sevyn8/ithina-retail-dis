@@ -25,6 +25,7 @@ nothing is type-guessed here. The chunk arrives ALREADY tokenized (D24) — no
 from __future__ import annotations
 
 import io
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -161,10 +162,21 @@ async def fetch_chunk(
     event: IngressReadyEvent,
     *,
     bronze_bucket: str,
+    on_bronze: Callable[[BronzeMeta], None] | None = None,
 ) -> FetchedChunk:
-    """The fetch stage: cross-check, bronze read, download, parse."""
+    """The fetch stage: cross-check, bronze read, download, parse.
+
+    ``on_bronze`` fires the moment the bronze row is read, BEFORE the download
+    and parse: the caller's flow context learns ``bronze_id``/``dis_channel``
+    even when a later step of this stage raises, so a download/parse failure is
+    classifiable as POST-fetch (the Slice 11a known-columns guard keys on
+    ``dis_channel``; without this, a deterministic unparseable/empty bronze
+    object could never be held and nacked forever — the storm class).
+    """
     object_key = cross_check_path(event, bronze_bucket=bronze_bucket)
     bronze = await read_bronze_row(engine, event)
+    if on_bronze is not None:
+        on_bronze(bronze)
     data = storage.download_bytes(object_key)
     frame = parse_chunk(data, tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
     return FetchedChunk(frame=frame, bronze=bronze)

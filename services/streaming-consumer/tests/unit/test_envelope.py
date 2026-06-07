@@ -3,6 +3,10 @@
 The drift guard reconciles the Pydantic model against the committed contract file
 both directions (the 9b/dis-audit reconcile pattern), so neither the model nor
 the frozen contract can change without the other noticing (hard rule 10).
+
+Also pins the transport consequence of a contract-reject: ``process_message``
+acks an unparseable envelope pre-pipeline (terminal — redelivery is identical)
+without ever touching the pipeline.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from dis_core.errors import EventContractError
+from streaming_consumer.clients.pubsub import process_message
 from streaming_consumer.envelope import IngressReadyEvent, parse_ingress_ready
 
 # services/streaming-consumer/tests/unit/ -> repo root / contracts/pubsub.
@@ -124,3 +129,32 @@ def test_model_required_set_matches_contract_required() -> None:
 def test_contract_is_additional_properties_false() -> None:
     # The model's extra='forbid' is only correct while the contract says so.
     assert _SCHEMA["additionalProperties"] is False
+
+
+# ---------------------------------------------------------------------------
+# The transport consequence: an unparseable envelope acks pre-pipeline.
+# ---------------------------------------------------------------------------
+
+
+class _MustNotProcess:
+    """A pipeline stand-in: any process() call means the reject branch leaked."""
+
+    async def process(self, event: object) -> object:
+        raise AssertionError("pipeline.process must NOT be called for an unparseable envelope")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(b"\x00\x89garbage not json\xff", id="not-json"),
+        pytest.param(b"[1, 2, 3]", id="json-but-not-an-object"),
+        pytest.param(b'{"schema_version": 1}', id="object-missing-required-fields"),
+    ],
+)
+async def test_unparseable_envelope_acks_without_processing(payload: bytes) -> None:
+    """Every contract-reject shape is terminal: the same bytes fail identically on
+    redelivery, so the message acks pre-pipeline (clients/pubsub.py) — and the
+    pipeline is provably untouched (the stub raises on any process() call), so no
+    bronze fetch and no write can have happened."""
+    decision = await process_message(_MustNotProcess(), payload)  # type: ignore[arg-type]
+    assert decision == "ack"

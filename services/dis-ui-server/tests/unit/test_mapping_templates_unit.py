@@ -116,6 +116,26 @@ def test_malformed_source_id_is_422(client: TestClient, mint_token: Callable[...
     assert "Not Valid!" not in response.text  # 422 strips submitted values
 
 
+def test_template_name_bounds_are_422(client: TestClient, mint_token: Callable[..., str]) -> None:
+    """``template_name`` is bounded min_length=1 / max_length=200 at the schema
+    (schemas/mapping_templates.py): empty and over-long names are both a 422
+    request_validation envelope, with the submitted value stripped."""
+    headers = _bearer(mint_token())
+
+    body = _valid_create_body()
+    body["template_name"] = ""
+    empty = client.post("/api/v1/mapping-templates", headers=headers, json=body)
+    assert empty.status_code == 422
+    assert empty.json()["error"]["code"] == "request_validation"
+
+    body = _valid_create_body()
+    body["template_name"] = "x" * 201
+    too_long = client.post("/api/v1/mapping-templates", headers=headers, json=body)
+    assert too_long.status_code == 422
+    assert too_long.json()["error"]["code"] == "request_validation"
+    assert "x" * 201 not in too_long.text  # 422 strips submitted values
+
+
 def test_empty_patch_body_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
     response = client.patch(
         "/api/v1/mapping-templates/019e9804-12ce-7f57-b9c0-eb3c7d0e8609",

@@ -19,6 +19,14 @@ The storm-stopper acceptance criteria against the live stack (5433 + emulators):
   QUARANTINED audit for an unheld chunk.
 - The audit fire-and-forget posture is UNCHANGED: a dead audit writer never
   blocks the hold or the ack (quarantine-write-loud → audit-emit-forget → ack).
+- The OTHER two allowlist codes, end to end: ``SUITE_REF_UNSUPPORTED`` (a
+  non-NULL suite ref on the ACTIVE mapping row) and the guarded post-fetch
+  ``CONTRACT_VIOLATION`` (an unparseable or empty bronze object — the bronze
+  row was read, so ``dis_channel`` is KNOWN and the chunk is holdable; the
+  flow context learns it mid-fetch via ``note_bronze``, the regression that
+  used to nack-forever).
+- The POST gate's hold: a null in a mandatory canonical column passes pre +
+  engine and is held row-grain at the post gate, then acked.
 
 Subscriber-level ack/nack (publish → pull → redelivery observation) is proven in
 ``test_failure_disposition.py``; here ``process_message`` pins the Decision and
@@ -27,7 +35,10 @@ the store/audit shapes are read back independently via the admin engine.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
@@ -52,6 +63,13 @@ pytestmark = pytest.mark.integration
 # No config.source_mappings row exists for this source: the mapping load raises
 # MappingConfigError — the empty/invalid-ACTIVE-mapping class that caused the storm.
 _UNMAPPED_SOURCE_ID = "sc_nomap_v1"
+
+# A source dedicated to the suite-ref test: its ACTIVE mapping row (valid sale
+# rules + a NON-NULL pre_validation_suite_ref) is inserted by the test and
+# removed in its finally block. Distinct from every conftest-seeded source.
+_SUITEREF_SOURCE_ID = "sc_suiteref_v1"
+_SUITEREF_TEMPLATE_ID = UUID("019e97d0-0000-7000-8000-0000000000b1")
+_SALE_RULES_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "mappings" / "sale_pos_v1.json"
 
 _GOOD_ROW = ("2026-01-01 10:00:00", "SKU-Q", "1", "9.99", "8.50", "T-Q", "1")
 
@@ -359,3 +377,213 @@ async def test_dead_audit_writer_never_blocks_the_hold_or_the_ack(
     chunks_held, _ = _held_counts(dis_admin, chunk.trace_id)
     assert chunks_held == 1, "the hold succeeded despite the dead audit writer"
     assert _quarantined_audits(dis_admin, chunk.trace_id) == []  # the emit was dropped, not the ack
+
+
+async def test_suite_ref_unsupported_quarantines_chunk_and_acks(
+    pipeline: ConsumerPipeline,
+    dis_admin: Engine,
+    storage: StorageClient,
+    cleanup: Cleanup,
+    stack_env: dict[str, str],
+) -> None:
+    """A non-NULL ``pre_validation_suite_ref`` on the ACTIVE mapping row makes
+    ``load_active_mapping`` raise ``SuiteDefinitionError`` (NULL=default is the
+    only supported state): config-deterministic, so the chunk is held WHOLE in
+    ``quarantined_chunks`` (SUITE_REF_UNSUPPORTED, ``mapping_version_id`` NULL —
+    the lookup itself refused) and the message ACKS."""
+    from dis_testing.fixtures import PRIMARY_TENANT
+
+    rules = json.loads(_SALE_RULES_FILE.read_text())
+    with dis_admin.begin() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM config.source_mappings "
+                "WHERE tenant_id = CAST(:tenant AS uuid) AND source_id = :source"
+            ),
+            {"tenant": str(PRIMARY_TENANT.uuid), "source": _SUITEREF_SOURCE_ID},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO config.source_mappings "
+                "(tenant_id, source_id, template_id, template_name, version_seq_per_source, "
+                " status, mapping_rules, pre_validation_suite_ref, activated_at) "
+                "VALUES (CAST(:tenant AS uuid), :source, CAST(:template AS uuid), 'default', 1, "
+                " 'ACTIVE', CAST(:rules AS JSONB), 'custom_suites:NotShippedSuite', NOW())"
+            ),
+            {
+                "tenant": str(PRIMARY_TENANT.uuid),
+                "source": _SUITEREF_SOURCE_ID,
+                "template": str(_SUITEREF_TEMPLATE_ID),
+                "rules": json.dumps(rules),
+            },
+        )
+    try:
+        chunk = seed_chunk(
+            dis_admin,
+            storage,
+            cleanup,
+            csv_data=sale_csv([(ts(0), "SKU-SR", "1", "9.99", "8.50", "T-SR", "1")]),
+            source_id=_SUITEREF_SOURCE_ID,
+            bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
+        )
+
+        decision = await process_message(pipeline, _payload(chunk.event))
+        assert decision == "ack", "SUITE_REF_UNSUPPORTED is on the 11a allowlist: hold + ACK"
+
+        assert _held_counts(dis_admin, chunk.trace_id) == (1, 0), "chunk grain, never the row table"
+        with dis_admin.begin() as conn:
+            held = conn.execute(
+                text(
+                    "SELECT failure_stage, failure_reason, failure_context, mapping_version_id, "
+                    "dis_channel, data_ingress_event_id::text, status "
+                    "FROM quarantine.quarantined_chunks WHERE trace_id = CAST(:t AS uuid)"
+                ),
+                {"t": str(chunk.trace_id)},
+            ).one()
+        assert held.failure_stage == "MAPPING_LOOKUP"
+        assert held.failure_reason == "SUITE_REF_UNSUPPORTED"
+        assert held.failure_context["exception_class"] == "SuiteDefinitionError"
+        assert held.mapping_version_id is None  # the lookup refused; no version pinned
+        assert held.dis_channel == "csv_upload"  # post-fetch: read off the bronze row
+        assert held.data_ingress_event_id == str(chunk.bronze_ref)
+        assert held.status == "NEW"
+    finally:
+        with dis_admin.begin() as conn:
+            conn.execute(
+                text(
+                    "DELETE FROM config.source_mappings "
+                    "WHERE tenant_id = CAST(:tenant AS uuid) AND source_id = :source"
+                ),
+                {"tenant": str(PRIMARY_TENANT.uuid), "source": _SUITEREF_SOURCE_ID},
+            )
+
+
+async def test_unparseable_bronze_object_quarantines_chunk_and_acks(
+    pipeline: ConsumerPipeline,
+    dis_admin: Engine,
+    storage: StorageClient,
+    cleanup: Cleanup,
+    stack_env: dict[str, str],
+) -> None:
+    """A bronze object that does not parse as CSV is a guarded POST-fetch
+    CONTRACT_VIOLATION: the bronze row was read before the parse, so the flow
+    context knows ``dis_channel`` (via ``note_bronze``, mid-fetch) and the chunk
+    is held in ``quarantined_chunks`` + ACKED. Regression guard: this used to
+    nack forever because the parse raise discarded the bronze identity and the
+    known-columns guard misread the failure as pre-fetch."""
+    garbage = b"\x00\xff\xfe\x00\x89PNG\r\n\x1a\n" + bytes(range(256))
+    chunk = seed_chunk(
+        dis_admin,
+        storage,
+        cleanup,
+        csv_data=garbage,
+        source_id=SALE_SOURCE_ID,
+        bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
+    )
+
+    decision = await process_message(pipeline, _payload(chunk.event))
+    assert decision == "ack", "a deterministic unparseable bronze object is held + ACKED (11a)"
+
+    assert _held_counts(dis_admin, chunk.trace_id) == (1, 0), "chunk grain (no rows exist to index)"
+    with dis_admin.begin() as conn:
+        held = conn.execute(
+            text(
+                "SELECT failure_reason, failure_context, dis_channel, "
+                "data_ingress_event_id::text, mapping_version_id, row_count_in_chunk, status "
+                "FROM quarantine.quarantined_chunks WHERE trace_id = CAST(:t AS uuid)"
+            ),
+            {"t": str(chunk.trace_id)},
+        ).one()
+    assert held.failure_reason == "CONTRACT_VIOLATION"
+    assert held.failure_context["exception_class"] == "EventContractError"
+    assert held.dis_channel == "csv_upload"  # the bronze row's, learned mid-fetch
+    assert held.data_ingress_event_id == str(chunk.bronze_ref)
+    assert held.mapping_version_id is None  # the failure precedes the lookup
+    assert held.row_count_in_chunk is None  # nothing parsed (nullable by design)
+    assert held.status == "NEW"
+
+
+async def test_empty_bronze_chunk_quarantines_chunk_and_acks(
+    pipeline: ConsumerPipeline,
+    dis_admin: Engine,
+    storage: StorageClient,
+    cleanup: Cleanup,
+    stack_env: dict[str, str],
+) -> None:
+    """The unparseable-object twin: a bronze object that parses to ZERO data rows
+    (header only) raises the same post-fetch CONTRACT_VIOLATION shape and must be
+    held in ``quarantined_chunks`` + ACKED — same mechanism, same regression."""
+    chunk = seed_chunk(
+        dis_admin,
+        storage,
+        cleanup,
+        csv_data=b"sold_at,sku,qty,retail,price,txn,line\n",  # header, zero data rows
+        source_id=SALE_SOURCE_ID,
+        bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
+    )
+
+    decision = await process_message(pipeline, _payload(chunk.event))
+    assert decision == "ack", "a deterministic empty bronze chunk is held + ACKED (11a)"
+
+    assert _held_counts(dis_admin, chunk.trace_id) == (1, 0), "chunk grain"
+    with dis_admin.begin() as conn:
+        held = conn.execute(
+            text(
+                "SELECT failure_reason, failure_context, dis_channel, status "
+                "FROM quarantine.quarantined_chunks WHERE trace_id = CAST(:t AS uuid)"
+            ),
+            {"t": str(chunk.trace_id)},
+        ).one()
+    assert held.failure_reason == "CONTRACT_VIOLATION"
+    assert "zero data rows" in held.failure_context["failure_message"]
+    assert held.dis_channel == "csv_upload"
+    assert held.status == "NEW"
+
+
+async def test_post_gate_null_mandatory_holds_rows_and_acks(
+    pipeline: ConsumerPipeline,
+    dis_admin: Engine,
+    storage: StorageClient,
+    cleanup: Cleanup,
+    stack_env: dict[str, str],
+    consumer_mappings: dict[str, int],
+) -> None:
+    """A chunk that passes the pre gate and the engine but carries a NULL in a
+    mandatory canonical column (empty sku cell → null ``sku_id``) fails the POST
+    gate row-indexed: ONLY the failing row is held in ``quarantined_rows``
+    (POST_MAPPING_VALIDATION), nothing lands canonical, and the message ACKS."""
+    good = (ts(0), "SKU-PGN", "1", "9.99", "8.50", "T-PGN", "1")
+    null_sku = (ts(1), "", "1", "9.99", "8.50", "T-PGN", "2")  # empty cell → null sku_id
+    chunk = seed_chunk(
+        dis_admin,
+        storage,
+        cleanup,
+        csv_data=sale_csv([good, null_sku]),
+        source_id=SALE_SOURCE_ID,
+        bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
+    )
+
+    decision = await process_message(pipeline, _payload(chunk.event))
+    assert decision == "ack", "a post-gate data-deterministic failure is held + ACKED (11a)"
+
+    assert _held_counts(dis_admin, chunk.trace_id) == (0, 1), "row grain: exactly the failing row"
+    with dis_admin.begin() as conn:
+        held = conn.execute(
+            text(
+                "SELECT row_offset, failure_stage, failure_reason, failure_context, "
+                "mapping_version_id, status "
+                "FROM quarantine.quarantined_rows WHERE trace_id = CAST(:t AS uuid)"
+            ),
+            {"t": str(chunk.trace_id)},
+        ).one()
+        canonical = conn.execute(
+            text("SELECT COUNT(*) FROM canonical.store_sku_sale_events WHERE trace_id = CAST(:t AS uuid)"),
+            {"t": str(chunk.trace_id)},
+        ).scalar_one()
+    assert held.row_offset == 1  # the second data row (the null sku)
+    assert held.failure_stage == "POST_MAPPING_VALIDATION"
+    assert held.failure_reason == "VALIDATION_ROW_FAILED"
+    assert held.failure_context["failures"], "column/check/reason detail rides failure_context"
+    assert held.mapping_version_id == consumer_mappings[SALE_SOURCE_ID]
+    assert held.status == "NEW"
+    assert canonical == 0, "no partial success: the good row is NOT written (bronze recovers it)"

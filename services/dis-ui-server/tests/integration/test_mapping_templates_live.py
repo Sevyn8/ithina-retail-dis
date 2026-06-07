@@ -251,6 +251,32 @@ def test_unknown_template_is_404(live_client: TestClient, mint_token: Callable[.
     assert response.json()["error"]["code"] == "resource_not_found"
 
 
+def test_non_uuid_token_sub_creates_with_null_created_by(
+    live_client: TestClient,
+    mint_token: Callable[..., str],
+    scratch_source: str,
+    admin_engine: Engine,
+) -> None:
+    """A verified token whose ``sub`` is not a UUID still creates (201); the
+    authorship column is NULL by design (handlers/mapping_templates.py
+    ``_created_by_uuid`` — the claim vocabulary is unsigned, D56/Blocker 5),
+    on the wire AND on the written row."""
+    response = live_client.post(
+        "/api/v1/mapping-templates",
+        headers=_bearer(mint_token(tenant_id=TENANT_A, sub="svc-account-7")),  # not a UUID
+        json={"source_id": scratch_source, "template_name": "sales", "mapping_rules": _sale_rules()},
+    )
+    assert response.status_code == 201
+    assert response.json()["versions"][0]["created_by_user_id"] is None  # the wire shape
+
+    with admin_engine.begin() as conn:  # and the written row itself
+        stored = conn.execute(
+            text("SELECT created_by_user_id FROM config.source_mappings WHERE source_id = :sid"),
+            {"sid": scratch_source},
+        ).scalar_one()
+    assert stored is None
+
+
 # -- edit (e) — the D17 lifecycle ------------------------------------------------------
 
 
@@ -335,6 +361,35 @@ def test_patch_on_a_fully_deprecated_lineage_is_409(
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "mapping_state_conflict"
+
+
+def test_patch_with_invalid_rules_is_400_and_writes_nothing(
+    live_client: TestClient, mint_token: Callable[..., str], scratch_source: str
+) -> None:
+    """PATCH validates ``mapping_rules`` through the same four-step gate as POST
+    BEFORE any write (handlers/mapping_templates.py): bad rules are a 400
+    ``mapping_config``, and the lineage is byte-identical afterwards — no new
+    DRAFT chained, no in-place edit."""
+    headers = _bearer(mint_token(tenant_id=TENANT_A))
+    created = _create(live_client, mint_token, scratch_source)
+    assert created.status_code == 201
+    template_id = created.json()["template_id"]
+
+    bad_rules = {"version": 1, "rename": {}, "normalize": {}, "cast": {}, "derive": {}}  # empty rename
+    patched = live_client.patch(
+        f"/api/v1/mapping-templates/{template_id}",
+        headers=headers,
+        json={"mapping_rules": bad_rules},
+    )
+    assert patched.status_code == 400
+    assert patched.json()["error"]["code"] == "mapping_config"
+
+    detail = live_client.get(f"/api/v1/mapping-templates/{template_id}", headers=headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["versions_count"] == 1, "no new DRAFT was chained by the rejected PATCH"
+    assert body["draft_version"] == 1
+    assert body["versions"][0]["mapping_rules"] == _canonical(_sale_rules()), "rules unchanged"
 
 
 def test_rename_updates_the_whole_lineage_and_conflicts_cleanly(

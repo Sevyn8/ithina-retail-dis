@@ -1252,3 +1252,15 @@ no Pub/Sub) is untouched. Infra is out (Amit): the health-check contract (port $
 readiness), csv-ingest-worker max-instances=1 as a CORRECTNESS constraint (D58 query-dedup is
 single-instance only), and the new pubsub.subscriptions.get IAM requirement (the subscribers'
 _require_subscription now runs against real GCP). Cross-refs D58.
+
+### D84 Post-fetch CONTRACT_VIOLATION was misclassified as pre-fetch — the parse-stage hold gap closed `RESOLVED`
+
+**Status.** `RESOLVED` (this batch). Found by driving the D82 allowlist's unit-proven dispositions through the live pipeline to the actual quarantine write and ack.
+
+**The defect.** `_quarantinable`'s known-columns guard (D82: every pre-fetch failure is non-quarantinable — `quarantined_chunks.dis_channel` is NOT NULL) keys on the flow context's `dis_channel`, but the context learned it only AFTER `fetch_chunk` returned, while `parse_chunk` runs INSIDE the fetch stage — after the bronze row carrying `dis_channel` was already read. An unparseable bronze object — and its twin, the zero-data-rows chunk — raised the guarded post-fetch `CONTRACT_VIOLATION` with the context still empty, so the guard misread a genuinely post-fetch deterministic failure as pre-fetch, refused the hold, and the chunk nacked forever: the exact redeliver storm D82 was built to stop, alive on one allowlist member.
+
+**The fix.** `fetch_chunk` reports the bronze row the moment it is read via an `on_bronze` hook (`pipeline/fetch.py`), and the orchestrator's `_FlowContext.note_bronze` records `bronze_id`/`dis_channel` mid-stage (`orchestrate.py`) — the partially-acquired fetch context no longer dies with the exception. The allowlist set, the guard's three gates, and the ack/nack routing are UNCHANGED: pre-fetch failures (absent bronze row) still carry no `dis_channel` and still nack; the store-miss carve-out still nacks (re-proven in the same run).
+
+**Regression proof.** `services/streaming-consumer/tests/integration/test_quarantine_disposition.py` — `test_unparseable_bronze_object_quarantines_chunk_and_acks` + `test_empty_bronze_chunk_quarantines_chunk_and_acks` (the fixed pair), landed alongside end-to-end pins for the two other dispositions that were unit-only: `test_suite_ref_unsupported_quarantines_chunk_and_acks`, `test_post_gate_null_mandatory_holds_rows_and_acks`.
+
+**Cross-refs.** D82 (the storm-stopper allowlist and the known-columns guard's intent), D78 (the failure-audit shape the held records carry), D79 (the `CONTRACT_VIOLATION` vocabulary), Slice 11a (`docs/slices/slice-11a-quarantine-storm-stopper.md`).

@@ -22,3 +22,4 @@ dbt/logs/
 docs/workflow.md
 tfplan
 *.tfplan
+docs/scratch/

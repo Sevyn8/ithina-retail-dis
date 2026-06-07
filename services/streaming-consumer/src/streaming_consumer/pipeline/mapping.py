@@ -25,8 +25,8 @@
   config error. Per-row branching is Slice 11.
 
 The lookup runs through ``rls_session`` (hard rule 12); ``config.source_mappings``
-deliberately carries no RLS policy (its schema comment), so the tenant GUC is
-harmless there.
+is RLS ON+FORCE since migration 0005, so the tenant GUC set by ``rls_session``
+scopes the lookup.
 """
 
 from __future__ import annotations
