@@ -210,10 +210,19 @@ for beta. The failure-audit shape defined here is the seam the quarantine work c
   guard now checks type + nullability + length against the live schema via a pure fail-loud
   diff, narrowing-proven synthetically; drift fails loud at the guard, not silently at INSERT
   under fire-and-forget. The column promotion is mutation-test-enforced (outcome revert and
-  prior_trace_id revert each fail the flipped duplicate test). **The audit arc (30a de-partition
-  D77, 30b coverage D78/D79, 30c promotion D80/D81) is complete**; what remains of the audit
-  surface is owned elsewhere (the QUARANTINED emitter + DLQ by the quarantine work; BQ archive +
-  re-partition by Slice 21).
+  prior_trace_id revert each fail the flipped duplicate test). **The audit-coverage arc (30a
+  de-partition D77, 30b coverage D78/D79, 30c promotion D80/D81) is complete**; the de-partition
+  pattern 30a opened is carried to the six canonical/staging parents by Slice 30d (D85, below).
+  What remains of the audit surface is owned elsewhere (the QUARANTINED emitter + DLQ by the
+  quarantine work; BQ archive + re-partition by Slice 21).
+
+- `DONE` Slice 30d: De-partition the 6 canonical/staging event + signal_history parents — the
+  de-partition follow-on to 30a. **Registered as D85**, revising D77's scope clause (which kept
+  them partitioned) on the 0007 disposable-rows pattern: migration 0009 drops + re-applies each
+  DDL file plain, PK `(id,date)` → `(id)`, with `event_date`/`as_of_date` + their derivation
+  CHECKs + the signal_history natural keys kept as Slice 21's re-partition invariants; 0001's
+  manifest emptied (fresh == migrated), reversible, the 30a scope-boundary test inverted in
+  `test_migration_0009.py`. Partitioning returns WITH automation at Slice 21 for all 7 tables.
 
 Deferred / owned elsewhere (named so they are not lost):
 - The `QUARANTINED` audit emitter (the Stage enum has the value, nothing emits it) is owned by
