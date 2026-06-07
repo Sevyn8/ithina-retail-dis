@@ -74,26 +74,39 @@ state instead.
 
 ---
 
-## Open cross-team conflict (recorded so it is not lost)
+## Cross-team conflict: where the AI call lives (RESOLVED)
 
 The brief's Section 2 states that AI assistance is purely a frontend concern and
 that `dis-ui-server` does not proxy, relay, or call AI on the frontend's behalf
 (AI never appears on the wire; only the finished `{source_id, template_name,
 mapping_rules}` document crosses to the backend).
 
-This CONFLICTS with the shipped `dis-ui-server` BFF endpoint
-`POST /api/v1/mapping-suggestions`, which was built to hold the Gemini API key
-server-side for API-key safety (a browser-exposed key leaks), with a mechanical
-fallback when no key is set. That endpoint puts AI suggestion-generation on the
-backend, the opposite of the brief's Section 2 stance.
+What was built is the opposite: the `dis-ui-server` BFF endpoint
+`POST /api/v1/mapping-suggestions` calls the model server-side, chosen for
+credential safety (no model credential can live in a browser bundle) and for the
+server-side catalog guardrail (the model cannot invent a non-catalog target). Note
+the auth model evolved past the original framing: it is NOT an API key but Vertex
+AI with GCP-native credentials and gemini-dis impersonation, so there is no key to
+hold (the `dis-gemini-api-key` secret was removed).
 
-This is an unresolved cross-team architecture decision that Amit is aligning with
-Sanjeev. Recorded here so the divergence is explicit and not lost:
+- Brief Section 2 (original): AI is frontend-only; the backend never calls AI.
+- Shipped reality: `POST /api/v1/mapping-suggestions` calls Vertex AI server-side
+  (GCP-native auth, gemini-dis impersonation, no key), per
+  `docs/slices/llm-mapping-suggestion-contract.md`.
 
-- Brief Section 2: AI is frontend-only; the backend never calls AI.
-- Shipped reality: `POST /api/v1/mapping-suggestions` calls AI server-side (key
-  safety), per `docs/slices/llm-mapping-suggestion-contract.md`.
+RESOLVED: Sanjeev has agreed to update brief Section 2 to match the shipped
+server-side design. The frontend's suggestion source is the BFF endpoint.
 
-Resolution pending. Until resolved, the two documents disagree on where the AI
-call lives, and the frontend's suggestion source (endpoint vs in-browser) follows
-whatever is settled.
+## gemini-dis privilege acceptance (project Owner; ACCEPTED 2026-06-07)
+
+`gemini-dis` currently holds `roles/owner` on the project, and `dis-ui-server`
+can impersonate `gemini-dis` (`roles/iam.serviceAccountTokenCreator` on the
+gemini-dis service account) for the Vertex calls. The mapping-suggestions endpoint
+therefore has a transitive path to project Owner.
+
+ACCEPTED by Amit as of 2026-06-07, as a conscious interim posture (pre-deploy, no
+real Vertex traffic flows yet). REVISIT TRIGGER: before the AI endpoint serves real
+traffic, i.e. before the Cloud Run Vertex env wires `GEMINI_IMPERSONATE_SA` and real
+Vertex calls flow. The minimal fix when revisited: drop gemini-dis to
+`roles/aiplatform.user` only (it does not need Owner for its actual job; the
+aiplatform.user grant is already codified in `terraform/envs/staging`).
