@@ -24,3 +24,12 @@ tfplan
 *.tfplan
 docs/scratch/
 /cloud-sql-proxy
+
+# Local dev JWTs — signed tokens, never commit
+scripts/jwt/tokens/
+
+# Generated local-DB schema dump (reproducible from migrations)
+docs/schemas/
+
+# CC prompt scratch
+docs/slices/cc-prompt-*.plan.md

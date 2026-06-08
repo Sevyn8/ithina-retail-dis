@@ -185,7 +185,12 @@ When uncertain about anything (architecture, library choice, HTTP shape, idempot
 - Don't commit before `make check` passes (or `pre-commit` will block you anyway).
 
 ---
+## Git commit conventions
+- Never add a Co-Authored-By trailer or any Claude/Anthropic attribution to commit
+  messages. No "Co-Authored-By: Claude ...", no "Generated with Claude Code" footer.
+  Plain commit messages only.
 
+---
 ## When uncertain
 
 Ask. Cheaper than reviewing wrong code. The slice doc, the architecture, and this CLAUDE.md cover the load-bearing decisions; if something isn't covered, that's a real gap worth surfacing.
