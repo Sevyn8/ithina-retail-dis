@@ -55,11 +55,11 @@ _RULES = json.dumps({"version": 1, "rename": {}, "normalize": {}, "cast": {}, "d
 _INSERT = text(
     """
     INSERT INTO config.source_mappings
-        (tenant_id, source_id, template_id, template_name, status, mapping_rules,
+        (tenant_id, source_id, template_id, template_name, template_type, status, mapping_rules,
          activated_at, deprecated_at)
     VALUES
         (CAST(:tid AS uuid), :source_id, CAST(:template_id AS uuid), :template_name,
-         :status,
+         'sales', :status,
          CAST(:rules AS JSONB),
          CASE WHEN :status IN ('ACTIVE', 'DEPRECATED') THEN now() END,
          CASE WHEN :status = 'DEPRECATED' THEN now() END)

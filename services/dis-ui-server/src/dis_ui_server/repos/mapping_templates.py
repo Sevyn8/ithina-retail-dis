@@ -134,6 +134,7 @@ async def create_template(
     template_id: UUID,
     source_id: str,
     template_name: str,
+    template_type: str,
     mapping_rules: dict[str, Any],
     created_by_user_id: UUID | None,
 ) -> Row[Any]:
@@ -145,6 +146,7 @@ async def create_template(
             source_id=source_id,
             template_id=template_id,
             template_name=template_name,
+            template_type=template_type,  # lineage-fixed (Slice 14d)
             # version_seq_per_source deliberately OMITTED: NULL reaches the
             # BEFORE-INSERT trigger, which assigns the per-template sequence.
             status=_STATUS_DRAFT,
@@ -299,6 +301,7 @@ async def _apply_rules_edit(
                 source_id=head.source_id,
                 template_id=template_id,
                 template_name=template_name,
+                template_type=head.template_type,  # lineage-fixed: carried onto the new DRAFT
                 # seq omitted: trigger-assigned (next in this template's lineage).
                 status=_STATUS_DRAFT,
                 mapping_rules=mapping_rules,

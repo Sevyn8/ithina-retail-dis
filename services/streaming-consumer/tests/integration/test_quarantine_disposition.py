@@ -405,9 +405,10 @@ async def test_suite_ref_unsupported_quarantines_chunk_and_acks(
         conn.execute(
             text(
                 "INSERT INTO config.source_mappings "
-                "(tenant_id, source_id, template_id, template_name, version_seq_per_source, "
+                "(tenant_id, source_id, template_id, template_name, template_type, "
+                " version_seq_per_source, "
                 " status, mapping_rules, pre_validation_suite_ref, activated_at) "
-                "VALUES (CAST(:tenant AS uuid), :source, CAST(:template AS uuid), 'default', 1, "
+                "VALUES (CAST(:tenant AS uuid), :source, CAST(:template AS uuid), 'default', 'sales', 1, "
                 " 'ACTIVE', CAST(:rules AS JSONB), 'custom_suites:NotShippedSuite', NOW())"
             ),
             {

@@ -33,6 +33,7 @@ from dis_core.errors import (
     AuthTokenError,
     DisError,
     EventPublishError,
+    InvalidTemplateTypeError,
     MappingConfigError,
     MappingStateConflictError,
     MappingTemplateNameConflictError,
@@ -61,6 +62,7 @@ _STATUS_BY_ERROR: dict[type[DisError], int] = {
     OpsRoleRequiredError: 403,
     # Slice 14b data endpoints (contract §2.3 + §7).
     MappingConfigError: 400,  # rules fail the D49 shape or the semantic gate
+    InvalidTemplateTypeError: 400,  # template_type outside the in-code vocabulary (14d)
     ResourceNotFoundError: 404,  # throw-style lookups (template detail / PATCH)
     MappingTemplateNameConflictError: 409,  # EXCLUDE ex_csm_template_name_per_source
     MappingStateConflictError: 409,  # deprecated lineage / concurrent-edit race / non-ACTIVE upload target

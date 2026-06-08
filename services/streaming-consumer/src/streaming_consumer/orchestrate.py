@@ -46,7 +46,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from dis_audit import EventScope, FailureCode, Outcome, Stage, failure_code_for
-from dis_canonical import StoreSkuSaleEvent
+from dis_canonical import StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.logging import get_logger
 from dis_rls import rls_session
 from streaming_consumer.config import BATCH_SIZE_ROW_PAIRS, SERVICE_NAME
@@ -67,7 +67,7 @@ from streaming_consumer.pipeline.normalize import build_event_rows
 from streaming_consumer.pipeline.validate_post import run_post_validation
 from streaming_consumer.pipeline.validate_pre import run_pre_validation
 from streaming_consumer.sinks.audit import ConsumerAudit
-from streaming_consumer.sinks.canonical import WriteReport, write_chunk
+from streaming_consumer.sinks.canonical import WriteReport, write_catalogue_chunk, write_chunk
 from streaming_consumer.sinks.quarantine import ConsumerQuarantine, GateFailure
 
 _log = get_logger(SERVICE_NAME)
@@ -323,10 +323,13 @@ class ConsumerPipeline:
             },
         )
 
-        # 3. Sale path: the store row's tax_treatment (a data read, not identity
-        #    validation — D39's FK is the enforcement; no Identity Service, D28).
+        # 3. Sale + catalogue paths: the store row's tax_treatment (a data read, not
+        #    identity validation — D39's FK is the enforcement; no Identity Service,
+        #    D28). tax_treatment is consumer-injected store-denormalized for BOTH the
+        #    sale events and the catalogue hot row (Slice 14d: store-level fact, the
+        #    deliberate asymmetry with file-supplied currency).
         tax_treatment: str | None = None
-        if loaded.target_model is StoreSkuSaleEvent:
+        if loaded.target_model in (StoreSkuSaleEvent, StoreSkuCurrentPosition):
             tax_treatment = await self._staged(
                 Stage.MAPPING_LOOKED_UP, read_store_tax_treatment(self.engine, event)
             )
@@ -417,20 +420,37 @@ class ConsumerPipeline:
             duration_ms=ctx.lap(),
         )
 
-        # 7. mapping_version_id stamp (D22) + the atomic dual-write (D30).
-        rows = build_event_rows(event, fetched.bronze, loaded, result, tax_treatment=tax_treatment)
-        report = await self._staged(
-            Stage.CANONICAL_WRITTEN,
-            write_chunk(
-                self.engine,
-                event,
-                loaded,
-                rows,
-                dis_channel=fetched.bronze.dis_channel,
-                tax_treatment=tax_treatment,
-                batch_size=self.batch_size,
-            ),
-        )
+        # 7. mapping_version_id stamp (D22) + the write. Two SIBLING paths (Slice
+        #    14d): the catalogue (snapshot) path writes the hot table directly via
+        #    the reused complete-path upsert (no event table, no dedup); the event
+        #    path is the UNCHANGED atomic dual-write (D30).
+        if loaded.target_model is StoreSkuCurrentPosition:
+            report = await self._staged(
+                Stage.CANONICAL_WRITTEN,
+                write_catalogue_chunk(
+                    self.engine,
+                    event,
+                    loaded,
+                    result,
+                    dis_channel=fetched.bronze.dis_channel,
+                    tax_treatment=tax_treatment,
+                    batch_size=self.batch_size,
+                ),
+            )
+        else:
+            rows = build_event_rows(event, fetched.bronze, loaded, result, tax_treatment=tax_treatment)
+            report = await self._staged(
+                Stage.CANONICAL_WRITTEN,
+                write_chunk(
+                    self.engine,
+                    event,
+                    loaded,
+                    rows,
+                    dis_channel=fetched.bronze.dis_channel,
+                    tax_treatment=tax_treatment,
+                    batch_size=self.batch_size,
+                ),
+            )
         await self.audit.emit(
             stage=Stage.CANONICAL_WRITTEN,
             outcome=Outcome.SUCCESS,

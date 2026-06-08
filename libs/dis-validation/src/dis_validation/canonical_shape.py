@@ -69,9 +69,29 @@ def _resolve_annotation(annotation: Any) -> _ResolvedAnnotation:
         current = non_none[0]
     metadata: tuple[Any, ...] = ()
     if typing.get_origin(current) is not None and hasattr(current, "__metadata__"):
-        metadata = tuple(current.__metadata__)
+        metadata = _flatten_metadata(current.__metadata__)
         current = typing.get_args(current)[0]
     return _ResolvedAnnotation(base=current, metadata=metadata, nullable=nullable)
+
+
+def _flatten_metadata(raw: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Expand any pydantic ``FieldInfo`` metadata item into its decomposed constraints.
+
+    A type alias built with ``Field(...)`` — e.g. ``Numeric14_3 =
+    Annotated[Decimal, Field(max_digits=14, decimal_places=3)]`` — surfaces as a
+    bare ``FieldInfo`` in ``Annotated.__metadata__`` when the field is OPTIONAL
+    (``X | None``): pydantic only decomposes the constraints onto the model field's
+    own ``.metadata`` for REQUIRED fields. The constraint objects (``max_digits`` /
+    ``max_length`` / ...) live in ``FieldInfo.metadata``, so flatten them here to
+    match the required-field path; without this an owned optional Decimal column
+    (e.g. the catalogue's ``stock_qty``) cannot derive its numeric dtype."""
+    flat: list[Any] = []
+    for item in raw:
+        if isinstance(item, FieldInfo):
+            flat.extend(item.metadata)
+        else:
+            flat.append(item)
+    return tuple(flat)
 
 
 def _column_from_field(

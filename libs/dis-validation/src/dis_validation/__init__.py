@@ -38,10 +38,24 @@ from dis_validation.source_shape import (
     SourceShapeSuiteDef,
     materialize_source_shape,
 )
+from dis_validation.template_types import (
+    INVENTORY_CHANGE,
+    MODEL_BY_TYPE,
+    SALES,
+    SNAPSHOT,
+    TEMPLATE_TYPES,
+    is_template_type,
+    model_for_template_type,
+)
 
 __all__ = [
+    "INVENTORY_CHANGE",
+    "MODEL_BY_TYPE",
     "NOT_MAPPING_PRODUCED",
     "PROVENANCE",
+    "SALES",
+    "SNAPSHOT",
+    "TEMPLATE_TYPES",
     "CanonicalShapeFailure",
     "CanonicalShapeResult",
     "CanonicalShapeSuiteDef",
@@ -51,9 +65,11 @@ __all__ = [
     "SourceShapeResult",
     "SourceShapeSuiteDef",
     "assert_no_drift",
+    "is_template_type",
     "mapping_produced_columns",
     "materialize_canonical_shape",
     "materialize_source_shape",
+    "model_for_template_type",
     "run_canonical_shape",
     "run_source_shape",
     "suite_column_set",

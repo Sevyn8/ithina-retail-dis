@@ -101,12 +101,18 @@ def _create(
     source_id: str,
     *,
     template_name: str = "sales",
+    template_type: str = "sales",
     tenant_id: str = TENANT_A,
 ) -> Any:
     return client.post(
         "/api/v1/mapping-templates",
         headers=_bearer(mint_token(tenant_id=tenant_id)),
-        json={"source_id": source_id, "template_name": template_name, "mapping_rules": _sale_rules()},
+        json={
+            "source_id": source_id,
+            "template_name": template_name,
+            "template_type": template_type,
+            "mapping_rules": _sale_rules(),
+        },
     )
 
 
@@ -142,6 +148,7 @@ def test_create_writes_a_valid_draft_with_a_minted_uuid7(
     assert UUID(body["template_id"]).version == 7  # minted server-side, UUIDv7 (hard rule 3)
     assert body["source_id"] == scratch_source
     assert body["template_name"] == "sales"
+    assert body["template_type"] == "sales"  # captured + surfaced (Slice 14d)
     assert body["latest_version"] == 1  # trigger-assigned, lineage starts at 1
     assert body["draft_version"] == 1
     assert body["active_version"] is None and body["staged_version"] is None
@@ -159,8 +166,8 @@ def test_create_writes_a_valid_draft_with_a_minted_uuid7(
     with admin_engine.connect() as conn:
         row = conn.execute(
             text(
-                "SELECT tenant_id, status, version_seq_per_source, predecessor_version_id "
-                "FROM config.source_mappings WHERE source_id = :sid"
+                "SELECT tenant_id, status, version_seq_per_source, predecessor_version_id, "
+                "template_type FROM config.source_mappings WHERE source_id = :sid"
             ),
             {"sid": scratch_source},
         ).one()
@@ -168,6 +175,7 @@ def test_create_writes_a_valid_draft_with_a_minted_uuid7(
     assert row.status == "DRAFT"
     assert row.version_seq_per_source == 1
     assert row.predecessor_version_id is None
+    assert row.template_type == "sales"  # stored, not inferred (Slice 14d)
 
 
 def test_duplicate_template_name_is_a_clean_409(
@@ -264,7 +272,12 @@ def test_non_uuid_token_sub_creates_with_null_created_by(
     response = live_client.post(
         "/api/v1/mapping-templates",
         headers=_bearer(mint_token(tenant_id=TENANT_A, sub="svc-account-7")),  # not a UUID
-        json={"source_id": scratch_source, "template_name": "sales", "mapping_rules": _sale_rules()},
+        json={
+            "source_id": scratch_source,
+            "template_name": "sales",
+            "template_type": "sales",
+            "mapping_rules": _sale_rules(),
+        },
     )
     assert response.status_code == 201
     assert response.json()["versions"][0]["created_by_user_id"] is None  # the wire shape
@@ -485,8 +498,8 @@ def test_concurrent_patches_converge_to_one_draft(
                     await conn.execute(
                         text(
                             "INSERT INTO config.source_mappings (tenant_id, source_id, template_id, "
-                            "template_name, status, mapping_rules, predecessor_version_id) VALUES "
-                            "(:ten, :src, :t, 'sales', 'DRAFT', CAST(:r AS jsonb), :p)"
+                            "template_name, template_type, status, mapping_rules, predecessor_version_id) "
+                            "VALUES (:ten, :src, :t, 'sales', 'sales', 'DRAFT', CAST(:r AS jsonb), :p)"
                         ),
                         {
                             "ten": str(tenant),
@@ -572,7 +585,12 @@ def test_well_formed_unknown_tenant_reads_empty_writes_403(
     create = live_client.post(
         "/api/v1/mapping-templates",
         headers=headers,
-        json={"source_id": scratch_source, "template_name": "ghost", "mapping_rules": _sale_rules()},
+        json={
+            "source_id": scratch_source,
+            "template_name": "ghost",
+            "template_type": "sales",
+            "mapping_rules": _sale_rules(),
+        },
     )
     assert create.status_code == 403, create.text
     body = create.json()["error"]

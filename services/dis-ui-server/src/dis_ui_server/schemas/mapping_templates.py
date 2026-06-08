@@ -49,6 +49,7 @@ class MappingTemplate(BaseModel):
     template_id: str  # UUID, lowercase string
     source_id: str
     template_name: str
+    template_type: str  # packet axis (Slice 14d); lineage-fixed, set at creation
     latest_version: int
     active_version: int | None
     staged_version: int | None
@@ -71,6 +72,10 @@ class MappingTemplateCreate(BaseModel):
 
     source_id: str = Field(pattern=r"^[a-z0-9_]{1,128}$")
     template_name: str = Field(min_length=1, max_length=200)
+    # The packet axis (Slice 14d). Validated against the in-code vocabulary in the
+    # handler (a clean 400 InvalidTemplateTypeError, not a pydantic 422); the rules
+    # are then validated against this type's legal target. Lineage-fixed thereafter.
+    template_type: str
     mapping_rules: dict[str, Any]
 
 

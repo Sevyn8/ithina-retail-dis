@@ -72,10 +72,10 @@ _SELECT_ACTIVE_MAPPING = text(
 _INSERT_MAPPING = text(
     """
     INSERT INTO config.source_mappings
-        (tenant_id, source_id, template_id, template_name, status, mapping_rules,
+        (tenant_id, source_id, template_id, template_name, template_type, status, mapping_rules,
          activated_at)
     VALUES
-        (:tenant_id, :source_id, :template_id, :template_name, 'ACTIVE',
+        (:tenant_id, :source_id, :template_id, :template_name, :template_type, 'ACTIVE',
          CAST(:mapping_rules AS JSONB), NOW())
     """
 )
@@ -181,6 +181,7 @@ def _seed(conn: Connection) -> SeedSummary:
                 "source_id": mapping["source_id"],
                 "template_id": str(mapping["template_id"]),
                 "template_name": mapping["template_name"],
+                "template_type": mapping["template_type"],
                 "mapping_rules": json.dumps(mapping["mapping_rules"]),
             },
         )

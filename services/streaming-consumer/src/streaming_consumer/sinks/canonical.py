@@ -55,12 +55,14 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from dis_canonical import StoreSkuChangeEvent, StoreSkuSaleEvent
+from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import HotPositionMissingError
 from dis_core.ids import new_uuid7
+from dis_mapping import MappingResult
 from dis_rls import rls_session
+from dis_validation import mapping_produced_columns
 from streaming_consumer.envelope import IngressReadyEvent
-from streaming_consumer.pipeline.mapping import LoadedMapping
+from streaming_consumer.pipeline.mapping import LoadedMapping, catalogue_staleness_columns
 from streaming_consumer.pipeline.normalize import (
     EventRow,
     NaturalKey,
@@ -75,7 +77,15 @@ _EVENT_TABLES: dict[type[BaseModel], tuple[str, str]] = {
 }
 
 # Columns whose bind values are pre-serialized JSON text (CAST(:p AS JSONB)).
-_JSONB_COLUMNS = frozenset({"ingest_metadata", "value_before", "value_after", "change_context"})
+# attribute_staleness_map joins for the catalogue write (Slice 14d); inert for the
+# event paths, which never place it in their projection.
+_JSONB_COLUMNS = frozenset(
+    {"ingest_metadata", "value_before", "value_after", "change_context", "attribute_staleness_map"}
+)
+
+# The hot natural-key columns are carried as FIXED params by _hot_params; the
+# catalogue projection must exclude them or they would appear twice in the INSERT.
+_HOT_NATURAL_KEY_COLS = frozenset({"sku_id", "sku_variant", "sku_lot_batch"})
 
 DuplicateKind = Literal["DUPLICATE_NOOP", "DUPLICATE_OVERWRITTEN"]
 
@@ -422,6 +432,92 @@ async def _upsert_hot(
     if loaded.hot_complete:
         return await _insert_on_conflict_hot_complete_path(conn, params, projected)
     return await _update_hot_incomplete_path(conn, params, projected)
+
+
+# ---------------------------------------------------------------------------
+# Catalogue (snapshot) write — the SIBLING of write_chunk (Slice 14d). It REUSES
+# the proven complete-path hot upsert + event-time-wins arbiter and _hot_params,
+# but writes NO event table, runs NO dedup, and does NO event projection. The
+# event path above is unchanged. Bootstrap-only: it CREATEs the hot row; collision
+# arbitration against an existing row is the deferred collision slice's.
+# ---------------------------------------------------------------------------
+
+
+def _catalogue_groups(event: IngressReadyEvent, result: MappingResult) -> list[_HotGroup]:
+    """One hot group per snapshot row: identity projection + staleness stamps.
+
+    ``projected`` is the mapping-produced hot columns this row sets MINUS the
+    natural key (carried as fixed params), plus ``attribute_staleness_map`` stamped
+    for the contendable attributes the row sets (Slice 14d) — value = the snapshot's
+    event-time, which is the envelope ``received_ts`` (the only NOT-NULL-safe time;
+    the catalogue file has no per-row timestamp and last_source_event_at is
+    consumer-injected). It is upload-time, not capture-time; nothing arbitrates on
+    it in this slice (bootstrap-only) — the collision slice's inherited limit."""
+    produced = mapping_produced_columns(StoreSkuCurrentPosition)
+    staleness_cols = catalogue_staleness_columns()
+    received_iso = event.received_ts.isoformat()
+    groups: list[_HotGroup] = []
+    for row, chunk_row_index in zip(result.contribution.to_dicts(), result.source_row_indices, strict=True):
+        payload: dict[str, Any] = dict(row)
+        projected: dict[str, Any] = {
+            name: value
+            for name, value in payload.items()
+            if name in produced and name not in _HOT_NATURAL_KEY_COLS
+        }
+        stamp = sorted(set(projected) & staleness_cols)
+        if stamp:
+            projected["attribute_staleness_map"] = jsonb_param({col: received_iso for col in stamp})
+        groups.append(
+            _HotGroup(
+                natural_key=(
+                    str(payload["sku_id"]),
+                    payload.get("sku_variant"),
+                    payload.get("sku_lot_batch"),
+                ),
+                projected=projected,
+                last_source_event_at=event.received_ts,
+                source_event_id=f"{event.bronze_ref}:{chunk_row_index}",
+                chunk_row_index=chunk_row_index,
+            )
+        )
+    return groups
+
+
+async def write_catalogue_chunk(
+    engine: AsyncEngine,
+    event: IngressReadyEvent,
+    loaded: LoadedMapping,
+    result: MappingResult,
+    *,
+    dis_channel: str,
+    tax_treatment: str | None,
+    batch_size: int,
+) -> WriteReport:
+    """Catalogue bootstrap-CREATE: the complete-path hot upsert per ≤batch group.
+
+    No event-table insert, no dedup. Groups are upserted in the same sorted
+    natural-key order as write_chunk (deadlock avoidance), each inside the batch's
+    rls_session transaction. ``tax_treatment`` is store-injected by the caller
+    (consumer-injected, the file-vs-store asymmetry with file-supplied currency)."""
+    groups = _catalogue_groups(event, result)
+    batches = [groups[i : i + batch_size] for i in range(0, len(groups), batch_size)]
+    hot_written = 0
+    for batch in batches:
+        async with rls_session(engine, event.tenant_id) as conn:
+            for group in sorted(batch, key=hot_sort_key):
+                params, projected = _hot_params(
+                    event, loaded, group, dis_channel=dis_channel, tax_treatment=tax_treatment
+                )
+                await _insert_on_conflict_hot_complete_path(conn, params, projected)
+                hot_written += 1
+    return WriteReport(
+        event_rows_written=0,
+        hot_rows_upserted=hot_written,
+        hot_noops=0,
+        batches=len(batches),
+        duplicates=(),
+        written_to_table="canonical.store_sku_current_position",
+    )
 
 
 async def write_chunk(

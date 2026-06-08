@@ -437,7 +437,7 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         # six canonical/staging parents from the SAME manifest files 0001
         # applied — shape-identical on a manifest-fresh database, and it never
         # touches config.source_mappings).
-        assert head == "0009"
+        assert head == "0010"
 
         # 0005 must be a TRUE NO-OP on a manifest-fresh database. Without this,
         # a drifted manifest could bootstrap the WRONG shape and 0005's

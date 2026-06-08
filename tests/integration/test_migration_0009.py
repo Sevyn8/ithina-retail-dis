@@ -728,7 +728,7 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0009"
+        assert head == "0010"
         assert _all_shapes(scratch_engine) == manifest_shapes, (
             "migration 0009 CHANGED a manifest-fresh database — the manifest "
             "no longer carries its end state (drift self-healed)"

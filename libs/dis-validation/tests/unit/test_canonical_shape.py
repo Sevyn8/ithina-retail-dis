@@ -256,3 +256,23 @@ def test_empty_owned_set_fails_loud() -> None:
 def test_column_checks_must_name_owned_columns() -> None:
     with pytest.raises(SuiteDefinitionError, match="non-owned column"):
         materialize_canonical_shape(_definition(column_checks={"currency": [Check.isin(["INR"])]}))
+
+
+def test_owned_optional_decimal_materializes_its_numeric_dtype() -> None:
+    # Regression (Slice 14d): an OWNED optional Decimal column (e.g. the hot
+    # table's stock_qty: Numeric14_3 | None) must derive its numeric dtype. The
+    # constraint lives in a FieldInfo nested in the Optional Annotated (pydantic
+    # only decomposes it for REQUIRED fields); _resolve_annotation must flatten it.
+    # Before the fix this raised SuiteDefinitionError("no max_digits/decimal_places").
+    from dis_canonical import StoreSkuCurrentPosition
+
+    schema = materialize_canonical_shape(
+        CanonicalShapeSuiteDef(
+            target_model=StoreSkuCurrentPosition,
+            owned_columns=("sku_id", "product_name", "product_category", "stock_qty"),
+        )
+    )
+    stock = schema.columns["stock_qty"]
+    # pandera wraps the polars dtype; assert the derived precision/scale + nullability.
+    assert "Decimal(precision=14, scale=3)" in repr(stock.dtype)
+    assert stock.nullable is True  # the field is optional

@@ -42,11 +42,16 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from dis_canonical import StoreSkuChangeEvent, StoreSkuSaleEvent
-from dis_core.errors import MappingConfigError
+from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
+from dis_core.errors import InvalidTemplateTypeError, MappingConfigError
 from dis_mapping import SourceMapping
 from dis_ui_server.schemas.mapping_fields import FieldSection
-from dis_validation import mapping_produced_columns
+from dis_validation import (
+    TEMPLATE_TYPES,
+    is_template_type,
+    mapping_produced_columns,
+    model_for_template_type,
+)
 
 # The routing universe: the two event tables of the dual-write — identical to the
 # consumer's EVENT_MODELS (streaming_consumer/pipeline/mapping.py; not importable
@@ -116,21 +121,104 @@ def route_target_model(source: SourceMapping, *, tenant_id: str) -> type[BaseMod
     return matches[0]
 
 
+def _model_label(model: type[BaseModel]) -> str:
+    """A human label for error messages — the wire section for events, else the model name."""
+    return SECTION_BY_MODEL.get(model, model.__name__)
+
+
 def check_mandatory_coverage(source: SourceMapping, model: type[BaseModel], *, tenant_id: str) -> None:
     """Step 4: every mandatory mapping-produced column is provided by rename or derive."""
     missing = mandatory_mapping_produced(model) - set(source.target_columns)
     if missing:
         raise MappingConfigError(
-            f"mapping_rules leave mandatory {SECTION_BY_MODEL[model]} column(s) "
+            f"mapping_rules leave mandatory {_model_label(model)} column(s) "
             f"{sorted(missing)} unprovided; each must come from a rename or a derive "
             "(constant / copy / date_from_datetime)",
             tenant_id=tenant_id,
         )
 
 
+# Presence-pairing implications for the catalogue (snapshot) target — the
+# shape-level subset of the hot table's CHECK constraints (promo_identifier
+# requires promo_price; the expiry triple is all-or-none). Mirrors the consumer's
+# HOT_CHECK_IMPLICATIONS (streaming_consumer.pipeline.mapping; not importable
+# across services, cross-referenced). Enforced here so a violating catalogue
+# template is a clean 400, not a write-time CHECK failure.
+_CATALOGUE_PRESENCE_PAIRINGS: tuple[tuple[frozenset[str], frozenset[str]], ...] = (
+    (frozenset({"promo_identifier"}), frozenset({"promo_price"})),
+    (
+        frozenset({"expiry_date", "expiry_source", "expiry_confidence"}),
+        frozenset({"expiry_date", "expiry_source", "expiry_confidence"}),
+    ),
+)
+
+
+def require_template_type(template_type: str, *, tenant_id: str) -> None:
+    """Reject a ``template_type`` outside the in-code vocabulary (clean 400)."""
+    if not is_template_type(template_type):
+        raise InvalidTemplateTypeError(
+            f"unknown template_type {template_type!r}; expected one of {list(TEMPLATE_TYPES)}",
+            template_type=template_type,
+            tenant_id=tenant_id,
+        )
+
+
+def check_target_legality(
+    source: SourceMapping, model: type[BaseModel], *, template_type: str, tenant_id: str
+) -> None:
+    """The type-keyed legality rule: every rule target must be a column this type may write.
+
+    Replaces the untyped "fit exactly one event model" inference: with the type
+    stored, the question is "does this rule's target match what this template type
+    may write." Rejects event targets for the snapshot type and hot-table targets
+    for the event types, both directions (the produced sets are disjoint by
+    construction)."""
+    illegal = set(source.target_columns) - mapping_produced_columns(model)
+    if illegal:
+        raise MappingConfigError(
+            f"mapping target columns {sorted(illegal)} are not legal for template_type "
+            f"{template_type!r} (target {model.__name__}); check the field catalog "
+            f"(GET /template-mapping-fields?template_type={template_type}) for the mappable columns",
+            tenant_id=tenant_id,
+        )
+
+
+def check_presence_pairings(source: SourceMapping, *, tenant_id: str) -> None:
+    """Catalogue presence pairings (promo / expiry) — clean 400 before the write."""
+    targets = set(source.target_columns)
+    for trigger, companion in _CATALOGUE_PRESENCE_PAIRINGS:
+        if (trigger & targets) and not (companion <= targets):
+            missing = sorted(companion - targets)
+            raise MappingConfigError(
+                f"mapping_rules provide {sorted(trigger & targets)} but leave required "
+                f"companion column(s) {missing} unprovided (the hot table's presence-pairing "
+                "CHECK: promo_identifier requires promo_price; the expiry triple is all-or-none)",
+                tenant_id=tenant_id,
+            )
+
+
 def validate_mapping_rules(raw: dict[str, Any], *, tenant_id: str) -> SourceMapping:
-    """The full four-step gate; returns the validated document for storage/serving."""
+    """The untyped four-step gate (legacy): infers the routed event model.
+
+    Retained for any caller that has no ``template_type`` in hand. The type-aware
+    create/edit path uses ``validate_mapping_rules_for_type`` instead."""
     source = parse_mapping_rules(raw, tenant_id=tenant_id)
     model = route_target_model(source, tenant_id=tenant_id)
     check_mandatory_coverage(source, model, tenant_id=tenant_id)
+    return source
+
+
+def validate_mapping_rules_for_type(
+    raw: dict[str, Any], *, template_type: str, tenant_id: str
+) -> SourceMapping:
+    """The type-keyed gate (Slice 14d): shape + non-empty rename + target legality
+    by type + mandatory coverage (+ catalogue presence pairings). Returns the
+    validated document for storage/serving."""
+    require_template_type(template_type, tenant_id=tenant_id)
+    source = parse_mapping_rules(raw, tenant_id=tenant_id)
+    model = model_for_template_type(template_type)
+    check_target_legality(source, model, template_type=template_type, tenant_id=tenant_id)
+    check_mandatory_coverage(source, model, tenant_id=tenant_id)
+    if model is StoreSkuCurrentPosition:
+        check_presence_pairings(source, tenant_id=tenant_id)
     return source

@@ -256,6 +256,10 @@ DEFAULT_SOURCE_MAPPING: dict[str, object] = {
     "source_id": DEFAULT_SOURCE_ID,
     "template_id": DEFAULT_TEMPLATE_ID,
     "template_name": DEFAULT_TEMPLATE_NAME,
+    # Packet axis (Slice 14d, NOT NULL): this empty default mapping produces no
+    # contribution, so the type label is inert; 'sales' matches the migration's
+    # backfill of legacy/empty mappings (the default-upload family).
+    "template_type": "sales",
     "status": "ACTIVE",
     "mapping_rules": {
         "version": 1,

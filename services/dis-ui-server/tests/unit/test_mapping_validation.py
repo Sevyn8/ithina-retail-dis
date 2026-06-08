@@ -11,12 +11,13 @@ from typing import Any
 
 import pytest
 
-from dis_canonical import StoreSkuChangeEvent, StoreSkuSaleEvent
-from dis_core.errors import MappingConfigError
+from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
+from dis_core.errors import InvalidTemplateTypeError, MappingConfigError
 from dis_ui_server.mapping_validation import (
     mandatory_mapping_produced,
     route_target_model,
     validate_mapping_rules,
+    validate_mapping_rules_for_type,
 )
 
 TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
@@ -173,3 +174,85 @@ def test_rejection_paths_do_not_mutate_the_input() -> None:
         validate_mapping_rules(rules, tenant_id=TENANT_A)
     del rules["rename"]["x"]
     assert rules == frozen
+
+
+# -- the type-keyed gate (Slice 14d) ----------------------------------------------
+
+
+def _snapshot_rules() -> dict[str, Any]:
+    """A complete, valid catalogue (snapshot) template: every mandatory hot column."""
+    return {
+        "version": 1,
+        "rename": {
+            "code": "sku_id",
+            "name": "product_name",
+            "cat": "product_category",
+            "price": "current_retail_price",
+            "cost": "unit_cost",
+        },
+        "normalize": {},
+        "cast": {},
+        "derive": {"currency": [{"op": "constant", "args": {"value": "EUR"}}]},
+    }
+
+
+def test_valid_snapshot_template_validates_for_the_snapshot_type() -> None:
+    source = validate_mapping_rules_for_type(_snapshot_rules(), template_type="snapshot", tenant_id=TENANT_A)
+    # currency is mapping-produced (file-supplied via a constant derive); the
+    # validated document round-trips it.
+    assert "currency" in source.target_columns
+
+
+def test_valid_sale_template_validates_for_the_sales_type() -> None:
+    source = validate_mapping_rules_for_type(_sale_rules(), template_type="sales", tenant_id=TENANT_A)
+    assert "quantity" in source.target_columns
+
+
+def test_hot_targets_are_rejected_for_an_event_type() -> None:
+    # product_name/product_category are hot columns, not sale-event columns:
+    # illegal for the sales type (one direction of the type-keyed legality rule).
+    with pytest.raises(MappingConfigError, match="not legal for template_type 'sales'"):
+        validate_mapping_rules_for_type(_snapshot_rules(), template_type="sales", tenant_id=TENANT_A)
+
+
+def test_event_targets_are_rejected_for_the_snapshot_type() -> None:
+    # source_sale_timestamp / quantity are sale-event columns, illegal for snapshot
+    # (the other direction).
+    with pytest.raises(MappingConfigError, match="not legal for template_type 'snapshot'"):
+        validate_mapping_rules_for_type(_sale_rules(), template_type="snapshot", tenant_id=TENANT_A)
+
+
+def test_snapshot_missing_mandatory_currency_is_refused() -> None:
+    rules = _snapshot_rules()
+    del rules["derive"]["currency"]
+    with pytest.raises(MappingConfigError, match=r"mandatory .* column\(s\) \['currency'\]"):
+        validate_mapping_rules_for_type(rules, template_type="snapshot", tenant_id=TENANT_A)
+
+
+def test_snapshot_promo_identifier_requires_promo_price() -> None:
+    rules = _snapshot_rules()
+    rules["rename"]["promo"] = "promo_identifier"  # without promo_price
+    with pytest.raises(MappingConfigError, match="promo_price"):
+        validate_mapping_rules_for_type(rules, template_type="snapshot", tenant_id=TENANT_A)
+
+
+def test_snapshot_partial_expiry_triple_is_refused() -> None:
+    rules = _snapshot_rules()
+    rules["rename"]["exp"] = "expiry_date"  # without expiry_source / expiry_confidence
+    with pytest.raises(MappingConfigError, match="expiry"):
+        validate_mapping_rules_for_type(rules, template_type="snapshot", tenant_id=TENANT_A)
+
+
+def test_unknown_template_type_is_refused() -> None:
+    with pytest.raises(InvalidTemplateTypeError, match="unknown template_type 'bogus'"):
+        validate_mapping_rules_for_type(_sale_rules(), template_type="bogus", tenant_id=TENANT_A)
+
+
+def test_catalogue_target_is_legal_only_by_type_not_event_routing() -> None:
+    # The hot table is NOT in the event routing universe (route_target_model still
+    # rejects a hot-only mapping), proving the catalogue target is legal by TYPE,
+    # not by adding the hot table to event routing.
+    source = validate_mapping_rules_for_type(_snapshot_rules(), template_type="snapshot", tenant_id=TENANT_A)
+    assert StoreSkuCurrentPosition is StoreSkuCurrentPosition  # sanity
+    with pytest.raises(MappingConfigError):
+        route_target_model(source, tenant_id=TENANT_A)

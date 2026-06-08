@@ -274,6 +274,27 @@ class MappingConfigError(MappingError):
     """
 
 
+class InvalidTemplateTypeError(MappingError):
+    """A ``template_type`` outside the in-code vocabulary (Slice 14d).
+
+    Raised when a request (the type-aware field catalog, or create/edit) names a
+    ``template_type`` that is not a member of ``dis_validation.TEMPLATE_TYPES``,
+    or attempts to change a template's lineage-fixed type. Maps to HTTP 400.
+    Carries the offending value so the envelope can name it (never PII).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        template_type: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message, tenant_id=tenant_id, trace_id=trace_id)
+        self.template_type = template_type
+
+
 class MappingInputError(MappingError):
     """The chunk handed to the engine violates the caller contract.
 

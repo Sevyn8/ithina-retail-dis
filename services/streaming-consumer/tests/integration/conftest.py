@@ -62,11 +62,22 @@ _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 SALE_SOURCE_ID = "sc_pos_v1"
 CHANGE_SOURCE_ID = "sc_inv_v1"
 BAD_SUBTYPE_SOURCE_ID = "sc_pos_badsub_v1"
+CATALOGUE_SOURCE_ID = "sc_cat_v1"
 
 _MAPPING_FILES = {
     SALE_SOURCE_ID: "sale_pos_v1.json",
     CHANGE_SOURCE_ID: "inventory_count_v1.json",
     BAD_SUBTYPE_SOURCE_ID: "sale_pos_bad_subtype_v1.json",
+    CATALOGUE_SOURCE_ID: "catalogue_snapshot_v1.json",
+}
+
+# The stored template_type per consumer-test source (Slice 14d): the consumer
+# routes by this column. Backfill set the same values for the pre-existing rows.
+_TEMPLATE_TYPES = {
+    SALE_SOURCE_ID: "sales",
+    CHANGE_SOURCE_ID: "inventory_change",
+    BAD_SUBTYPE_SOURCE_ID: "sales",
+    CATALOGUE_SOURCE_ID: "snapshot",
 }
 
 # Pinned per-source template ids (Slice 14a grain): the rekeyed
@@ -79,6 +90,7 @@ _TEMPLATE_IDS = {
     SALE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a1"),
     CHANGE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a2"),
     BAD_SUBTYPE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a3"),
+    CATALOGUE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a4"),
 }
 
 # All test event timestamps anchor here: today at a mid-day hour, so a ±1-day
@@ -152,19 +164,21 @@ def consumer_mappings(admin_engine_session: Engine, seeded: None) -> dict[str, i
             row = conn.execute(
                 text(
                     "INSERT INTO config.source_mappings "
-                    "(tenant_id, source_id, template_id, template_name, "
+                    "(tenant_id, source_id, template_id, template_name, template_type, "
                     "version_seq_per_source, status, mapping_rules, activated_at) "
                     "VALUES (CAST(:tenant_id AS uuid), :source_id, "
-                    "CAST(:template_id AS uuid), 'default', 1, 'ACTIVE', "
+                    "CAST(:template_id AS uuid), 'default', :template_type, 1, 'ACTIVE', "
                     "CAST(:rules AS JSONB), NOW()) "
                     "ON CONFLICT (tenant_id, source_id, template_id, version_seq_per_source) "
-                    "DO UPDATE SET mapping_rules = EXCLUDED.mapping_rules "
+                    "DO UPDATE SET mapping_rules = EXCLUDED.mapping_rules, "
+                    "template_type = EXCLUDED.template_type "
                     "RETURNING mapping_version_id"
                 ),
                 {
                     "tenant_id": str(PRIMARY_TENANT.uuid),
                     "source_id": source_id,
                     "template_id": template_id,
+                    "template_type": _TEMPLATE_TYPES[source_id],
                     "rules": json.dumps(rules),
                 },
             ).first()
@@ -439,6 +453,12 @@ def change_csv(rows: list[tuple[str, str, str]]) -> bytes:
     """counted_at, sku, stock."""
     body = "\n".join(",".join(row) for row in rows)
     return f"counted_at,sku,stock\n{body}\n".encode()
+
+
+def catalogue_csv(rows: list[tuple[str, str, str, str, str, str]]) -> bytes:
+    """code, name, category, price, cost, qty (the snapshot/catalogue shape, Slice 14d)."""
+    body = "\n".join(",".join(row) for row in rows)
+    return f"code,name,category,price,cost,qty\n{body}\n".encode()
 
 
 def ts(offset_minutes: int = 0, *, day_offset: int = 0) -> str:

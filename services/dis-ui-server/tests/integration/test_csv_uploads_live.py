@@ -247,10 +247,10 @@ def tenant_b_active_template(upload_env: dict[str, str]) -> Iterator[str]:
             conn.execute(
                 text(
                     "INSERT INTO config.source_mappings "
-                    "(tenant_id, source_id, template_id, template_name, status, "
+                    "(tenant_id, source_id, template_id, template_name, template_type, status, "
                     " mapping_rules, activated_at) "
                     "VALUES (CAST(:tid AS uuid), 'slice8_noorcle_src', "
-                    " CAST(:tpl AS uuid), 'slice8-no-oracle', 'ACTIVE', "
+                    " CAST(:tpl AS uuid), 'slice8-no-oracle', 'sales', 'ACTIVE', "
                     " CAST(:rules AS jsonb), NOW())"
                 ),
                 {"tid": TENANT_B, "tpl": template_id, "rules": '{"rename": {"sku": "sku_code"}}'},

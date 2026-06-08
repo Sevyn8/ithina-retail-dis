@@ -25,7 +25,7 @@ from dis_core.ids import new_uuid7
 from dis_mapping import SourceMapping
 from dis_ui_server.auth.identity import Identity
 from dis_ui_server.auth.scope import require_tenant, tenant_uuid_of
-from dis_ui_server.mapping_validation import validate_mapping_rules
+from dis_ui_server.mapping_validation import validate_mapping_rules_for_type
 from dis_ui_server.repos.mapping_templates import (
     create_template,
     get_template_rows,
@@ -95,6 +95,7 @@ def _summary_fields(rows: Sequence[Row[Any]]) -> dict[str, Any]:
         "template_id": str(newest.template_id),
         "source_id": newest.source_id,
         "template_name": newest.template_name,
+        "template_type": newest.template_type,  # lineage-fixed; any row carries it
         "latest_version": newest.version_seq_per_source,
         "active_version": _version_seq_for(rows, "ACTIVE"),
         "staged_version": _version_seq_for(rows, "STAGED"),
@@ -164,13 +165,16 @@ async def create_mapping_template(
     """
     engine: AsyncEngine = request.app.state.engine
     tenant_id = tenant_uuid_of(identity)
-    source = validate_mapping_rules(body.mapping_rules, tenant_id=str(tenant_id))
+    source = validate_mapping_rules_for_type(
+        body.mapping_rules, template_type=body.template_type, tenant_id=str(tenant_id)
+    )
     row = await create_template(
         engine,
         tenant_id,
         template_id=new_uuid7(),
         source_id=body.source_id,
         template_name=body.template_name,
+        template_type=body.template_type,
         mapping_rules=source.model_dump(mode="json"),
         created_by_user_id=_created_by_uuid(identity),
     )
@@ -189,7 +193,20 @@ async def patch_mapping_template(
     tenant_id = tenant_uuid_of(identity)
     rules_dump: dict[str, Any] | None = None
     if body.mapping_rules is not None:
-        source = validate_mapping_rules(body.mapping_rules, tenant_id=str(tenant_id))
+        # template_type is lineage-fixed (set at creation): re-validate the edited
+        # rules against the STORED type. The type is immutable, so reading it ahead
+        # of patch_template's locked re-read is safe (nothing can change it).
+        rows = await get_template_rows(engine, tenant_id, template_id)
+        if not rows:
+            raise ResourceNotFoundError(
+                f"mapping template {template_id} not found",
+                resource="mapping_template",
+                identifier=str(template_id),
+                tenant_id=str(tenant_id),
+            )
+        source = validate_mapping_rules_for_type(
+            body.mapping_rules, template_type=rows[0].template_type, tenant_id=str(tenant_id)
+        )
         rules_dump = source.model_dump(mode="json")
     rows = await patch_template(
         engine,

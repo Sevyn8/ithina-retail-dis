@@ -51,6 +51,11 @@ class SourceMappingRow(Base):
     # Lifecycle (D17 vocabulary; CHECK ck_csm_status_vocab).
     status: Mapped[str] = mapped_column(Text)
 
+    # Packet axis (Slice 14d): snapshot | sales | inventory_change. Stored, not
+    # inferred; the vocabulary is code-enforced (dis_validation.TEMPLATE_TYPES),
+    # no DB enum/CHECK. Set at creation; lineage-fixed (carried onto chained DRAFTs).
+    template_type: Mapped[str] = mapped_column(Text)
+
     # Mapping payload (D49 shape; validated by dis-mapping SourceMapping before any write).
     mapping_rules: Mapped[dict[str, Any]] = mapped_column(JSONB)
     pre_validation_suite_ref: Mapped[str | None] = mapped_column(String(256))

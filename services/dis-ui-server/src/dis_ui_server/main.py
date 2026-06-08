@@ -29,7 +29,7 @@ from dis_core.logging import configure_logging, get_logger
 from dis_storage import StorageClient
 from dis_ui_server.api import api_router
 from dis_ui_server.audit import UiAudit
-from dis_ui_server.catalog import build_field_catalog
+from dis_ui_server.catalog import build_field_catalogs
 from dis_ui_server.config import (
     API_PREFIX,
     SERVICE_NAME,
@@ -63,7 +63,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Built once per process (inputs are code constants; no DB, no tenant). A
     # label-vs-derivation drift raises FieldCatalogDriftError HERE, aborting
     # startup — crashloop is the correct signal, never a half-true catalog.
-    app.state.field_catalog = build_field_catalog()
+    app.state.field_catalogs = build_field_catalogs()
+    # The mapping-suggestion feature (out of 14d scope) keeps its flat event field
+    # universe; built from the same drift-guarded per-type catalogs.
+    app.state.field_catalog = app.state.field_catalogs["sales"] + app.state.field_catalogs["inventory_change"]
     # Mapping-suggestion producer (Vertex AI / GCP-native auth, ADC from the Cloud Run service
     # account; no API key). GEMINI_VERTEX_PROJECT/LOCATION are OPTIONAL: both unset -> the
     # suggester returns the mechanical fallback (no crashloop). Construction is I/O-free (the

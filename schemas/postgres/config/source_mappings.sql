@@ -146,6 +146,16 @@ CREATE TABLE config.source_mappings (
         -- Free-form notes: change description, onboarding context, ops notes.
         -- Designed to evolve.
 
+    -- ---------- Packet axis (Slice 14d) ----------
+    template_type                   TEXT COLLATE "C"                NOT NULL,
+        -- snapshot | sales | inventory_change. The stored discriminator that
+        -- formalises the implicit sale-vs-change inference (Slice 14d). The
+        -- vocabulary lives once in code (dis_validation.TEMPLATE_TYPES), read by
+        -- the field catalog, the rule-target validator, and the consumer's
+        -- routing; deliberately NO enum type and NO CHECK (a lookup-table move is
+        -- deferred to when the set stabilises) — enforced at the application
+        -- boundary. Appended last on the live table by Alembic 0010.
+
     -- ---------- Primary key ----------
     CONSTRAINT pk_csm
         PRIMARY KEY (mapping_version_id),
@@ -318,7 +328,10 @@ SELECT
         || '-' || sm.source_id
         || '-v' || sm.version_seq_per_source
         || '-' || TO_CHAR(sm.created_at, 'YYYYMMDD')
-        AS label
+        AS label,
+    -- Slice 14d: appended last so Alembic 0010's CREATE OR REPLACE VIEW neither
+    -- reorders nor drops the existing columns.
+    sm.template_type
 FROM config.source_mappings sm
 JOIN identity_mirror.tenants t
     ON t.tenant_id = sm.tenant_id;
@@ -378,6 +391,9 @@ COMMENT ON COLUMN config.source_mappings.created_at IS
 
 COMMENT ON COLUMN config.source_mappings.metadata IS
 'Free-form JSONB notes: change description, onboarding context, ops notes. Designed to evolve.';
+
+COMMENT ON COLUMN config.source_mappings.template_type IS
+'Mapping template packet axis (Slice 14d): snapshot | sales | inventory_change. Stored, not inferred. The vocabulary lives once in code (dis_validation.TEMPLATE_TYPES), read by the field catalog, the rule-target validator, and the streaming consumer''s routing; no DB enum/CHECK (a lookup-table move is deferred). Backfilled from the rule-target signature; legacy/empty mappings defaulted to sales.';
 
 COMMENT ON VIEW config.source_mappings_v IS
 'View of source_mappings with a generated human-readable label column. Label pattern: {first_word_of_tenant_name}-{source_id}-v{seq}-{YYYYMMDD}. Tenant name fetched from identity_mirror.tenants. security_invoker: executes with the rights of the querying role so the tenant_isolation policy applies (Slice 14a). Label does not yet incorporate the template (14b gap).';

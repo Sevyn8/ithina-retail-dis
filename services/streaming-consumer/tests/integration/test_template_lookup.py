@@ -76,10 +76,10 @@ def _seed_alt_active_template(dis_admin: Engine) -> tuple[UUID, int]:
         row = conn.execute(
             text(
                 "INSERT INTO config.source_mappings "
-                "(tenant_id, source_id, template_id, template_name, status, "
+                "(tenant_id, source_id, template_id, template_name, template_type, status, "
                 " mapping_rules, activated_at) "
                 "VALUES (CAST(:tenant_id AS uuid), :source_id, CAST(:template_id AS uuid), "
-                " 'alt', 'ACTIVE', CAST(:rules AS JSONB), NOW()) "
+                " 'alt', 'sales', 'ACTIVE', CAST(:rules AS JSONB), NOW()) "
                 "RETURNING mapping_version_id"
             ),
             {

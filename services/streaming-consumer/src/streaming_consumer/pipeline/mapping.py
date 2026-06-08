@@ -39,12 +39,12 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from dis_canonical import StoreSkuChangeEvent, StoreSkuSaleEvent
+from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import MappingConfigError, SuiteDefinitionError
 from dis_core.logging import LogContext
 from dis_mapping import MappingResult, SourceMapping, apply_mapping
 from dis_rls import rls_session
-from dis_validation import mapping_produced_columns
+from dis_validation import SNAPSHOT, mapping_produced_columns
 from streaming_consumer.envelope import IngressReadyEvent
 
 # The routing universe: the two event tables of the dual-write (architecture 4.6).
@@ -120,6 +120,12 @@ def guaranteed_hot_columns(source: SourceMapping, target_model: type[BaseModel])
     write, not a classification concern.
     """
     targets = set(source.target_columns)
+    if target_model is StoreSkuCurrentPosition:
+        # CATALOGUE (snapshot) identity projection: a mapping-produced target IS the
+        # same-named hot column (no projection registry). The completeness gate then
+        # checks HOT_REQUIRED_FROM_PROJECTION ⊆ this set — true for a valid snapshot,
+        # whose mandatory set the create-time validator already enforced.
+        return frozenset(targets) & mapping_produced_columns(StoreSkuCurrentPosition)
     if target_model is StoreSkuSaleEvent:
         return frozenset(SALE_HOT_PROJECTION[t] for t in targets if t in SALE_HOT_PROJECTION)
     category = _constant_derive(source, "event_category")
@@ -128,6 +134,31 @@ def guaranteed_hot_columns(source: SourceMapping, target_model: type[BaseModel])
         return frozenset()
     hot_column = CHANGE_HOT_PROJECTION.get((category, attribute))
     return frozenset({hot_column}) if hot_column else frozenset()
+
+
+def event_contendable_hot_columns() -> frozenset[str]:
+    """Hot columns ANY event projection can mutate — DERIVED from the live registries.
+
+    The union of the SALE and CHANGE projection images. Registry-driven by
+    construction: extend a projection registry and this set follows, with no
+    second list to keep in sync (the catalogue staleness set below depends on it).
+    """
+    return frozenset(SALE_HOT_PROJECTION.values()) | frozenset(CHANGE_HOT_PROJECTION.values())
+
+
+def catalogue_staleness_columns() -> frozenset[str]:
+    """The set the catalogue write stamps in ``attribute_staleness_map``.
+
+    The intersection the slice settled (Slice 14d): columns the catalogue write
+    CAN set (the hot model's mapping-produced columns) AND that an event path CAN
+    mutate (``event_contendable_hot_columns``). DERIVED, never a literal list — a
+    projection-registry change flows through automatically. The per-write stamp is
+    further narrowed to the columns a given snapshot row actually sets. Stamping
+    exactly the contendable attributes gives the deferred collision slice
+    per-attribute freshness for every contendable attribute (no row-level fallback);
+    descriptive fields no event contends for are not stamped, and the compute-owned
+    map entries are never written here."""
+    return mapping_produced_columns(StoreSkuCurrentPosition) & event_contendable_hot_columns()
 
 
 def classify_hot_completeness(source: SourceMapping, target_model: type[BaseModel]) -> bool:
@@ -192,7 +223,7 @@ async def load_active_mapping(engine: AsyncEngine, event: IngressReadyEvent) -> 
         row = (
             await conn.execute(
                 text(
-                    "SELECT mapping_version_id, mapping_rules, "
+                    "SELECT mapping_version_id, mapping_rules, template_type, "
                     "pre_validation_suite_ref, post_validation_suite_ref "
                     "FROM config.source_mappings "
                     "WHERE tenant_id = CAST(:tenant_id AS uuid) AND source_id = :source_id "
@@ -236,7 +267,15 @@ async def load_active_mapping(engine: AsyncEngine, event: IngressReadyEvent) -> 
             tenant_id=str(event.tenant_id),
             trace_id=str(event.trace_id),
         )
-    target = route_target_model(source, tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
+    # Routing by the STORED type (Slice 14d): a snapshot template writes the hot
+    # table directly (the catalogue path); the event types keep the UNCHANGED
+    # column-inference routing — `route_target_model` is byte-identical for them,
+    # so a sale/change template still routes exactly as before.
+    target: type[BaseModel]
+    if row.template_type == SNAPSHOT:
+        target = StoreSkuCurrentPosition
+    else:
+        target = route_target_model(source, tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
     return LoadedMapping(
         mapping_version_id=int(row.mapping_version_id),
         source=source,

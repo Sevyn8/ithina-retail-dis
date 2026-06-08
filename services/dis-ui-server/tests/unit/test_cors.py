@@ -88,10 +88,11 @@ def test_probes_and_endpoints_unchanged_without_an_origin_header(
     assert not any(name.lower().startswith("access-control-") for name in health.headers)
 
     catalog = client.get(
-        "/api/v1/template-mapping-fields", headers={"Authorization": f"Bearer {mint_token()}"}
+        "/api/v1/template-mapping-fields?template_type=snapshot",
+        headers={"Authorization": f"Bearer {mint_token()}"},
     )
     assert catalog.status_code == 200
-    assert len(catalog.json()) == 35
+    assert len(catalog.json()) == 29  # 28 mapping-produced + __ignore__
     assert not any(name.lower().startswith("access-control-") for name in catalog.headers)
 
 

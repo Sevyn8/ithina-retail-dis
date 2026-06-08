@@ -26,6 +26,7 @@ def _valid_create_body() -> dict[str, Any]:
     return {
         "source_id": "manual_csv_upload",
         "template_name": "sales",
+        "template_type": "sales",
         "mapping_rules": {
             "version": 1,
             "rename": {"item": "sku_id"},
@@ -99,7 +100,8 @@ def test_invalid_rules_are_400_with_no_db_in_reach(
 def test_incomplete_rules_are_400_with_no_db_in_reach(
     client: TestClient, mint_token: Callable[..., str]
 ) -> None:
-    # Shape-valid but semantically incomplete (sku_id alone fits both models).
+    # Shape-valid but semantically incomplete: sku_id alone leaves the sales type's
+    # other mandatory columns unprovided (type-keyed mandatory coverage, 14d).
     response = client.post(
         "/api/v1/mapping-templates", headers=_bearer(mint_token()), json=_valid_create_body()
     )
