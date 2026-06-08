@@ -1281,3 +1281,25 @@ _require_subscription now runs against real GCP). Cross-refs D58.
 - **Historical wording left in place per the no-consumer-change rule** (the D77 forward-note precedent): `services/streaming-consumer/src/streaming_consumer/sinks/canonical.py:37-42` ("a missing event_date partition errors loudly") and the `services/streaming-consumer/CLAUDE.md` invariant line "Missing event-date partition fails loud" — both now describe an unreachable case (the loud-error/rollback/nack posture for the CHECK/infra class is unchanged and still load-bearing); tidy at the next consumer-touching slice.
 
 **Cross-refs.** D77 (the precedent and the revised scope clause), D45 (the original cliff analysis), D29/D34 (the buffer + archive that re-partition at Slice 21), D30/D31/D33 (write/compute/dedup semantics, unchanged), D22 (mapping version pinning, unchanged), hard rule 7.
+
+### D86 `store_code` removed from the template-mapping-fields catalog — store identity is receiver-resolved, not column-mapped `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 14d). A catalog correction, not a behaviour change: nothing consumed the removed field.
+
+**The decision.** The functional `store_code` field is removed from the catalog entirely (it appeared only on the `snapshot` field set). Store identity is resolved at the upload receiver — the multipart form field `store_code` is resolved to the internal `store_id` (`services/dis-ui-server/src/dis_ui_server/handlers/csv_uploads.py:215` via `repos/stores.py:43` `resolve_store_by_code`) and carried on the `ingress.ready` envelope; the streaming consumer reads `store_id` off the envelope and never re-resolves or mints it. A CSV column is therefore never mapped to a store, and the create/edit mapping validator already 400s any rule that targets `store_code` (it is not a `mapping_produced` column of `StoreSkuCurrentPosition` — `mapping_validation.py:176`). The catalog field was thus a label with no path behind it: advertising it as mappable was misleading and contradicted the validator.
+
+**Deferred (its own designed slice).** Per-row / multi-store store assignment — the case where one uploaded file spans multiple stores — is NOT addressed here. **Open question:** where store identity comes from when a single file covers multiple stores (a mapped per-row store column resolved against the identity mirror, a per-file constraint, or a different ingress shape). To be designed as a dedicated slice; until then the receiver's one-store-per-upload model (form field → `store_id` → envelope) stands.
+
+**Scope.** dis-ui-server catalog only. The `_STORE_CODE_FIELD` object and its snapshot append are deleted (`catalog/field_catalog.py`); the now-unused `"store"` `FieldSection` member is dropped (`schemas/mapping_fields.py`). The receiver's `store_code` form field, `resolve_store_by_code`, the envelope `store_code` readability field, and all consumer store handling are UNCHANGED.
+
+**Cross-refs.** D53 (canonical GCS path / internal tenant UUID), D54 (receiver trust boundary, `trace_id`/identity read off the envelope), D37/D58 (store resolution at upload), hard rule 4. Companion catalog change in the same batch: `__ignore__` extended to all three field sets, with its enforcement deferred (D87).
+
+### D87 `__ignore__` offered on all three field sets, but source-column-assignment enforcement deferred `DEFERRED`
+
+**Status.** `DEFERRED` (Slice 14d). The mistake-proofing TARGET ships; the GUARD that would make it load-bearing does not.
+
+**The decision.** The `__ignore__` sentinel — previously on the `snapshot` set only — is now appended to all three `template_type` field sets (`sales` / `inventory_change` / `snapshot`) at one inclusion point (`catalog/field_catalog.py` `build_field_catalogs`), so a tenant can explicitly assign any unwanted source column to it on every template kind. **No enforcement was added**: nothing requires a source column to be assigned to a field or to `__ignore__`. Assigning a column to `__ignore__` is functionally identical to leaving it unmapped today — both are silently dropped by the mapping engine (`libs/dis-mapping/.../engine/rename.py:3`, which selects only declared rename targets); the create/edit validator (`mapping_validation.py`) checks only target legality + mandatory canonical coverage + presence pairings, never source-column coverage. So the target exists; the guard does not.
+
+**Deferred (its own slice).** A "every source column must be assigned (to a field or `__ignore__`)" rule spanning the create/edit validator AND the `dis-mapping` rename-drop behaviour. **Trigger:** before tenants self-serve mapping, where a silently dropped column is real data-loss risk (today mappings are hand-authored / operator-reviewed, so the silent drop is contained).
+
+**Cross-refs.** D86 (the same-batch catalogue revision), D49 (the `mapping_rules` shape the validator gates), Slice 14d.
