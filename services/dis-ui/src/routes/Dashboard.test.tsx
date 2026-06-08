@@ -1,10 +1,13 @@
 import { screen, within } from '@testing-library/react'
 
 import type { AuthSnapshot } from '../auth/AuthSnapshot'
-import * as dashboard from '../lib/dis-ui-server/dashboard'
+import * as mappingTemplates from '../lib/dis-ui-server/mapping-templates'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { Dashboard } from './Dashboard'
 
+// The tenant fixture seeds four mapping templates (Sales active v2, Inventory active v1, Pricing
+// draft v1, Orders active v1) -> 3 active pipelines. The dashboard is an honest skeleton: only the
+// pipelines list/count and the friendly type labels are real; everything else is a placeholder.
 const tenant: AuthSnapshot = {
   userId: 'u_acmeuser0001',
   tenantId: 't_acme9k2l1mn4',
@@ -13,55 +16,114 @@ const tenant: AuthSnapshot = {
 }
 const emptyTenant: AuthSnapshot = { ...tenant, tenantId: 't_nofixtures01' }
 
-describe('Dashboard', () => {
+describe('Dashboard (honest skeleton)', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('routes the Add source affordance to the connector picker (R7)', async () => {
+  it('routes the Add source affordance to the connector picker', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
     await screen.findByRole('heading', { name: 'Dashboard' })
     expect(screen.getByRole('link', { name: 'Add source' })).toHaveAttribute('href', '/connect')
   })
 
-  it('renders the metric cards and the per-source rollup', async () => {
+  it('shows the REAL active-pipelines count and "Metrics pending" for the other KPIs (no numbers)', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
-    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
-    // metric cards, all from the rollup (R6): rows ingested (1247+832), active source types,
-    // P95 latency. (Selector update for the richer-dashboard layout; values from the rollup.)
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    // REAL: 3 templates have an active version (Sales, Inventory, Orders).
+    expect(screen.getByText('Active pipelines')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    // The three metric tiles with no endpoint render an honest placeholder, never a number.
     expect(screen.getByText('Rows ingested (24h)')).toBeInTheDocument()
-    expect(screen.getByText('2,079')).toBeInTheDocument()
-    expect(screen.getByText('2 of 4 types')).toBeInTheDocument()
-    expect(screen.getByText('6800 ms')).toBeInTheDocument()
-    // health-by-source rollup (Manual CSV Upload is unique to the health table; Shopify POS
-    // also appears as the breakdown label, so it is non-unique now)
-    expect(screen.getByText('Manual CSV Upload')).toBeInTheDocument()
-    expect(screen.getAllByText('Shopify POS').length).toBeGreaterThan(0)
-    expect(screen.getByText('warning')).toBeInTheDocument()
+    expect(screen.getByText('Quarantine rate (24h)')).toBeInTheDocument()
+    expect(screen.getByText('Freshness')).toBeInTheDocument()
+    expect(screen.getAllByText('Metrics pending')).toHaveLength(3)
   })
 
-  it('renders the source-type breakdown: connected types with volume, others dimmed', async () => {
+  it('renders honest placeholders for Needs attention, Flow, and Quality (no fabricated data)', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
     await screen.findByRole('heading', { name: 'Dashboard' })
-    expect(screen.getByText('Where your data comes from')).toBeInTheDocument()
-    // connected types show their identity label + volume from the rollup
-    expect(screen.getByText('CSV upload')).toBeInTheDocument()
-    expect(screen.getByText('1,247 rows (24h)')).toBeInTheDocument()
-    expect(screen.getByText('832 rows (24h)')).toBeInTheDocument()
-    // not-connected types (square, other) are dimmed roadmap rows, no fabricated numbers
-    expect(screen.getByText('Square')).toBeInTheDocument()
-    expect(screen.getByText('Other POS/ERP')).toBeInTheDocument()
-    expect(screen.getAllByText('Not connected')).toHaveLength(2)
+    expect(screen.getByText('Needs attention')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Alerts appear here once data-quality metrics are available/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Flow')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Per-source volume and freshness will appear here/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Quality')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Pass rate and rejection reasons will appear here/i),
+    ).toBeInTheDocument()
   })
 
-  it('uses the R1 source-type identity (literal classes) in the breakdown and rows', async () => {
-    const { container } = renderWithProviders(<Dashboard />, { snapshot: tenant })
+  it('renders the REAL pipelines table (name, friendly type, status) with no "Last received" column', async () => {
+    renderWithProviders(<Dashboard />, { snapshot: tenant })
     await screen.findByRole('heading', { name: 'Dashboard' })
-    expect(container.querySelector('.text-source-csv')).not.toBeNull()
-    expect(container.querySelector('.text-source-shopify-pos')).not.toBeNull()
+    expect(screen.getByText('Pipelines')).toBeInTheDocument()
+    // template names (Sales collides with its own type label, so it is not asserted via getByText)
+    expect(screen.getByText('Inventory')).toBeInTheDocument()
+    expect(screen.getByText('Pricing')).toBeInTheDocument()
+    expect(screen.getByText('Orders')).toBeInTheDocument()
+    // friendly template-type label from /template-types (proves the labeling is sourced, distinct
+    // from any template name)
+    expect(screen.getByText('Inventory change')).toBeInTheDocument()
+    // status badges from the real lineage (Sales active v2; Pricing draft v1)
+    expect(screen.getByText('Active v2')).toBeInTheDocument()
+    expect(screen.getByText('Draft v1')).toBeInTheDocument()
+    // names link to the template detail
+    expect(screen.getByRole('link', { name: 'Orders' })).toHaveAttribute(
+      'href',
+      '/sources/square_pos/templates/0190ac10-5a00-7000-8a00-0000000000b1',
+    )
+    // the column header set has no "Last received" (needs an upload-history endpoint)
+    expect(screen.queryByRole('columnheader', { name: 'Last received' })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Health' })).toBeInTheDocument()
   })
 
-  it('renders under the dark theme class (both modes)', async () => {
+  it('removes the previously-fabricated metrics (no fake numbers remain)', async () => {
+    renderWithProviders(<Dashboard />, { snapshot: tenant })
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    // the old fixture rollup figures + section are gone
+    expect(screen.queryByText('2,079')).not.toBeInTheDocument()
+    expect(screen.queryByText('6800 ms')).not.toBeInTheDocument()
+    expect(screen.queryByText('P95 latency')).not.toBeInTheDocument()
+    expect(screen.queryByText('Where your data comes from')).not.toBeInTheDocument()
+    expect(screen.queryByText('Health by source')).not.toBeInTheDocument()
+  })
+
+  it('renders the skeleton with an empty pipelines state for a tenant with no templates', async () => {
+    renderWithProviders(<Dashboard />, { snapshot: emptyTenant })
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    // active count is 0 (no fabricated data) and the pipelines panel shows its empty state
+    expect(screen.getByText('Active pipelines')).toBeInTheDocument()
+    expect(screen.getByText('0')).toBeInTheDocument()
+    expect(screen.getByText(/No pipelines yet/i)).toBeInTheDocument()
+  })
+
+  it('shows the loading state while templates are pending', () => {
+    vi.spyOn(mappingTemplates, 'useMappingTemplates').mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof mappingTemplates.useMappingTemplates>)
+    renderWithProviders(<Dashboard />, { snapshot: tenant })
+    expect(screen.getByText('Loading dashboard...')).toBeInTheDocument()
+  })
+
+  it('shows the error state when the templates query errors', () => {
+    vi.spyOn(mappingTemplates, 'useMappingTemplates').mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof mappingTemplates.useMappingTemplates>)
+    renderWithProviders(<Dashboard />, { snapshot: tenant })
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not load the dashboard/i)
+  })
+
+  it('renders under the dark theme class', async () => {
     const { container } = renderWithProviders(
       <div className="dark">
         <Dashboard />
@@ -69,43 +131,6 @@ describe('Dashboard', () => {
       { snapshot: tenant },
     )
     expect(await within(container).findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
-    expect(within(container).getByText('Where your data comes from')).toBeInTheDocument()
-  })
-
-  it('links each source name to its mappings and the open-quarantine count to the filtered console', async () => {
-    renderWithProviders(<Dashboard />, { snapshot: tenant })
-    await screen.findByRole('heading', { name: 'Dashboard' })
-    // source name -> that source's mappings, keyed by source_id
-    expect(screen.getByRole('link', { name: 'Manual CSV Upload' })).toHaveAttribute(
-      'href',
-      '/sources/manual_csv_upload/mappings',
-    )
-    expect(screen.getByRole('link', { name: 'Shopify POS' })).toHaveAttribute(
-      'href',
-      '/sources/shopify_pos_v2/mappings',
-    )
-    // open count > 0 (shopify: 2) -> Quarantine pre-filtered by source_id
-    expect(screen.getByRole('link', { name: '2' })).toHaveAttribute(
-      'href',
-      '/quarantine?source=shopify_pos_v2',
-    )
-    // open count 0 (manual) is plain text, not a link (FM4)
-    expect(screen.queryByRole('link', { name: '0' })).not.toBeInTheDocument()
-  })
-
-  it('shows the empty state for a tenant with no data', async () => {
-    renderWithProviders(<Dashboard />, { snapshot: emptyTenant })
-    expect(await screen.findByRole('heading', { name: 'No dashboard data' })).toBeInTheDocument()
-  })
-
-  it('shows the error state when the summary query errors', () => {
-    vi.spyOn(dashboard, 'useDashboardSummary').mockReturnValue({
-      data: undefined,
-      isPending: false,
-      isError: true,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof dashboard.useDashboardSummary>)
-    renderWithProviders(<Dashboard />, { snapshot: tenant })
-    expect(screen.getByRole('alert')).toHaveTextContent(/could not load the dashboard/i)
+    expect(within(container).getByText('Pipelines')).toBeInTheDocument()
   })
 })
