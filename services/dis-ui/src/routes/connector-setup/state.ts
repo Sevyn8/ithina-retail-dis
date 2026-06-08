@@ -3,19 +3,24 @@ import type {
   ConnectorAccount,
   ConnectorDataType,
   ConnectorMappingField,
+  CreatedTemplate,
   LiveConnectorSource,
   SyncCadence,
 } from '../../lib/dis-ui-server/connectors-api'
-import { CONNECTOR_STEP_COUNT, CONNECTOR_STEP_INDEX } from './steps'
+import type { Branch, StepKey } from './steps'
+import { flowFor } from './steps'
 
-// Pure state machine for the Live Sync connector wizard (Chunk 1). All step-advance gating,
-// the per-field IGNORE flag, and the mapping-target override live here so the logic is unit
-// testable without rendering. The route component owns only the side effects (the stub-api
-// calls) and dispatches actions into this reducer.
+// Pure state machine for the unified Add Source wizard (Chunk 1 POS + Chunk 2 CSV/SFTP). It is
+// BRANCH-AWARE: `branch` selects which ordered step flow is active, and `stepIndex` indexes into
+// that flow. All step-advance gating, the per-field IGNORE flag, and the mapping-target override
+// live here so the logic is unit testable without rendering. The route owns only side effects
+// (the wired GETs + the stubbed calls) and dispatches actions into this reducer.
 
 export type LocationMapping = { checked: boolean; storeId: string }
 
 export type ConnectorWizardState = {
+  // null until a Source tile is picked; 'pos' for a live-sync connector, 'csv' for CSV/SFTP.
+  branch: Branch | null
   stepIndex: number
   connector: ConnectorKey | null
   sourceName: string
@@ -24,24 +29,30 @@ export type ConnectorWizardState = {
   preAuth: Record<string, string>
   // API-token field values (token path), by field name.
   tokenFields: Record<string, string>
-  // Set once the (stubbed) authorize / token submit succeeds.
+  // Set once the (stubbed) authorize / token submit succeeds (POS branch).
   account: ConnectorAccount | null
-  // locationId -> { checked, chosen DIS store_id }.
+  // locationId -> { checked, chosen DIS store_id } (POS branch).
   locations: Record<string, LocationMapping>
   dataTypes: ConnectorDataType[]
   cadence: SyncCadence
+  // CSV branch: the chosen sample file name + whether the (stubbed) analysis has run.
+  csvFileName: string
+  csvAnalysisReady: boolean
   // sourceField -> chosen canonical key. Absent => use the suggestion's suggested target.
-  // The suggestion set itself is NOT held here: it lives in the route's react-query layer
-  // (connectors-api stub) and is passed into the gating helpers; the reducer holds only the
-  // operator's decisions (overrides + ignores) so it stays a pure, fetch-free state machine.
+  // The suggestion set itself is NOT held here: it lives in the route's react-query layer and is
+  // passed into the gating helpers; the reducer holds only the operator's decisions.
   mappingOverrides: Record<string, string>
-  // sourceField -> ignored (excluded from the template and the canonical preview).
+  // sourceField -> ignored (assign to the `__ignore__` catalog field; excluded from the template).
   ignored: Record<string, boolean>
+  // The chosen template type (CSV branch picks it on the Template type step; POS defaults it).
   templateType: string
+  // Terminal results (branch-specific).
   liveSource: LiveConnectorSource | null
+  createdTemplate: CreatedTemplate | null
 }
 
 export const initialConnectorWizardState: ConnectorWizardState = {
+  branch: null,
   stepIndex: 0,
   connector: null,
   sourceName: '',
@@ -52,14 +63,18 @@ export const initialConnectorWizardState: ConnectorWizardState = {
   locations: {},
   dataTypes: ['orders'],
   cadence: 'daily',
+  csvFileName: '',
+  csvAnalysisReady: false,
   mappingOverrides: {},
   ignored: {},
   templateType: '',
   liveSource: null,
+  createdTemplate: null,
 }
 
 export type ConnectorWizardAction =
   | { type: 'selectConnector'; connector: ConnectorKey }
+  | { type: 'selectCsv' }
   | { type: 'setSourceName'; value: string }
   | { type: 'setAuthMethod'; method: ConnectorAuthMethod }
   | { type: 'setPreAuthField'; name: string; value: string }
@@ -69,15 +84,37 @@ export type ConnectorWizardAction =
   | { type: 'setLocationStore'; locationId: string; storeId: string }
   | { type: 'toggleDataType'; dataType: ConnectorDataType }
   | { type: 'setCadence'; cadence: SyncCadence }
+  | { type: 'setCsvFile'; fileName: string }
+  | { type: 'setCsvAnalysisReady' }
   | { type: 'setMappingTarget'; sourceField: string; target: string }
   | { type: 'toggleIgnore'; sourceField: string }
   | { type: 'setTemplateType'; value: string }
   | { type: 'setLiveSource'; source: LiveConnectorSource }
+  | { type: 'setCreatedTemplate'; template: CreatedTemplate }
   | { type: 'next' }
   | { type: 'back' }
 
-function clampStep(index: number): number {
-  return Math.max(0, Math.min(CONNECTOR_STEP_COUNT - 1, index))
+function clampStep(index: number, flowLength: number): number {
+  return Math.max(0, Math.min(flowLength - 1, index))
+}
+
+// Reset the per-branch decisions when (re)choosing a Source tile, so a half-built mapping for
+// one branch/connector never leaks into another.
+function resetForSourceChange(state: ConnectorWizardState): ConnectorWizardState {
+  return {
+    ...state,
+    stepIndex: 0,
+    preAuth: {},
+    tokenFields: {},
+    account: null,
+    csvFileName: '',
+    csvAnalysisReady: false,
+    mappingOverrides: {},
+    ignored: {},
+    templateType: '',
+    liveSource: null,
+    createdTemplate: null,
+  }
 }
 
 export function connectorWizardReducer(
@@ -86,15 +123,9 @@ export function connectorWizardReducer(
 ): ConnectorWizardState {
   switch (action.type) {
     case 'selectConnector':
-      // Switching connectors resets the connector-specific credential + account state so a
-      // half-entered form for one provider never leaks into another.
-      return {
-        ...state,
-        connector: action.connector,
-        preAuth: {},
-        tokenFields: {},
-        account: null,
-      }
+      return { ...resetForSourceChange(state), branch: 'pos', connector: action.connector }
+    case 'selectCsv':
+      return { ...resetForSourceChange(state), branch: 'csv', connector: null }
     case 'setSourceName':
       return { ...state, sourceName: action.value }
     case 'setAuthMethod':
@@ -138,6 +169,10 @@ export function connectorWizardReducer(
     }
     case 'setCadence':
       return { ...state, cadence: action.cadence }
+    case 'setCsvFile':
+      return { ...state, csvFileName: action.fileName, csvAnalysisReady: false }
+    case 'setCsvAnalysisReady':
+      return { ...state, csvAnalysisReady: true }
     case 'setMappingTarget':
       return {
         ...state,
@@ -155,17 +190,25 @@ export function connectorWizardReducer(
       return { ...state, templateType: action.value }
     case 'setLiveSource':
       return { ...state, liveSource: action.source }
+    case 'setCreatedTemplate':
+      return { ...state, createdTemplate: action.template }
     case 'next':
-      return { ...state, stepIndex: clampStep(state.stepIndex + 1) }
+      return { ...state, stepIndex: clampStep(state.stepIndex + 1, flowFor(state.branch).length) }
     case 'back':
-      return { ...state, stepIndex: clampStep(state.stepIndex - 1) }
+      return { ...state, stepIndex: clampStep(state.stepIndex - 1, flowFor(state.branch).length) }
     default:
       return state
   }
 }
 
-// The canonical target for a field: the operator's override if set, else the suggested
-// target, else '' (unmapped). Mirrors the CSV path's overrideFor pattern.
+// The active step key for the current branch + index.
+export function currentStepKey(state: ConnectorWizardState): StepKey {
+  const flow = flowFor(state.branch)
+  return flow[clampStep(state.stepIndex, flow.length)]
+}
+
+// The canonical target for a field: the operator's override if set, else the suggested target,
+// else '' (unmapped). Mirrors the CSV path's overrideFor pattern.
 export function mappingTargetFor(
   state: ConnectorWizardState,
   field: ConnectorMappingField,
@@ -187,40 +230,43 @@ export function activeMappingFields(
 }
 
 // Whether the wizard may advance from the current step. Pure: drives the Next/primary CTA
-// disabled state. `mappingFields` is the (query-supplied) suggestion set, needed only by the
-// mapping step. The Preview step is intentionally non-blocking (always advanceable); the Live
-// step is terminal.
+// disabled state. Switches on the active branch's step KEY. `mappingFields` is the
+// (query-supplied) suggestion set, needed only by the mapping step. Preview is non-blocking
+// (always advanceable); the terminal steps (live/created) cannot advance.
 export function canAdvance(
   state: ConnectorWizardState,
   mappingFields: ConnectorMappingField[] = [],
 ): boolean {
-  switch (state.stepIndex) {
-    case CONNECTOR_STEP_INDEX.source:
-      return state.connector !== null
-    case CONNECTOR_STEP_INDEX.connect:
-      // The authorize / token-submit action establishes the account and advances; until then
-      // there is nothing to advance to.
+  switch (currentStepKey(state)) {
+    case 'source':
+      return state.branch !== null
+    case 'connect':
+      // The authorize / token-submit action establishes the account and advances.
       return state.sourceName.trim().length > 0 && state.account !== null
-    case CONNECTOR_STEP_INDEX.authorized:
+    case 'authorized':
       return state.account !== null
-    case CONNECTOR_STEP_INDEX.locations: {
+    case 'locations': {
       const checked = Object.values(state.locations).filter((l) => l.checked)
       return checked.length > 0 && checked.every((l) => l.storeId.length > 0)
     }
-    case CONNECTOR_STEP_INDEX.dataSync:
+    case 'dataSync':
       return state.dataTypes.length > 0
-    case CONNECTOR_STEP_INDEX.mapping: {
+    case 'upload':
+      return state.csvAnalysisReady && state.sourceName.trim().length > 0
+    case 'templateType':
+      return state.templateType.length > 0
+    case 'mapping': {
       if (mappingFields.length === 0) {
         return false
       }
-      // Every non-ignored field must have a canonical target.
       return activeMappingFields(state, mappingFields).every(
         (f) => mappingTargetFor(state, f).length > 0,
       )
     }
-    case CONNECTOR_STEP_INDEX.preview:
+    case 'preview':
       return true
-    case CONNECTOR_STEP_INDEX.live:
+    case 'live':
+    case 'created':
       return false
     default:
       return false

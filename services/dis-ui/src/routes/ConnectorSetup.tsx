@@ -6,8 +6,11 @@ import { useAuth } from '../auth/useAuth'
 
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
+  analyzeCsvSample,
   createConnectorSource,
+  createCsvTemplate,
   exchangeToken,
+  fetchCsvPreviewRows,
   fetchLocations,
   fetchMappingSuggestions,
   fetchPreviewRows,
@@ -15,13 +18,18 @@ import {
   initiateOAuth,
   submitApiToken,
 } from '../lib/dis-ui-server/connectors-api'
-import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
+import {
+  useTemplateMappingFields,
+  useTemplateMappingFieldsForType,
+} from '../lib/dis-ui-server/mapping-fields'
+import { useTemplateTypes } from '../lib/dis-ui-server/template-types'
 import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
 import { StepRail } from './connector-setup/StepRail'
-import { CONNECTOR_STEPS, CONNECTOR_STEP_INDEX, CONNECTOR_STEP_META } from './connector-setup/steps'
+import { STEP_DEFS, flowFor } from './connector-setup/steps'
 import {
   canAdvance,
   connectorWizardReducer,
+  currentStepKey,
   initialConnectorWizardState,
   isIgnored,
   mappingTargetFor,
@@ -31,63 +39,100 @@ import { ConnectStep } from './connector-setup/ConnectStep'
 import { AuthorizedStep } from './connector-setup/AuthorizedStep'
 import { LocationsStep } from './connector-setup/LocationsStep'
 import { DataSyncStep } from './connector-setup/DataSyncStep'
+import { CsvUploadStep } from './connector-setup/CsvUploadStep'
+import { TemplateTypeStep } from './connector-setup/TemplateTypeStep'
 import { MappingStep } from './connector-setup/MappingStep'
 import { PreviewStep } from './connector-setup/PreviewStep'
 import { LiveStep } from './connector-setup/LiveStep'
+import { CsvCreatedStep } from './connector-setup/CsvCreatedStep'
 
-// "Connect a System" surface (Chunk 1): a NEW, separate 8-step wizard for Live Sync POS
-// connectors (Shopify / Square / Clover), at /connectors/new. UI-ONLY: every backend
-// interaction is isolated behind the connectors-api stub seam (no real dis-ui-server call).
-// The existing Add Source surface (/connect) is untouched; this is a distinct route and
-// component tree. The reducer (connector-setup/state.ts) owns all step-advance gating and
-// the per-field IGNORE logic; this route owns only the side effects (the stub-api calls,
-// fetched through react-query so there are no manual effects).
+// Unified Add Source surface (Chunk 1 POS + Chunk 2 CSV/SFTP), at /connectors/new. Two branches
+// share the shell (StepRail, container, typography) but run different step flows; the reducer is
+// branch-aware. WIRED (mode-aware, fixture-backed in tests): GET /api/v1/template-types and GET
+// /api/v1/template-mapping-fields?template_type=X drive the CSV branch's Template type step and
+// type-aware canonical targets. STUBBED at the connectors-api seam: CSV sample upload/analysis,
+// the create-template POST, and preview rows (contracts not confirmed) - plus the entire POS
+// branch (Chunk 1). The existing old Add Source (/connect, MappingReview) is untouched.
 export function ConnectorSetup() {
   const { snapshot } = useAuth()
   const [state, dispatch] = useReducer(connectorWizardReducer, initialConnectorWizardState)
   const [authorizing, setAuthorizing] = useState(false)
 
-  const fields = useTemplateMappingFields()
+  const stepKey = currentStepKey(state)
+  const isCsv = state.branch === 'csv'
+
   const stores = useStoresOnboarded(snapshot)
 
-  // Stubbed connector data, fetched lazily per step via react-query (enabled gates the fetch).
+  // ----- POS branch data (all stubbed, unchanged from Chunk 1) -----
+  const posCatalog = useTemplateMappingFields()
   const locationsQuery = useQuery({
     queryKey: ['connectors', 'locations', state.connector],
     queryFn: () => fetchLocations(state.connector ?? 'shopify'),
-    enabled: state.connector !== null && state.stepIndex >= CONNECTOR_STEP_INDEX.locations,
+    enabled: state.branch === 'pos' && state.connector !== null,
     staleTime: Infinity,
     retry: false,
   })
-  const mappingQuery = useQuery({
+  const posMappingQuery = useQuery({
     queryKey: ['connectors', 'mapping', state.connector, state.dataTypes],
     queryFn: () => fetchMappingSuggestions(state.connector ?? 'shopify', state.dataTypes),
-    enabled: state.connector !== null && state.stepIndex === CONNECTOR_STEP_INDEX.mapping,
+    enabled: state.branch === 'pos' && stepKey === 'mapping',
     staleTime: Infinity,
     retry: false,
   })
-  const templateTypeQuery = useQuery({
+  const posTemplateTypeQuery = useQuery({
     queryKey: ['connectors', 'template-type'],
     queryFn: fetchTemplateType,
-    enabled: state.stepIndex === CONNECTOR_STEP_INDEX.preview,
+    enabled: state.branch === 'pos' && stepKey === 'preview',
     staleTime: Infinity,
     retry: false,
   })
-  const previewQuery = useQuery({
+  const posPreviewQuery = useQuery({
     queryKey: ['connectors', 'preview'],
     queryFn: fetchPreviewRows,
-    enabled: state.stepIndex === CONNECTOR_STEP_INDEX.preview,
+    enabled: state.branch === 'pos' && stepKey === 'preview',
     staleTime: Infinity,
     retry: false,
   })
 
-  const mapping = mappingQuery.data ?? null
-  const mappingFields = mapping?.fields ?? []
-  // Template type: the operator's choice if made, else the backend-provided (stubbed) default.
-  const effectiveTemplateType =
-    state.templateType !== '' ? state.templateType : (templateTypeQuery.data?.value ?? '')
+  // ----- CSV branch data (WIRED catalog + types; stubbed upload/preview) -----
+  const templateTypesQuery = useTemplateTypes()
+  // WIRED: the type-aware canonical catalog (requires the chosen template_type).
+  const csvFieldsQuery = useTemplateMappingFieldsForType(isCsv ? state.templateType : null)
+  // STUBBED: the CSV sample analysis + suggestions.
+  const csvAnalysisQuery = useQuery({
+    queryKey: ['connectors', 'csv-analysis', state.csvFileName],
+    queryFn: () => analyzeCsvSample(state.csvFileName),
+    enabled: isCsv && state.csvAnalysisReady,
+    staleTime: Infinity,
+    retry: false,
+  })
+  // STUBBED: the CSV preview rows.
+  const csvPreviewQuery = useQuery({
+    queryKey: ['connectors', 'csv-preview'],
+    queryFn: fetchCsvPreviewRows,
+    enabled: isCsv && stepKey === 'preview',
+    staleTime: Infinity,
+    retry: false,
+  })
 
-  // Authorize (OAuth) or submit the API token. STUBBED: calls the connectors-api stub, sets
-  // the connected account, and advances. No real provider call.
+  // Branch-resolved views the steps consume.
+  const mapping = isCsv ? (csvAnalysisQuery.data ?? null) : (posMappingQuery.data ?? null)
+  const mappingFields = mapping?.fields ?? []
+  const mappingCatalog = isCsv ? (csvFieldsQuery.data ?? []) : (posCatalog.data ?? [])
+  const mappingLoading = isCsv
+    ? csvAnalysisQuery.isLoading || csvFieldsQuery.isLoading
+    : posMappingQuery.isLoading || posCatalog.isPending
+  const previewRows = isCsv ? (csvPreviewQuery.data ?? []) : (posPreviewQuery.data ?? [])
+  const previewLoading = isCsv ? csvPreviewQuery.isLoading : posPreviewQuery.isLoading
+  // POS keeps its Chunk-1 template-type handling (stub fetch + preview select); CSV uses the
+  // type chosen on its own step.
+  const effectiveTemplateType = isCsv
+    ? state.templateType
+    : state.templateType !== ''
+      ? state.templateType
+      : (posTemplateTypeQuery.data?.value ?? '')
+
+  // Authorize (OAuth) or submit the API token (POS). STUBBED: sets the account and advances.
   async function handleAuthorize(): Promise<void> {
     const connector = state.connector
     if (connector === null) {
@@ -108,7 +153,7 @@ export function ConnectorSetup() {
     }
   }
 
-  // Create the live source (STUBBED) and advance to the Live confirmation.
+  // Create the live source (POS, STUBBED) and advance to the Live confirmation.
   async function handleGoLive(): Promise<void> {
     const connector = state.connector
     if (connector === null) {
@@ -135,11 +180,29 @@ export function ConnectorSetup() {
     dispatch({ type: 'next' })
   }
 
+  // Create the mapping template (CSV, STUBBED). Ignored columns are represented by assigning
+  // them to the `__ignore__` catalog field. No real POST (the create contract is unconfirmed).
+  async function handleCreateTemplate(): Promise<void> {
+    const fieldTargets: Record<string, string> = {}
+    for (const field of mappingFields) {
+      fieldTargets[field.sourceField] = isIgnored(state, field.sourceField)
+        ? '__ignore__'
+        : mappingTargetFor(state, field)
+    }
+    const created = await createCsvTemplate({
+      sourceName: state.sourceName,
+      templateType: state.templateType,
+      fieldTargets,
+    })
+    dispatch({ type: 'setCreatedTemplate', template: created })
+    dispatch({ type: 'next' })
+  }
+
   function renderStep() {
-    switch (state.stepIndex) {
-      case CONNECTOR_STEP_INDEX.source:
+    switch (stepKey) {
+      case 'source':
         return <SourceStep state={state} dispatch={dispatch} />
-      case CONNECTOR_STEP_INDEX.connect:
+      case 'connect':
         return (
           <ConnectStep
             state={state}
@@ -148,9 +211,9 @@ export function ConnectorSetup() {
             authorizing={authorizing}
           />
         )
-      case CONNECTOR_STEP_INDEX.authorized:
+      case 'authorized':
         return <AuthorizedStep state={state} />
-      case CONNECTOR_STEP_INDEX.locations:
+      case 'locations':
         return (
           <LocationsStep
             state={state}
@@ -160,40 +223,54 @@ export function ConnectorSetup() {
             loading={locationsQuery.isLoading}
           />
         )
-      case CONNECTOR_STEP_INDEX.dataSync:
+      case 'dataSync':
         return <DataSyncStep state={state} dispatch={dispatch} />
-      case CONNECTOR_STEP_INDEX.mapping:
+      case 'upload':
+        return <CsvUploadStep state={state} dispatch={dispatch} />
+      case 'templateType':
+        return (
+          <TemplateTypeStep
+            state={state}
+            dispatch={dispatch}
+            templateTypes={templateTypesQuery.data ?? []}
+            loading={templateTypesQuery.isLoading}
+          />
+        )
+      case 'mapping':
         return (
           <MappingStep
             state={state}
             dispatch={dispatch}
             mapping={mapping}
-            catalog={fields.data ?? []}
-            loading={mappingQuery.isLoading || fields.isPending}
+            catalog={mappingCatalog}
+            loading={mappingLoading}
           />
         )
-      case CONNECTOR_STEP_INDEX.preview:
+      case 'preview':
         return (
           <PreviewStep
             state={state}
             dispatch={dispatch}
             mappingFields={mappingFields}
             templateType={effectiveTemplateType}
-            rows={previewQuery.data ?? []}
-            loading={previewQuery.isLoading}
+            rows={previewRows}
+            loading={previewLoading}
+            readOnlyTemplateType={isCsv}
           />
         )
-      case CONNECTOR_STEP_INDEX.live:
+      case 'live':
         return <LiveStep state={state} />
+      case 'created':
+        return <CsvCreatedStep state={state} />
       default:
         return null
     }
   }
 
-  // Footer primary action varies by step. The Connect step has no generic Next (its
-  // authorize button advances); the Live step is terminal (a Done link instead).
+  // Footer primary action varies by step. Connect has no generic Next (its authorize button
+  // advances); the terminal steps (live/created) show a Done link.
   function renderFooter() {
-    if (state.stepIndex === CONNECTOR_STEP_INDEX.live) {
+    if (stepKey === 'live' || stepKey === 'created') {
       return (
         <div className="flex gap-3">
           <Link to="/" className={buttonVariants({ variant: 'default' })}>
@@ -204,29 +281,33 @@ export function ConnectorSetup() {
     }
 
     const back =
-      state.stepIndex > CONNECTOR_STEP_INDEX.source ? (
+      state.stepIndex > 0 ? (
         <Button type="button" variant="ghost" onClick={() => dispatch({ type: 'back' })}>
           Back
         </Button>
       ) : null
 
-    if (state.stepIndex === CONNECTOR_STEP_INDEX.connect) {
+    if (stepKey === 'connect') {
       // The authorize / token-submit button inside ConnectStep advances; only Back here.
       return <div className="flex gap-3">{back}</div>
     }
 
     const label =
-      state.stepIndex === CONNECTOR_STEP_INDEX.authorized
+      stepKey === 'authorized'
         ? 'Continue'
-        : state.stepIndex === CONNECTOR_STEP_INDEX.mapping
+        : stepKey === 'mapping'
           ? 'Continue to preview'
-          : state.stepIndex === CONNECTOR_STEP_INDEX.preview
-            ? 'Go live'
+          : stepKey === 'preview'
+            ? isCsv
+              ? 'Create template'
+              : 'Go live'
             : 'Next'
 
     const onClick =
-      state.stepIndex === CONNECTOR_STEP_INDEX.preview
-        ? () => void handleGoLive()
+      stepKey === 'preview'
+        ? isCsv
+          ? () => void handleCreateTemplate()
+          : () => void handleGoLive()
         : () => dispatch({ type: 'next' })
 
     return (
@@ -239,25 +320,23 @@ export function ConnectorSetup() {
     )
   }
 
-  const meta = CONNECTOR_STEP_META[state.stepIndex]
+  const flow = flowFor(state.branch)
+  const meta = STEP_DEFS[stepKey]
 
   return (
-    // Centered container (~920px) so the wizard uses the page width instead of hugging the left
-    // edge. Page padding comes from AppLayout's <main> (p-6); this only centers + caps width.
-    // gap-8 sets the vertical rhythm between the page header, the stepper, and the step body.
+    // Centered container (~920px) so the wizard uses the page width. Page padding comes from
+    // AppLayout's <main> (p-6); this only centers + caps width.
     <section className="mx-auto flex w-full max-w-[920px] flex-col gap-8">
       <header className="flex flex-col gap-3">
         <h1 className="text-display">Connect a system</h1>
         <p className="text-body text-muted-foreground">
-          Sync sales directly from your point-of-sale system. We map it to the canonical schema, you
-          approve, it goes live.
+          Connect a live system or upload a file. We map it to the canonical schema, you approve, it
+          goes live.
         </p>
       </header>
 
-      <StepRail steps={[...CONNECTOR_STEPS]} current={state.stepIndex} />
+      <StepRail steps={flow.map((k) => STEP_DEFS[k].label)} current={state.stepIndex} />
 
-      {/* Per-step body: one shared header type scale (18px/500 title + 14px muted description)
-          for every step, then the step content, with generous spacing between. */}
       <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-1.5">
           <h2 className="text-[18px] leading-6 font-medium text-foreground">{meta.title}</h2>

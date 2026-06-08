@@ -386,3 +386,173 @@ export function canonicalTargetKeys(catalog: TemplateMappingField[]): string[] {
   }
   return keys
 }
+
+// ============================================================================================
+// Type-aware catalog (Chunk 2, WIRED): GET /api/v1/template-mapping-fields?template_type=X.
+//
+// Slice 14d made the catalog TYPE-AWARE: `template_type` is REQUIRED (missing/invalid -> 400
+// `invalid_template_type`) and the response is the new UNIFORM 10-key shape (CatalogField),
+// shaped EXACTLY to schemas/mapping_fields.py:TemplateMappingField. This is ADDITIVE: the
+// legacy no-param `getTemplateMappingFields()` / `TemplateMappingField` above are left intact
+// for the existing (soon-retired) CSV onboarding surface; the unified Add Source uses the
+// type-aware fetch below. `section` is wider (includes `system`), `datatype` is null only for
+// the `__ignore__` sentinel, and `sink` is the canonical table (null for functional/sentinel).
+// ============================================================================================
+
+export type TemplateTypeKey = 'sales' | 'inventory_change' | 'snapshot'
+
+export type CatalogFieldSection =
+  | 'sale_event'
+  | 'change_event'
+  | 'identity'
+  | 'product'
+  | 'pricing'
+  | 'inventory'
+  | 'expiry'
+  | 'regulatory_status'
+  | 'system'
+
+// The uniform 10-key wire object. `datatype` is null only for the `__ignore__` sentinel
+// (section `system`, sink null); assigning a source column to `__ignore__` is how the Ignore
+// toggle is represented in the mapping.
+export type CatalogField = {
+  key: string
+  display_name: string
+  section: CatalogFieldSection
+  mandatory: boolean
+  constraints: string | null
+  datatype: FieldDatatype | null
+  description: string
+  allowed_values: string[] | null
+  max_length: number | null
+  sink: string | null
+}
+
+// The `__ignore__` sentinel appended to every field set (section `system`, datatype/sink null).
+export const IGNORE_FIELD: CatalogField = {
+  key: '__ignore__',
+  display_name: 'Ignore this column',
+  section: 'system',
+  mandatory: false,
+  constraints: null,
+  datatype: null,
+  description: 'Assign a source column here to exclude it from the canonical template.',
+  allowed_values: null,
+  max_length: null,
+  sink: null,
+}
+
+// Widen a legacy event-catalog entry to the new 10-key shape (fixture-only helper).
+function toCatalogField(field: TemplateMappingField, sink: string): CatalogField {
+  return {
+    key: field.key,
+    display_name: field.display_name,
+    section: field.section,
+    mandatory: field.mandatory,
+    constraints: null,
+    datatype: field.datatype,
+    description: field.description,
+    allowed_values: field.allowed_values ?? null,
+    max_length: field.max_length ?? null,
+    sink,
+  }
+}
+
+// A compact catalogue (current-position) field set for the snapshot type (the legacy fixture is
+// event-only). The live endpoint is the source of truth in real mode; this keeps fixture/test
+// mode plausible.
+const SNAPSHOT_FIELDS: CatalogField[] = [
+  {
+    key: 'sku_id',
+    display_name: 'SKU',
+    section: 'identity',
+    mandatory: true,
+    constraints: null,
+    datatype: 'text',
+    description: 'The product identifier as your system reports it.',
+    allowed_values: null,
+    max_length: 128,
+    sink: 'store_sku_current_position',
+  },
+  {
+    key: 'current_retail_price',
+    display_name: 'Current retail price',
+    section: 'pricing',
+    mandatory: false,
+    constraints: null,
+    datatype: 'number',
+    description: 'The latest shelf price per unit for this SKU.',
+    allowed_values: null,
+    max_length: null,
+    sink: 'store_sku_current_position',
+  },
+  {
+    key: 'stock_on_hand',
+    display_name: 'Stock on hand',
+    section: 'inventory',
+    mandatory: false,
+    constraints: null,
+    datatype: 'number',
+    description: 'Current on-hand quantity for this SKU.',
+    allowed_values: null,
+    max_length: null,
+    sink: 'store_sku_current_position',
+  },
+  {
+    key: 'currency',
+    display_name: 'Currency',
+    section: 'pricing',
+    mandatory: false,
+    constraints: null,
+    datatype: 'text',
+    description: 'ISO 4217 code; provide as a constant derive if the file has no column.',
+    allowed_values: null,
+    max_length: 3,
+    sink: 'store_sku_current_position',
+  },
+  IGNORE_FIELD,
+]
+
+// Per-type fixtures, MIRRORING the type-aware endpoint output as of this commit. `sales` and
+// `inventory_change` are derived from the legacy event catalog; `snapshot` is authored above.
+const CATALOG_FIXTURE_BY_TYPE: Record<string, CatalogField[]> = {
+  sales: [
+    ...CATALOG_FIXTURE.filter((f) => f.section === 'sale_event').map((f) =>
+      toCatalogField(f, 'store_sku_sale_event'),
+    ),
+    IGNORE_FIELD,
+  ],
+  inventory_change: [
+    ...CATALOG_FIXTURE.filter((f) => f.section === 'change_event').map((f) =>
+      toCatalogField(f, 'store_sku_change_event'),
+    ),
+    IGNORE_FIELD,
+  ],
+  snapshot: SNAPSHOT_FIELDS,
+}
+
+// GET /api/v1/template-mapping-fields?template_type=X. `template_type` is REQUIRED by the
+// backend (missing/invalid -> 400 invalid_template_type). Real mode calls the live endpoint;
+// fixture mode returns the per-type inlined catalog.
+export async function getTemplateMappingFieldsForType(
+  templateType: string,
+): Promise<CatalogField[]> {
+  if (isRealMode()) {
+    return getJson<CatalogField[]>(
+      `/api/v1/template-mapping-fields?template_type=${encodeURIComponent(templateType)}`,
+    )
+  }
+  return [...(CATALOG_FIXTURE_BY_TYPE[templateType] ?? [IGNORE_FIELD])]
+}
+
+// Enabled only once a template type is chosen (the param is required). queryKey carries the
+// type so switching types refetches the right field set.
+export function useTemplateMappingFieldsForType(templateType: string | null) {
+  return useQuery({
+    queryKey: ['dis-ui-server', 'template-mapping-fields', templateType ?? 'none'],
+    queryFn: () => getTemplateMappingFieldsForType(templateType as string),
+    enabled: templateType !== null && templateType.length > 0,
+    staleTime: Infinity,
+    retry: false,
+  })
+}

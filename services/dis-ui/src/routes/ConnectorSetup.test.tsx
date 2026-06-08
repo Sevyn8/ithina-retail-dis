@@ -5,9 +5,10 @@ import type { AuthSnapshot } from '../auth/AuthSnapshot'
 import { renderWithProviders } from '../test/renderWithProviders'
 import { AppRoutes } from './AppRoutes'
 
-// Drives the NEW "Connect a System" Live Sync wizard (/connectors/new) with userEvent. All
-// backend interactions are stubbed (connectors-api), so the flow completes with no network.
-// Focus: the 8-step stepper advancing + the per-row IGNORE behavior in the AI mapping step.
+// Drives the unified "Connect a System" wizard (/connectors/new) with userEvent. The POS branch
+// is fully stubbed (connectors-api); the CSV branch wires two GETs (template-types,
+// template-mapping-fields?template_type=) which are fixture-backed in tests, with upload/create/
+// preview stubbed. Focus: both branch steppers + the per-row IGNORE behavior.
 
 const tenant: AuthSnapshot = {
   userId: 'u_acmeuser0001',
@@ -24,15 +25,18 @@ function renderWizard() {
 }
 
 describe('ConnectorSetup (Live Sync wizard)', () => {
-  it('renders the Source step with POS connector tiles and no CSV tile', async () => {
+  it('renders the unified Source step with POS tiles AND a CSV/SFTP tile', async () => {
     renderWizard()
     expect(await screen.findByRole('heading', { name: 'Connect a system' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Shopify' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Square' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Clover' })).toBeInTheDocument()
-    // POS only this surface: no CSV connector tile here.
-    expect(screen.queryByRole('radio', { name: /csv/i })).not.toBeInTheDocument()
-    // Source step cannot advance until a connector is picked.
+    // Chunk 2: the unified surface now also offers the CSV / SFTP upload branch.
+    expect(screen.getByRole('radio', { name: 'CSV / SFTP' })).toBeInTheDocument()
+    // The two groups are labeled separately.
+    expect(screen.getByRole('radiogroup', { name: 'Live sync connector' })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: 'File upload source' })).toBeInTheDocument()
+    // Source step cannot advance until a tile is picked.
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
   })
 
@@ -112,5 +116,50 @@ describe('ConnectorSetup (Live Sync wizard)', () => {
     expect(ignoreGateway).toBeChecked()
     expect(screen.getByText('Ignored')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Continue to preview' })).toBeEnabled()
+  })
+})
+
+describe('ConnectorSetup (CSV / SFTP branch)', () => {
+  it('walks Source -> Upload -> Template type -> AI mapping -> Preview -> Template created', async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await screen.findByRole('heading', { name: 'Connect a system' })
+
+    // 1. Source: pick the CSV / SFTP tile (CSV branch).
+    await user.click(screen.getByRole('radio', { name: 'CSV / SFTP' }))
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    // 2. Upload: name + a sample file (stubbed analysis is instant).
+    await user.type(screen.getByLabelText('Source name'), 'Weekly export')
+    const file = new File(['item_code,qty\nX,1'], 'sales.csv', { type: 'text/csv' })
+    await user.upload(screen.getByLabelText('CSV file'), file)
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    // 3. Template type (WIRED, fixture-backed): the three types render; pick Sales.
+    expect(await screen.findByRole('radio', { name: 'Sales' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Inventory change' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Catalogue snapshot' })).toBeInTheDocument()
+    // Cannot advance until a type is chosen.
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
+    await user.click(screen.getByRole('radio', { name: 'Sales' }))
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    // 4. AI mapping: the CSV columns render; the unmapped 'cashier_note' blocks Continue until
+    // ignored. Canonical targets come from the type-aware (sales) catalog.
+    expect(await screen.findByText('item_code')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Continue to preview' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: 'Ignore cashier_note' }))
+    expect(screen.getByRole('button', { name: 'Continue to preview' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    // 5. Preview: the template type is shown READ-ONLY (chosen earlier, no re-pick).
+    expect(await screen.findByText('Chosen earlier; not editable here.')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Template type' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create template' }))
+
+    // 6. Template created (stubbed, D88 "Created and live").
+    expect(await screen.findByRole('status')).toHaveTextContent('Created and live')
+    expect(screen.getByText('Active v1')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Done' })).toBeInTheDocument()
   })
 })

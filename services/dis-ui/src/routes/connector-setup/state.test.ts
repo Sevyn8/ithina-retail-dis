@@ -4,6 +4,7 @@ import {
   activeMappingFields,
   canAdvance,
   connectorWizardReducer,
+  currentStepKey,
   initialConnectorWizardState,
   isIgnored,
   mappingTargetFor,
@@ -178,5 +179,70 @@ describe('connectorWizardReducer - mapping + ignore', () => {
     const on = connectorWizardReducer(base, { type: 'toggleIgnore', sourceField: 'gateway' })
     const off = connectorWizardReducer(on, { type: 'toggleIgnore', sourceField: 'gateway' })
     expect(isIgnored(off, 'gateway')).toBe(false)
+  })
+})
+
+describe('connectorWizardReducer - CSV branch (Chunk 2)', () => {
+  const csv = connectorWizardReducer(initialConnectorWizardState, { type: 'selectCsv' })
+
+  it('selectCsv sets the csv branch (no connector) and unblocks the Source step', () => {
+    expect(csv.branch).toBe('csv')
+    expect(csv.connector).toBeNull()
+    expect(canAdvance(csv)).toBe(true)
+  })
+
+  it('runs the CSV flow keys in order (source -> upload -> templateType -> mapping -> preview -> created)', () => {
+    expect(currentStepKey(csv)).toBe('source')
+    expect(currentStepKey({ ...csv, stepIndex: 1 })).toBe('upload')
+    expect(currentStepKey({ ...csv, stepIndex: 2 })).toBe('templateType')
+    expect(currentStepKey({ ...csv, stepIndex: 3 })).toBe('mapping')
+    expect(currentStepKey({ ...csv, stepIndex: 4 })).toBe('preview')
+    expect(currentStepKey({ ...csv, stepIndex: 5 })).toBe('created')
+  })
+
+  it('Upload step requires a read sample AND a source name', () => {
+    let s: ConnectorWizardState = { ...csv, stepIndex: 1 }
+    expect(canAdvance(s)).toBe(false)
+    s = connectorWizardReducer(s, { type: 'setCsvFile', fileName: 'sales.csv' })
+    expect(canAdvance(s)).toBe(false) // file recorded, analysis not ready, no name
+    s = connectorWizardReducer(s, { type: 'setCsvAnalysisReady' })
+    expect(canAdvance(s)).toBe(false) // analysis ready, still no name
+    s = connectorWizardReducer(s, { type: 'setSourceName', value: 'Export' })
+    expect(canAdvance(s)).toBe(true)
+  })
+
+  it('setCsvFile resets the analysis-ready flag (a new file must be re-read)', () => {
+    const ready = connectorWizardReducer(csv, { type: 'setCsvAnalysisReady' })
+    expect(ready.csvAnalysisReady).toBe(true)
+    const replaced = connectorWizardReducer(ready, { type: 'setCsvFile', fileName: 'other.csv' })
+    expect(replaced.csvAnalysisReady).toBe(false)
+  })
+
+  it('Template type step requires a chosen type; Created step is terminal', () => {
+    let s: ConnectorWizardState = { ...csv, stepIndex: 2 }
+    expect(canAdvance(s)).toBe(false)
+    s = connectorWizardReducer(s, { type: 'setTemplateType', value: 'sales' })
+    expect(canAdvance(s)).toBe(true)
+    expect(canAdvance({ ...csv, stepIndex: 5 })).toBe(false)
+  })
+
+  it('clamps next to the CSV flow length (6 steps)', () => {
+    let s = csv
+    for (let i = 0; i < 20; i += 1) {
+      s = connectorWizardReducer(s, { type: 'next' })
+    }
+    expect(s.stepIndex).toBe(5)
+  })
+
+  it('switching from POS to CSV resets per-branch state (templateType cleared)', () => {
+    const s = reduce(
+      initialConnectorWizardState,
+      { type: 'selectConnector', connector: 'shopify' },
+      { type: 'setSourceName', value: 'Shop' },
+      { type: 'setTemplateType', value: 'sales' },
+      { type: 'selectCsv' },
+    )
+    expect(s.branch).toBe('csv')
+    expect(s.templateType).toBe('')
   })
 })

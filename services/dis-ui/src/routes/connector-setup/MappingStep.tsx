@@ -12,7 +12,7 @@ import {
   requiredRuleKind,
 } from '../../components/locale-rules'
 import type { LocaleDeclaration, RuleKind } from '../../components/locale-rules'
-import type { FieldSection, TemplateMappingField } from '../../lib/dis-ui-server/mapping-fields'
+import type { FieldDatatype } from '../../lib/dis-ui-server/mapping-fields'
 import type {
   ConnectorMappingField,
   ConnectorMappingResponse,
@@ -20,24 +20,50 @@ import type {
 import { isIgnored, mappingTargetFor } from './state'
 import type { ConnectorWizardAction, ConnectorWizardState } from './state'
 
-// Step 6 (AI mapping): per-field rows - source field -> canonical select (pre-selected from
-// the suggestion), a confidence chip (High/Medium/Low) + a "why" reasoning line, a detected
-// FORMAT line, and a per-row IGNORE checkbox.
+// Step (AI mapping), shared by both branches: per-field rows - source field -> canonical select
+// (pre-selected from the suggestion), a confidence chip (High/Medium/Low) + a "why" reasoning
+// line, a detected FORMAT line, and a per-row IGNORE checkbox (= assign to the catalog's
+// `__ignore__` field, which is filtered out of the dropdown below).
 //
-// DELIBERATE DUPLICATION: the canonical-select grouping and the format-line rendering mirror
-// MappingReview.tsx rather than sharing a component. MappingReview is a route tightly coupled
-// to onboarding sample state (useSample / patchSampleMapping / dryRun); extracting a shared
-// component would mean editing the existing Add Source surface, which must stay untouched.
-// We DO reuse the genuinely shared, side-effect-free pieces: the mapping-fields catalog, the
-// locale-rules format mechanism, the suggestion-shaped types, and the UI primitives.
+// CHUNK 2: the canonical-target grouping is now SECTION-AGNOSTIC (driven by whatever sections the
+// catalog carries) so it serves both the POS fixture catalog (sale_event/change_event) and the
+// CSV type-aware catalog (identity/product/pricing/... per template_type). The `catalog` prop is
+// a NARROW structural type so both the legacy `TemplateMappingField[]` (POS) and the new
+// `CatalogField[]` (CSV) are assignable without coupling to either concrete shape.
 //
-// The confidence + reasoning come from the STUBBED suggestion (TODO-wire-to-Vertex in
-// connectors-api). The detected FORMAT reuses the SAME locale/format mechanism (locale-rules);
-// it is not a new detected-format API.
+// DELIBERATE DUPLICATION (unchanged from Chunk 1): the row + format-line rendering mirror
+// MappingReview.tsx rather than sharing a component, to keep the old Add Source surface
+// untouched. Confidence/reasoning/format are STUBBED (TODO-wire-to-Vertex in connectors-api).
 
-const SECTION_LABEL: Record<FieldSection, string> = {
+// The minimal field shape the mapping step needs from a catalog. Both the legacy event catalog
+// and the type-aware CatalogField satisfy this structurally.
+export type MappingTargetField = {
+  key: string
+  display_name: string
+  section: string
+  mandatory: boolean
+  datatype: FieldDatatype | null
+}
+
+// Known section labels; unknown sections humanize their key. `system` is never shown (it holds
+// the `__ignore__` sentinel, represented by the Ignore checkbox, not a selectable target).
+const SECTION_LABEL: Record<string, string> = {
   sale_event: 'Sale event',
   change_event: 'Change event',
+  identity: 'Identity',
+  product: 'Product',
+  pricing: 'Pricing',
+  inventory: 'Inventory',
+  expiry: 'Expiry',
+  regulatory_status: 'Regulatory status',
+}
+
+function humanizeSection(section: string): string {
+  return SECTION_LABEL[section] ?? section.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+}
+
+function isSelectableTarget(field: MappingTargetField): boolean {
+  return field.section !== 'system' && field.key !== '__ignore__'
 }
 
 // Confidence -> a High/Medium/Low chip in a semantic tone (presentation only).
@@ -81,39 +107,43 @@ export function MappingStep({
   state: ConnectorWizardState
   dispatch: Dispatch<ConnectorWizardAction>
   mapping: ConnectorMappingResponse | null
-  catalog: TemplateMappingField[]
+  catalog: MappingTargetField[]
   loading: boolean
 }) {
   if (loading || mapping === null) {
     return <LoadingState label="Suggesting field mappings..." />
   }
 
-  // Catalog datatype lookup by key (first section wins; datatype is consistent per key).
-  const catalogByKey = new Map<string, TemplateMappingField>()
+  // Catalog datatype lookup by key (first occurrence wins; datatype is consistent per key).
+  const catalogByKey = new Map<string, MappingTargetField>()
   for (const field of catalog) {
     if (!catalogByKey.has(field.key)) {
       catalogByKey.set(field.key, field)
     }
   }
 
-  // Section-grouped canonical options (duplicated from MappingReview's renderCanonicalGroups).
+  // Section-grouped canonical options, derived from whatever sections the catalog carries (in
+  // first-seen order), excluding the `system`/`__ignore__` sentinel.
   function renderCanonicalGroups() {
-    return (['sale_event', 'change_event'] as FieldSection[]).map((section) => {
-      const inSection = catalog.filter((field) => field.section === section)
-      if (inSection.length === 0) {
-        return null
+    const sections: string[] = []
+    for (const field of catalog) {
+      if (isSelectableTarget(field) && !sections.includes(field.section)) {
+        sections.push(field.section)
       }
-      return (
-        <optgroup key={section} label={SECTION_LABEL[section]}>
-          {inSection.map((field) => (
+    }
+    return sections.map((section) => (
+      <optgroup key={section} label={humanizeSection(section)}>
+        {catalog
+          .filter((field) => isSelectableTarget(field) && field.section === section)
+          .map((field) => (
             <option key={`${section}-${field.key}`} value={field.key}>
               {field.display_name}
-              {field.mandatory ? ' *' : ''} ({field.datatype})
+              {field.mandatory ? ' *' : ''}
+              {field.datatype !== null ? ` (${field.datatype})` : ''}
             </option>
           ))}
-        </optgroup>
-      )
-    })
+      </optgroup>
+    ))
   }
 
   function row(field: ConnectorMappingField) {
@@ -122,7 +152,8 @@ export function MappingStep({
     const band = confidenceBand(field.confidence)
     // The locale rule the MAPPED field's datatype implies (recomputes with the target).
     const datatype = catalogByKey.get(target)?.datatype
-    const kind: RuleKind = datatype === undefined ? null : requiredRuleKind(datatype)
+    const kind: RuleKind =
+      datatype === undefined || datatype === null ? null : requiredRuleKind(datatype)
     return (
       <div
         key={field.sourceField}
@@ -190,7 +221,7 @@ export function MappingStep({
           </>
         ) : (
           <div className="text-body text-muted-foreground">
-            Excluded from the canonical template.
+            Excluded from the canonical template (assigned to __ignore__).
           </div>
         )}
       </div>

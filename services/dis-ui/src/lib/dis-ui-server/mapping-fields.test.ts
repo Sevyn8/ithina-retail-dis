@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearToken, writeToken } from '../../auth/storage'
 import {
   CATALOG_FIXTURE,
+  IGNORE_FIELD,
   canonicalTargetKeys,
   getTemplateMappingFields,
+  getTemplateMappingFieldsForType,
 } from './mapping-fields'
 import type { FieldDatatype, FieldSection } from './mapping-fields'
 
@@ -47,12 +49,22 @@ describe('template-mapping-fields catalog (fixture shaped to the real contract)'
     const sale = CATALOG_FIXTURE.filter((f) => f.section === 'sale_event').map((f) => f.key)
     const change = CATALOG_FIXTURE.filter((f) => f.section === 'change_event').map((f) => f.key)
     // real sale_event keys
-    expect(sale).toEqual(expect.arrayContaining(['sku_id', 'quantity', 'source_sale_timestamp', 'currency']))
+    expect(sale).toEqual(
+      expect.arrayContaining(['sku_id', 'quantity', 'source_sale_timestamp', 'currency']),
+    )
     // real change_event keys
-    expect(change).toEqual(expect.arrayContaining(['event_category', 'attribute_name', 'source_event_timestamp']))
+    expect(change).toEqual(
+      expect.arrayContaining(['event_category', 'attribute_name', 'source_event_timestamp']),
+    )
     // the catalog is event-only: legacy hot/identity targets are absent
     const allKeys = CATALOG_FIXTURE.map((f) => f.key)
-    for (const absent of ['store_id', 'current_retail_price', 'product_name', 'product_description', 'tax_treatment']) {
+    for (const absent of [
+      'store_id',
+      'current_retail_price',
+      'product_name',
+      'product_description',
+      'tax_treatment',
+    ]) {
       expect(allKeys).not.toContain(absent)
     }
   })
@@ -62,7 +74,9 @@ describe('template-mapping-fields catalog (fixture shaped to the real contract)'
     expect(CATALOG_FIXTURE.some((f) => f.section === 'change_event')).toBe(true)
     expect(CATALOG_FIXTURE.some((f) => f.mandatory)).toBe(true)
     // a known choice field carries its allowed values
-    const subtype = CATALOG_FIXTURE.find((f) => f.section === 'sale_event' && f.key === 'event_subtype')
+    const subtype = CATALOG_FIXTURE.find(
+      (f) => f.section === 'sale_event' && f.key === 'event_subtype',
+    )
     expect(subtype?.allowed_values).toEqual(['SALE', 'RETURN', 'VOID'])
   })
 
@@ -93,12 +107,73 @@ describe('template-mapping-fields real mode (T10)', () => {
   })
 
   it('GETs /api/v1/template-mapping-fields with a Bearer and parses the catalog', async () => {
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => ({ ok: true, status: 200, json: async () => CATALOG_FIXTURE }) as unknown as Response)
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+      async () =>
+        ({ ok: true, status: 200, json: async () => CATALOG_FIXTURE }) as unknown as Response,
+    )
     vi.stubGlobal('fetch', fetchMock)
     const fields = await getTemplateMappingFields()
     expect(fields).toEqual(CATALOG_FIXTURE)
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('http://test.local/api/v1/template-mapping-fields')
+    expect((init as RequestInit).headers).toMatchObject({ authorization: 'Bearer tok-123' })
+  })
+})
+
+// Chunk 2: the WIRED type-aware catalog (?template_type=). Additive; the legacy no-param getter
+// above is unchanged. Fixture-backed in default mode; the param is appended in real mode.
+describe('type-aware template-mapping-fields (Chunk 2, fixture mode)', () => {
+  it('returns the sales field set with the 10-key shape + the __ignore__ sentinel', async () => {
+    const fields = await getTemplateMappingFieldsForType('sales')
+    const keys = fields.map((f) => f.key)
+    expect(keys).toEqual(expect.arrayContaining(['sku_id', 'quantity', 'source_sale_timestamp']))
+    // the __ignore__ sentinel: section 'system', null datatype/sink (the Ignore representation)
+    const ignore = fields.find((f) => f.key === '__ignore__')
+    expect(ignore).toBeDefined()
+    expect(ignore?.section).toBe('system')
+    expect(ignore?.datatype).toBeNull()
+    expect(ignore?.sink).toBeNull()
+    // uniform 10-key shape: every entry carries sink + constraints keys (possibly null)
+    for (const f of fields) {
+      expect('sink' in f).toBe(true)
+      expect('constraints' in f).toBe(true)
+    }
+  })
+
+  it('returns the snapshot field set (current-position), distinct from sales', async () => {
+    const snapshot = await getTemplateMappingFieldsForType('snapshot')
+    const keys = snapshot.map((f) => f.key)
+    expect(keys).toEqual(expect.arrayContaining(['current_retail_price', 'stock_on_hand']))
+    expect(keys).toContain('__ignore__')
+  })
+
+  it('an unknown template type degrades to just the __ignore__ sentinel (no crash)', async () => {
+    const fields = await getTemplateMappingFieldsForType('not_a_type')
+    expect(fields).toEqual([IGNORE_FIELD])
+  })
+})
+
+describe('type-aware template-mapping-fields real mode (Chunk 2)', () => {
+  beforeEach(() => {
+    vi.stubEnv('VITE_DIS_UI_SERVER_MODE', 'real')
+    vi.stubEnv('VITE_DIS_UI_SERVER_BASE_URL', 'http://test.local')
+    writeToken('tok-123')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    clearToken()
+  })
+
+  it('GETs /api/v1/template-mapping-fields?template_type=sales with a Bearer', async () => {
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+      async () =>
+        ({ ok: true, status: 200, json: async () => [IGNORE_FIELD] }) as unknown as Response,
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await getTemplateMappingFieldsForType('sales')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://test.local/api/v1/template-mapping-fields?template_type=sales')
     expect((init as RequestInit).headers).toMatchObject({ authorization: 'Bearer tok-123' })
   })
 })

@@ -316,3 +316,142 @@ export function createConnectorSource(
     recordsSynced: 0,
   })
 }
+
+// =====================================================================================
+// CSV / SFTP branch stubs (Chunk 2). These three remain STUBBED because their contracts are
+// NOT confirmed in Sanjeev's probe doc. The canonical TARGETS for the CSV mapping step are
+// fetched FOR REAL via template-mapping-fields?template_type=X (mapping-fields.ts); only the
+// upload/analysis, the create, and the preview are stubbed. Each marked TODO(wire).
+// =====================================================================================
+
+// TODO(wire): NO confirmed CSV sample-upload / analysis endpoint yet. The real flow would POST
+// the file (or reference an SFTP drop), the server would profile the columns and (via Vertex)
+// return per-column suggestions: { source, fields: [{ source_column, suggested_target,
+// alternatives, confidence, reasoning, detected_format }] }. This stub returns a fixed CSV
+// column profile whose suggested targets are real `sales` catalog keys (so the wired type-aware
+// catalog has matching options); confidence/reasoning/format are placeholder-shaped-to-Vertex.
+export function analyzeCsvSample(fileName: string): Promise<ConnectorMappingResponse> {
+  void fileName
+  return Promise.resolve({
+    source: 'vertex',
+    fields: [
+      {
+        sourceField: 'item_code',
+        suggestedTarget: 'sku_id',
+        alternatives: ['sku_variant'],
+        confidence: 0.96,
+        reasoning: 'Column name and values match the canonical SKU identifier.',
+        detectedFormat: null,
+        sampleValues: ['TSHIRT-RED-M', 'MUG-001'],
+      },
+      {
+        sourceField: 'qty',
+        suggestedTarget: 'quantity',
+        alternatives: [],
+        confidence: 0.93,
+        reasoning: 'Abbreviation of quantity; integer-like values.',
+        detectedFormat: { decimal_separator: '.', thousands_separator: '' },
+        sampleValues: ['2', '1'],
+      },
+      {
+        sourceField: 'unit_price',
+        suggestedTarget: 'unit_sale_price',
+        alternatives: ['unit_retail_price'],
+        confidence: 0.71,
+        reasoning: 'Likely the price charged per unit; confirm against retail price.',
+        detectedFormat: { decimal_separator: '.', thousands_separator: ',' },
+        sampleValues: ['1,299.50', '19.00'],
+      },
+      {
+        sourceField: 'sold_at',
+        suggestedTarget: 'source_sale_timestamp',
+        alternatives: [],
+        confidence: 0.89,
+        reasoning: 'Timestamp column aligns with the sale time.',
+        detectedFormat: { format: '%d/%m/%Y', timezone: 'Europe/London' },
+        sampleValues: ['31/12/2025', '01/01/2026'],
+      },
+      {
+        sourceField: 'txn_id',
+        suggestedTarget: 'transaction_id',
+        alternatives: [],
+        confidence: 0.85,
+        reasoning: 'Receipt / transaction reference.',
+        detectedFormat: null,
+        sampleValues: ['R-1001', 'R-1002'],
+      },
+      {
+        sourceField: 'kind',
+        suggestedTarget: 'event_subtype',
+        alternatives: [],
+        confidence: 0.64,
+        reasoning: 'Values resemble the sale/return/void enumeration.',
+        detectedFormat: null,
+        sampleValues: ['SALE', 'RETURN'],
+      },
+      {
+        sourceField: 'cashier_note',
+        suggestedTarget: null,
+        alternatives: [],
+        confidence: 0.18,
+        reasoning: 'No confident canonical target; review or ignore this column.',
+        detectedFormat: null,
+        sampleValues: ['gift wrap', ''],
+      },
+    ],
+  })
+}
+
+export type CreatedTemplate = {
+  templateId: string
+  templateName: string
+  templateType: string
+  activeVersion: number
+}
+
+export type CreateCsvTemplateInput = {
+  sourceName: string
+  templateType: string
+  // sourceField -> canonical target key (ignored columns carry the `__ignore__` sentinel).
+  fieldTargets: Record<string, string>
+}
+
+// TODO(wire): the create/save endpoint is NOT confirmed. The real shape (POST /mapping-templates
+// with template_type IN THE BODY, and whether create is create-as-ACTIVE per D88 or a separate
+// activate step) is still open in Sanjeev's doc. When wired this assembles the mapping_rules
+// document (rename/normalize/cast/derive) from fieldTargets + the declared formats and POSTs it;
+// ignored columns are represented by assigning them to the `__ignore__` catalog field. Stubbed:
+// returns a created-and-live template summary consistent with the D88 create-as-ACTIVE copy.
+export function createCsvTemplate(input: CreateCsvTemplateInput): Promise<CreatedTemplate> {
+  return Promise.resolve({
+    templateId: 'tmpl_stub_csv',
+    templateName: input.sourceName,
+    templateType: input.templateType,
+    activeVersion: 1,
+  })
+}
+
+// TODO(wire): the client-side preview shape is not re-confirmed for this surface. The real flow
+// would coerce the parsed sample rows through the assembled mapping (the server pipeline is the
+// authoritative coercion). This stub returns fixed canonical-keyed rows; the surface drops
+// ignored targets before rendering.
+export function fetchCsvPreviewRows(): Promise<Record<string, string>[]> {
+  return Promise.resolve([
+    {
+      sku_id: 'TSHIRT-RED-M',
+      quantity: '2',
+      unit_sale_price: '1299.50',
+      source_sale_timestamp: '2025-12-31T00:00:00+00:00',
+      transaction_id: 'R-1001',
+      event_subtype: 'SALE',
+    },
+    {
+      sku_id: 'MUG-001',
+      quantity: '1',
+      unit_sale_price: '19.00',
+      source_sale_timestamp: '2026-01-01T00:00:00+00:00',
+      transaction_id: 'R-1002',
+      event_subtype: 'RETURN',
+    },
+  ])
+}

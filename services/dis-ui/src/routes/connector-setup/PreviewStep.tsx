@@ -35,6 +35,7 @@ export function PreviewStep({
   templateType,
   rows,
   loading,
+  readOnlyTemplateType = false,
 }: {
   state: ConnectorWizardState
   dispatch: Dispatch<ConnectorWizardAction>
@@ -42,6 +43,9 @@ export function PreviewStep({
   templateType: string
   rows: Record<string, string>[]
   loading: boolean
+  // CSV branch: the template type was chosen on its own step, so show it read-only here (no
+  // re-pick). POS branch leaves it as the editable select.
+  readOnlyTemplateType?: boolean
 }) {
   if (loading) {
     return <LoadingState label="Building preview..." />
@@ -60,20 +64,37 @@ export function PreviewStep({
     <div className="flex flex-col gap-5">
       <div className="flex max-w-xs flex-col gap-1.5">
         <Label htmlFor="connector-template-type">Template type</Label>
-        <Select
-          id="connector-template-type"
-          value={templateType}
-          onChange={(e) => dispatch({ type: 'setTemplateType', value: e.target.value })}
-        >
-          {TEMPLATE_TYPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
-        <span className="text-caption text-muted-foreground">
-          Backend-provided (stubbed for now).
-        </span>
+        {readOnlyTemplateType ? (
+          <>
+            <span
+              id="connector-template-type"
+              className="text-body font-medium text-foreground"
+              data-slot="template-type-readonly"
+            >
+              {templateType}
+            </span>
+            <span className="text-caption text-muted-foreground">
+              Chosen earlier; not editable here.
+            </span>
+          </>
+        ) : (
+          <>
+            <Select
+              id="connector-template-type"
+              value={templateType}
+              onChange={(e) => dispatch({ type: 'setTemplateType', value: e.target.value })}
+            >
+              {TEMPLATE_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+            <span className="text-caption text-muted-foreground">
+              Backend-provided (stubbed for now).
+            </span>
+          </>
+        )}
       </div>
 
       {ignoredFields.length > 0 ? (
