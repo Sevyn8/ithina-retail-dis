@@ -15,7 +15,6 @@ import { NotFound } from './NotFound'
 import { PosConnect } from './PosConnect'
 import { Notifications } from './Notifications'
 import { OpsFleet } from './OpsFleet'
-import { OpsQuery } from './OpsQuery'
 import { QuarantineConsole } from './QuarantineConsole'
 import { RecurringBatchUpload } from './RecurringBatchUpload'
 import { SampleUpload } from './SampleUpload'
@@ -82,7 +81,6 @@ export function AppRoutes() {
                 PermissionDenied rather than being redirected. */}
             <Route path="quarantine" element={<Navigate to="/quarantine" replace />} />
             <Route path="audit" element={<Navigate to="/audit" replace />} />
-            <Route path="query" element={<OpsQuery />} />
             <Route path="*" element={<NotFound />} />
           </Route>
           <Route path="*" element={<NotFound />} />

@@ -91,7 +91,7 @@ describe('Ingest data (real csv-uploads wiring)', () => {
   // honest copy + store picker + read-only context
   it('shows a store picker, the active mapping as context, and honest copy (no version-N claim)', async () => {
     render(`${TEMPLATES}/${SALES}/upload`)
-    await screen.findByRole('heading', { name: 'Upload CSV' })
+    await screen.findByRole('heading', { name: 'Upload Data' })
     // store picker from stores-onboarded (only the ACTIVE coded store is offered)
     const store = screen.getByLabelText('Store')
     expect(
@@ -115,7 +115,7 @@ describe('Ingest data (real csv-uploads wiring)', () => {
     mockUpload.mockResolvedValueOnce(RESULT)
     const user = userEvent.setup()
     render(`${TEMPLATES}/${SALES}/upload`)
-    await screen.findByRole('heading', { name: 'Upload CSV' })
+    await screen.findByRole('heading', { name: 'Upload Data' })
 
     await user.selectOptions(screen.getByLabelText('Store'), 'TX-102')
     await user.upload(
@@ -144,7 +144,7 @@ describe('Ingest data (real csv-uploads wiring)', () => {
   it('shows the file card with the filename after a file is selected', async () => {
     const user = userEvent.setup()
     render(`${TEMPLATES}/${SALES}/upload`)
-    await screen.findByRole('heading', { name: 'Upload CSV' })
+    await screen.findByRole('heading', { name: 'Upload Data' })
     expect(screen.getByText('Drag and drop or browse')).toBeInTheDocument()
     await user.upload(
       screen.getByLabelText('CSV file'),
@@ -165,7 +165,7 @@ describe('Ingest data (real csv-uploads wiring)', () => {
     )
     const user = userEvent.setup()
     render(`${TEMPLATES}/${SALES}/upload`)
-    await screen.findByRole('heading', { name: 'Upload CSV' })
+    await screen.findByRole('heading', { name: 'Upload Data' })
     await user.selectOptions(screen.getByLabelText('Store'), 'TX-102')
     await user.upload(
       screen.getByLabelText('CSV file'),
@@ -187,7 +187,7 @@ describe('Ingest data (real csv-uploads wiring)', () => {
     )
     const user = userEvent.setup()
     render(`${TEMPLATES}/${SALES}/upload`)
-    await screen.findByRole('heading', { name: 'Upload CSV' })
+    await screen.findByRole('heading', { name: 'Upload Data' })
     await user.selectOptions(screen.getByLabelText('Store'), 'TX-102')
     await user.upload(
       screen.getByLabelText('CSV file'),
@@ -199,7 +199,7 @@ describe('Ingest data (real csv-uploads wiring)', () => {
 
   it('guards direct navigation when the template has no active version', async () => {
     render(`${TEMPLATES}/${PRICING}/upload`)
-    await screen.findByRole('heading', { name: 'Upload CSV' })
+    await screen.findByRole('heading', { name: 'Upload Data' })
     expect(screen.getByText(/No active version yet/)).toBeInTheDocument()
     expect(screen.queryByLabelText('CSV file')).not.toBeInTheDocument()
   })
@@ -220,7 +220,7 @@ describe('Ingest data (real csv-uploads wiring)', () => {
   it('mounts under the dark theme class', async () => {
     const { container } = render(`${TEMPLATES}/${SALES}/upload`, true)
     expect(
-      await within(container).findByRole('heading', { name: 'Upload CSV' }),
+      await within(container).findByRole('heading', { name: 'Upload Data' }),
     ).toBeInTheDocument()
   })
 })

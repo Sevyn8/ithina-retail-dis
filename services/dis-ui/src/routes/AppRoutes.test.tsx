@@ -43,7 +43,9 @@ describe('AppRoutes', () => {
 
   it('resolves /sources/:sourceId/shadow', async () => {
     renderAt('/sources/manual_csv_upload/shadow')
-    expect(await screen.findByRole('heading', { name: /Shadow review: manual_csv_upload/ })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: /Shadow review: manual_csv_upload/ }),
+    ).toBeInTheDocument()
   })
 
   // The screens themselves are covered by their own screen tests; no placeholder
@@ -80,11 +82,6 @@ describe('AppRoutes', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
   })
 
-  it('denies a non-ops persona on /ops/query', async () => {
-    renderAt('/ops/query')
-    expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
-  })
-
   // T9: the retired fleet routes redirect to the canonical scope-aware screens for ops (no
   // 404). The redirects live inside OpsBoundary, so a non-ops persona is still denied (the
   // deny tests above still pass for /ops/quarantine and /ops/audit).
@@ -95,6 +92,8 @@ describe('AppRoutes', () => {
 
   it('redirects an ops persona from /ops/audit to the scope-aware Audit', async () => {
     renderAtAs(opsSnapshot, '/ops/audit')
-    expect(await screen.findByRole('heading', { name: 'Audit and Trace Lookup' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Audit and Trace Lookup' }),
+    ).toBeInTheDocument()
   })
 })

@@ -65,6 +65,12 @@ export type MappingTemplate = {
   template_id: string // UUID, lowercase string
   source_id: string
   template_name: string
+  // The packet axis (Slice 14d): 'sales' | 'inventory_change' | 'snapshot'. ADDITIVE + OPTIONAL
+  // + READ-ONLY: surfaced from the real GET when present so the registry can show a friendly
+  // template-type label (resolved via GET /template-types display_name). The create/patch
+  // bodies do NOT carry it here - the create-path template_type wiring is a separate, pending
+  // change (Sanjeev's POST contract). Legacy/absent -> undefined (the UI degrades, no badge).
+  template_type?: string
   ingestion_mode: IngestionMode // T8, provisional (see IngestionMode)
   latest_version: number
   active_version: number | null
@@ -119,6 +125,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: SALES_TEMPLATE_ID,
       source_id: 'manual_csv_upload',
       template_name: 'Sales',
+      template_type: 'sales',
       ingestion_mode: 'file',
       latest_version: 3,
       active_version: 2,
@@ -232,6 +239,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: INVENTORY_TEMPLATE_ID,
       source_id: 'manual_csv_upload',
       template_name: 'Inventory',
+      template_type: 'inventory_change',
       ingestion_mode: 'file',
       latest_version: 1,
       active_version: 1,
@@ -279,6 +287,8 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: PRICING_TEMPLATE_ID,
       source_id: 'manual_csv_upload',
       template_name: 'Pricing',
+      // template_type intentionally OMITTED (legacy/missing): exercises the registry's graceful
+      // degrade - no template-type badge, no crash.
       ingestion_mode: 'file',
       latest_version: 1,
       active_version: null,
@@ -313,6 +323,7 @@ const MAPPING_TEMPLATE_FIXTURES: Record<string, MappingTemplateDetail[]> = {
       template_id: ORDERS_TEMPLATE_ID,
       source_id: 'square_pos',
       template_name: 'Orders',
+      template_type: 'sales',
       ingestion_mode: 'api',
       latest_version: 1,
       active_version: 1,
@@ -428,6 +439,7 @@ function toSummary(detail: MappingTemplateDetail): MappingTemplate {
     template_id: detail.template_id,
     source_id: detail.source_id,
     template_name: detail.template_name,
+    template_type: detail.template_type,
     ingestion_mode: detail.ingestion_mode,
     latest_version: detail.latest_version,
     active_version: detail.active_version,

@@ -115,7 +115,7 @@ export function RecurringBatchUpload() {
     return (
       <section className="flex flex-col gap-4">
         <header>
-          <h1 className="text-display">Upload CSV</h1>
+          <h1 className="text-display">Upload Data</h1>
           <p className="text-caption text-muted-foreground">{template.template_name}</p>
         </header>
         <EmptyState
@@ -152,7 +152,7 @@ export function RecurringBatchUpload() {
   return (
     <section className="flex max-w-2xl flex-col gap-4">
       <header>
-        <h1 className="text-display">Upload CSV</h1>
+        <h1 className="text-display">Upload Data</h1>
         <p className="text-caption text-muted-foreground">
           This batch will be uploaded against{' '}
           <span className="font-medium text-foreground">{template.template_name}</span>.

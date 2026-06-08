@@ -76,46 +76,47 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Audit' })).toBeInTheDocument()
   })
 
-  it('OPERATIONS holds only Ops Fleet + Query for ops (no fleet Quarantine/Audit) (T9)', () => {
+  it('OPERATIONS holds only Ops Fleet for ops (Query removed; no fleet Quarantine/Audit)', () => {
     const { container } = renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
     const order = Array.from(container.querySelectorAll('h2, a')).map((el) => el.textContent)
     const opsIdx = order.indexOf('OPERATIONS')
     expect(opsIdx).toBeGreaterThanOrEqual(0)
-    // everything after the OPERATIONS header is exactly Ops Fleet then Query
-    expect(order.slice(opsIdx + 1)).toEqual(['Ops Fleet', 'Query'])
+    // everything after the OPERATIONS header is exactly Ops Fleet (Query was removed)
+    expect(order.slice(opsIdx + 1)).toEqual(['Ops Fleet'])
   })
 
-  it('shows the Query ops item for ops only (default NAV_ITEMS)', () => {
+  it('no longer renders the removed Query ops item, for ops or tenant', () => {
     const tenantView = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
     expect(screen.queryByRole('link', { name: 'Query' })).not.toBeInTheDocument()
     tenantView.unmount()
     renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
-    expect(screen.getByRole('link', { name: 'Query' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Query' })).not.toBeInTheDocument()
   })
 
-  it('renders the renamed tenant nav labels (Upload CSV, New CSV Template) and not the old ones', () => {
+  it('renders the tenant DATA nav label "Upload Data" and not the retired labels', () => {
     renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
-    expect(screen.getByRole('link', { name: 'Upload CSV' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'New CSV Template' })).toBeInTheDocument()
-    // The prior labels are retired.
+    expect(screen.getByRole('link', { name: 'Upload Data' })).toBeInTheDocument()
+    // The prior "Upload CSV" label is renamed, and "New CSV Template" is removed as a nav door
+    // (the /upload create journey is reached via "Add Source").
+    expect(screen.queryByRole('link', { name: 'Upload CSV' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'New CSV Template' })).not.toBeInTheDocument()
+    // Older retired labels stay gone.
     expect(screen.queryByRole('link', { name: 'Ingest Data' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Create Template' })).not.toBeInTheDocument()
-    // The old "Sources"/"Manage Sources" top-level nav items are gone (source management is
-    // reached from the Upload CSV per-source "Manage source").
     expect(screen.queryByRole('link', { name: 'Sources' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Manage Sources' })).not.toBeInTheDocument()
   })
 
-  it('renders an "Add Source" item routing to the connector picker, below "New CSV Template"', () => {
+  it('renders an "Add Source" item routing to the connector picker, below "Upload Data"', () => {
     renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
     const addSource = screen.getByRole('link', { name: 'Add Source' })
     expect(addSource).toHaveAttribute('href', '/connect')
-    // ordered immediately below New CSV Template
+    // ordered immediately below Upload Data (New CSV Template was removed from between them)
     const links = screen.getAllByRole('link')
-    const templateIdx = links.findIndex((l) => l.textContent === 'New CSV Template')
+    const uploadIdx = links.findIndex((l) => l.textContent === 'Upload Data')
     const addIdx = links.findIndex((l) => l.textContent === 'Add Source')
-    expect(templateIdx).toBeGreaterThanOrEqual(0)
-    expect(addIdx).toBe(templateIdx + 1)
+    expect(uploadIdx).toBeGreaterThanOrEqual(0)
+    expect(addIdx).toBe(uploadIdx + 1)
   })
 
   it('renders the brand header (DIS wordmark + DATA PLATFORM subtitle + placeholder mark)', () => {
@@ -138,16 +139,15 @@ describe('Sidebar nav gating', () => {
 
   it('places each item under the right section header (DOM order)', () => {
     const { container } = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
-    // The DATA header is immediately followed by its items, then MONITORING. "Connect a System"
-    // (Chunk 1: the Live Sync connector wizard) sits right after "Add Source" in DATA.
+    // The DATA header is immediately followed by its items, then MONITORING. After the nav
+    // cleanup, DATA is Upload Data -> Add Source -> Connect a System (New CSV Template removed).
     const order = Array.from(container.querySelectorAll('h2, a')).map((el) => el.textContent)
     const dataIdx = order.indexOf('DATA')
     const monIdx = order.indexOf('MONITORING')
     expect(dataIdx).toBeGreaterThanOrEqual(0)
     expect(monIdx).toBeGreaterThan(dataIdx)
     expect(order.slice(dataIdx + 1, monIdx)).toEqual([
-      'Upload CSV',
-      'New CSV Template',
+      'Upload Data',
       'Add Source',
       'Connect a System',
     ])

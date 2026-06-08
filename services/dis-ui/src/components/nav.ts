@@ -7,8 +7,6 @@ import {
   Plug,
   Plus,
   ShieldAlert,
-  Terminal,
-  Upload,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -40,11 +38,11 @@ export type NavItem = {
 // are unchanged from T6.
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard, section: 'OVERVIEW' },
-  // DATA: the source/template lifecycle, action-first. "Upload CSV" is the flat template list
-  // (/ingest) grouped by source with a per-template upload action; "New CSV Template" is the
-  // onboarding journey (/upload); "Add Source" promotes the connector picker (/connect).
-  { label: 'Upload CSV', to: '/ingest', icon: Database, section: 'DATA' },
-  { label: 'New CSV Template', to: '/upload', icon: Upload, section: 'DATA' },
+  // DATA: the source/template lifecycle, action-first. "Upload Data" is the flat template
+  // registry (/ingest), one card per template with View + per-template upload. The onboarding
+  // journey (/upload) has no dedicated nav door anymore - it is reached via "Add Source"
+  // (/connect)'s "Upload a CSV" CTA. "Add Source" promotes the connector picker (/connect).
+  { label: 'Upload Data', to: '/ingest', icon: Database, section: 'DATA' },
   { label: 'Add Source', to: '/connect', icon: Plus, section: 'DATA' },
   // "Connect a System" (Chunk 1): the NEW Live Sync connector wizard (/connectors/new) for POS
   // (Shopify/Square/Clover). Sits beside the existing "Add Source" (unchanged); separate route.
@@ -57,7 +55,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Notifications', to: '/notifications', icon: Bell, section: 'MONITORING' },
   // OPERATIONS: ops-only surfaces with no tenant equivalent. T9 retired the separate Fleet
   // Quarantine / Fleet Audit items - the fleet views now live in the scope-aware MONITORING
-  // Quarantine / Audit (ops mode), so OPERATIONS holds only Ops Fleet + Query.
+  // Quarantine / Audit (ops mode); the DuckDB Query panel was removed, so OPERATIONS holds
+  // only Ops Fleet.
   { label: 'Ops Fleet', to: '/ops/fleet', icon: Building2, ops: true, section: 'OPERATIONS' },
-  { label: 'Query', to: '/ops/query', icon: Terminal, ops: true, section: 'OPERATIONS' },
 ]
