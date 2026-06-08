@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dis_mapping import SourceMapping
 
@@ -65,18 +65,43 @@ class MappingTemplateDetail(MappingTemplate):
     versions: list[MappingTemplateVersion]
 
 
+class MappingColumn(BaseModel):
+    """One source-to-destination column declaration (Slice 16a request shape).
+
+    Carries semantic intent plus source-format declarations, NOT engine ops. The
+    backend re-derives every catalog/sink fact from ``template_type`` + ``dest_key``
+    (investigation P1-P4), so the request never echoes the sink object. Strict
+    (``extra="forbid"``): a malformed or unknown key is a 422 surfaced early, never
+    silently dropped."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    src_key: str = Field(min_length=1)  # source column header, as it appears in the file
+    dest_key: str = Field(min_length=1)  # catalog `key` for this template_type, or "__ignore__"
+    # Format declarations: present ONLY when needed; 16a checks they are well-formed IF
+    # present, never whether one is REQUIRED for a given dest_key (that is 16c). The
+    # datetime format is a free str on purpose — token validity is semantic (16c).
+    src_datetime_format: str | None = None  # e.g. "DD-MM-YYYY"
+    src_decimal_separator: Literal[".", ","] | None = None
+    src_thousand_separator: Literal[",", "'"] | None = None
+    src_is_percentage: bool | None = None  # true only when the source is a percentage
+
+
 class MappingTemplateCreate(BaseModel):
-    """``POST /mapping-templates`` body. v1 is hand-authored: the operator supplies
-    the ``source_id`` (validated well-formed only — no source registry exists, a
-    deliberate slice limit) and the full D49 rules document."""
+    """``POST /mapping-templates`` body (Slice 16a). Semantic intent per column; the
+    handler shape-validates and returns a SYNTHETIC 201 (no persistence, no
+    ``mapping_rules`` assembly — both land in 16c). ``source_id`` is validated
+    well-formed only (no source registry exists, a deliberate slice limit)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     source_id: str = Field(pattern=r"^[a-z0-9_]{1,128}$")
     template_name: str = Field(min_length=1, max_length=200)
     # The packet axis (Slice 14d). Validated against the in-code vocabulary in the
-    # handler (a clean 400 InvalidTemplateTypeError, not a pydantic 422); the rules
-    # are then validated against this type's legal target. Lineage-fixed thereafter.
+    # handler (a clean 400 InvalidTemplateTypeError, not a pydantic 422). Lineage-fixed
+    # at creation thereafter.
     template_type: str
-    mapping_rules: dict[str, Any]
+    columns: list[MappingColumn] = Field(min_length=1)
 
 
 class MappingTemplatePatch(BaseModel):

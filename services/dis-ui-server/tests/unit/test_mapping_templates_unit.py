@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
@@ -23,17 +24,15 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 def _valid_create_body() -> dict[str, Any]:
+    """The Slice 16a create shape: semantic intent per column, no engine ops."""
     return {
         "source_id": "manual_csv_upload",
         "template_name": "sales",
         "template_type": "sales",
-        "mapping_rules": {
-            "version": 1,
-            "rename": {"item": "sku_id"},
-            "normalize": {},
-            "cast": {},
-            "derive": {},
-        },
+        "columns": [
+            {"src_key": "item", "dest_key": "sku_id"},
+            {"src_key": " qty ", "dest_key": "quantity_sold"},
+        ],
     }
 
 
@@ -79,34 +78,131 @@ def test_malformed_tenant_claim_is_403_not_500(client: TestClient, mint_token: C
     assert "t_not_a_uuid" not in response.text
 
 
-# -- 400 before any write (the gate runs ahead of the DB) ---------------------------
+# -- 16a synthetic create (shape-validate, no persistence, no mapping_rules) --------
+#
+# The client's DB is UNREACHABLE (conftest), so a 201 from the create path is itself
+# the proof that no rls_session / write was attempted (the hard 16a limit: no DB write
+# in the create path). Persistence + the real mapping_rules return in 16c.
 
 
-def test_invalid_rules_are_400_with_no_db_in_reach(
-    client: TestClient, mint_token: Callable[..., str]
-) -> None:
-    body = _valid_create_body()
-    body["mapping_rules"]["normalize"] = {
-        "sku_id": [{"op": "parse_decimal", "args": {"decimal_separator": "."}}]  # separator missing
-    }
-    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
-    assert response.status_code == 400
-    envelope = response.json()["error"]
-    assert envelope["code"] == "mapping_config"
-    assert "thousands_separator" in envelope["message"]
-    assert envelope["details"]["tenant_id"] == TENANT_A
-
-
-def test_incomplete_rules_are_400_with_no_db_in_reach(
-    client: TestClient, mint_token: Callable[..., str]
-) -> None:
-    # Shape-valid but semantically incomplete: sku_id alone leaves the sales type's
-    # other mandatory columns unprovided (type-keyed mandatory coverage, 14d).
+def test_create_returns_201_synthetic_detail(client: TestClient, mint_token: Callable[..., str]) -> None:
     response = client.post(
         "/api/v1/mapping-templates", headers=_bearer(mint_token()), json=_valid_create_body()
     )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    # Echoed request fields.
+    assert body["source_id"] == "manual_csv_upload"
+    assert body["template_name"] == "sales"
+    assert body["template_type"] == "sales"
+    # A realistic but non-persisted UUIDv7 (Q2).
+    assert UUID(body["template_id"]).version == 7
+    # Lineage summary: a single synthetic DRAFT.
+    assert body["latest_version"] == 1
+    assert body["draft_version"] == 1
+    assert body["active_version"] is None and body["staged_version"] is None
+    assert body["versions_count"] == 1
+    (version,) = body["versions"]
+    assert version["status"] == "draft"
+    assert version["version"] == 1
+    assert version["mapping_version_id"] == 0  # sentinel: nothing persisted
+    # Empty mapping_rules = the explicit "translation pending (16c)" signal.
+    assert version["mapping_rules"] == {
+        "version": 1,
+        "rename": {},
+        "normalize": {},
+        "cast": {},
+        "derive": {},
+    }
+    assert version["field_count"] == 0
+    assert version["transform_count"] == 0
+
+
+def test_create_does_not_touch_the_db(client: TestClient, mint_token: Callable[..., str]) -> None:
+    # With the DB unreachable, a 201 proves the create path opened no rls_session and
+    # attempted no write (a DB touch would raise, never return 201). The hard 16a limit.
+    response = client.post(
+        "/api/v1/mapping-templates", headers=_bearer(mint_token()), json=_valid_create_body()
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_well_formed_declarations_are_accepted(client: TestClient, mint_token: Callable[..., str]) -> None:
+    # Every format-declaration field, plus an __ignore__ column. 16a checks they are
+    # well-formed; it does NOT check membership or whether one is required (16c).
+    body = _valid_create_body()
+    body["columns"] = [
+        {"src_key": "sku", "dest_key": "sku_id"},
+        {
+            "src_key": "prezzovend",
+            "dest_key": "current_retail_price",
+            "src_decimal_separator": ".",
+            "src_thousand_separator": ",",
+            "src_is_percentage": True,
+        },
+        {"src_key": "dataprezzo", "dest_key": "expiry_date", "src_datetime_format": "DD-MM-YYYY"},
+        {"src_key": "in_volantino", "dest_key": "__ignore__"},
+    ]
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
+    assert response.status_code == 201, response.text
+
+
+# -- 16a shape rejections (4xx ahead of any DB) -------------------------------------
+
+
+def test_unknown_template_type_is_400(client: TestClient, mint_token: Callable[..., str]) -> None:
+    body = _valid_create_body()
+    body["template_type"] = "not_a_type"
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "mapping_config"
+    envelope = response.json()["error"]
+    assert envelope["code"] == "invalid_template_type"
+    assert envelope["details"]["tenant_id"] == TENANT_A
+
+
+def test_missing_column_key_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
+    headers = _bearer(mint_token())
+    no_dest = _valid_create_body()
+    no_dest["columns"] = [{"src_key": "item"}]  # dest_key missing
+    assert client.post("/api/v1/mapping-templates", headers=headers, json=no_dest).status_code == 422
+    no_src = _valid_create_body()
+    no_src["columns"] = [{"dest_key": "sku_id"}]  # src_key missing
+    assert client.post("/api/v1/mapping-templates", headers=headers, json=no_src).status_code == 422
+
+
+def test_malformed_declaration_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
+    body = _valid_create_body()
+    body["columns"] = [{"src_key": "p", "dest_key": "current_retail_price", "src_decimal_separator": ";"}]
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_validation"
+    assert ";" not in response.text  # 422 strips submitted values
+
+
+def test_unknown_column_key_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
+    # Strict columns (extra="forbid", open Q1): a stray key fails loud, not silently dropped.
+    body = _valid_create_body()
+    body["columns"] = [{"src_key": "item", "dest_key": "sku_id", "typo_field": "x"}]
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_validation"
+
+
+def test_unknown_top_level_key_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
+    # Strict body (extra="forbid"): a stray TOP-LEVEL key fails loud, not silently dropped
+    # (pins MappingTemplateCreate.model_config — the column-level guard does not cover it).
+    body = _valid_create_body()
+    body["mapping_rules"] = {"version": 1}  # the superseded 14b field must NOT be silently accepted
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_validation"
+
+
+def test_empty_columns_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
+    body = _valid_create_body()
+    body["columns"] = []
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
+    assert response.status_code == 422
 
 
 def test_malformed_source_id_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
