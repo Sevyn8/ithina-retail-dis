@@ -24,6 +24,10 @@ export type MappingSuggestionRequest = {
   columns: ColumnProfile[]
   source_id?: string | null
   template_name?: string | null
+  // Type-aware suggestions (D90): when set, the server scores against THAT type's per-type
+  // catalog (snapshot included). Omitted by the legacy /upload flow (server falls back to the
+  // sales+inventory_change union). The fixture mechanicalSuggest ignores it.
+  template_type?: string | null
 }
 
 // MappingSuggestionResponse.Suggestion. `suggested_target` is a catalog key or null;
@@ -115,7 +119,10 @@ function nameScore(normalizedCol: string, field: TemplateMappingField): number {
   if (normalizedCol === displayNorm) {
     return 0.9
   }
-  if (normalizedCol.length >= 3 && (normalizedCol.includes(keyNorm) || keyNorm.includes(normalizedCol))) {
+  if (
+    normalizedCol.length >= 3 &&
+    (normalizedCol.includes(keyNorm) || keyNorm.includes(normalizedCol))
+  ) {
     return 0.6
   }
   return 0

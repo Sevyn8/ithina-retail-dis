@@ -1,15 +1,31 @@
 import type { ConnectorMappingField } from '../../lib/dis-ui-server/connectors-api'
+import { localePreset } from '../../lib/dis-ui-server/connectors-api'
+import type { FieldDatatype } from '../../lib/dis-ui-server/mapping-fields'
 import { CONNECTOR_STEP_COUNT, CONNECTOR_STEP_INDEX } from './steps'
 import {
   activeMappingFields,
+  assembleConnectorColumns,
   canAdvance,
   connectorWizardReducer,
   currentStepKey,
   initialConnectorWizardState,
   isIgnored,
   mappingTargetFor,
+  slugifySourceId,
 } from './state'
 import type { ConnectorWizardState } from './state'
+
+function field(sourceField: string, suggestedTarget: string | null): ConnectorMappingField {
+  return {
+    sourceField,
+    suggestedTarget,
+    alternatives: [],
+    confidence: 0.9,
+    reasoning: null,
+    detectedFormat: null,
+    sampleValues: [],
+  }
+}
 
 // Pure stepper-logic + ignore-toggle tests for the Live Sync connector wizard. No rendering;
 // just the reducer and its gating helpers.
@@ -244,5 +260,87 @@ describe('connectorWizardReducer - CSV branch (Chunk 2)', () => {
     )
     expect(s.branch).toBe('csv')
     expect(s.templateType).toBe('')
+  })
+})
+
+describe('CSV source-format declarations + create assembly (D89/D90)', () => {
+  const base: ConnectorWizardState = {
+    ...initialConnectorWizardState,
+    branch: 'csv',
+    templateType: 'sales',
+  }
+
+  it('setCsvLocale / setCsvDatetimeFormat / setCsvPercentage update the declaration state', () => {
+    let s = connectorWizardReducer(base, { type: 'setCsvLocale', locale: 'eu' })
+    expect(s.csvLocale).toBe('eu')
+    s = connectorWizardReducer(s, {
+      type: 'setCsvDatetimeFormat',
+      sourceField: 'sold_at',
+      format: 'DD-MM-YYYY',
+    })
+    s = connectorWizardReducer(s, {
+      type: 'setCsvPercentage',
+      sourceField: 'discount',
+      isPercentage: true,
+    })
+    expect(s.csvColumnFormat.sold_at.datetimeFormat).toBe('DD-MM-YYYY')
+    expect(s.csvColumnFormat.discount.isPercentage).toBe(true)
+  })
+
+  it('slugifySourceId makes a 16a-valid source_id and degrades empty/odd names', () => {
+    expect(slugifySourceId('Weekly Export!')).toBe('weekly_export')
+    expect(slugifySourceId('  ***  ')).toBe('csv_source')
+    expect(slugifySourceId('already_ok_1')).toBe('already_ok_1')
+  })
+
+  it('assembleConnectorColumns builds the 16a columns[] from wizard state', () => {
+    const fields = [
+      field('item_code', 'sku_id'), // text -> no format declaration
+      field('amount', 'unit_sale_price'), // number -> locale separators (+ percentage)
+      field('sold_at', 'source_sale_timestamp'), // datetime -> src_datetime_format
+      field('junk', null), // ignored -> __ignore__
+    ]
+    const datatypeByKey = new Map<string, FieldDatatype | null>([
+      ['sku_id', 'text'],
+      ['unit_sale_price', 'number'],
+      ['source_sale_timestamp', 'datetime'],
+    ])
+    let s: ConnectorWizardState = {
+      ...base,
+      mappingOverrides: {
+        item_code: 'sku_id',
+        amount: 'unit_sale_price',
+        sold_at: 'source_sale_timestamp',
+      },
+    }
+    s = connectorWizardReducer(s, { type: 'toggleIgnore', sourceField: 'junk' })
+    s = connectorWizardReducer(s, {
+      type: 'setCsvDatetimeFormat',
+      sourceField: 'sold_at',
+      format: 'DD-MM-YYYY',
+    })
+    s = connectorWizardReducer(s, {
+      type: 'setCsvPercentage',
+      sourceField: 'amount',
+      isPercentage: true,
+    })
+
+    const columns = assembleConnectorColumns(s, fields, datatypeByKey, localePreset('eu'))
+
+    expect(columns[0]).toEqual({ src_key: 'item_code', dest_key: 'sku_id' })
+    expect(columns[1]).toEqual({
+      src_key: 'amount',
+      dest_key: 'unit_sale_price',
+      src_decimal_separator: ',',
+      src_thousand_separator: '.', // EU dot-thousands (422s until 16b; assembled anyway)
+      src_is_percentage: true,
+    })
+    expect(columns[2]).toEqual({
+      src_key: 'sold_at',
+      dest_key: 'source_sale_timestamp',
+      src_datetime_format: 'DD-MM-YYYY',
+    })
+    // ignored column -> __ignore__, no format declarations
+    expect(columns[3]).toEqual({ src_key: 'junk', dest_key: '__ignore__' })
   })
 })

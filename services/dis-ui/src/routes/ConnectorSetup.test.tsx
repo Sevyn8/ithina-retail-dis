@@ -120,7 +120,7 @@ describe('ConnectorSetup (Live Sync wizard)', () => {
 })
 
 describe('ConnectorSetup (CSV / SFTP branch)', () => {
-  it('walks Source -> Upload -> Template type -> AI mapping -> Preview -> Template created', async () => {
+  it('walks Source -> Upload -> Template type -> AI mapping (real parse) -> Preview -> Submitted', async () => {
     const user = userEvent.setup()
     renderWizard()
     await screen.findByRole('heading', { name: 'Connect a system' })
@@ -129,9 +129,13 @@ describe('ConnectorSetup (CSV / SFTP branch)', () => {
     await user.click(screen.getByRole('radio', { name: 'CSV / SFTP' }))
     await user.click(screen.getByRole('button', { name: 'Next' }))
 
-    // 2. Upload: name + a sample file (stubbed analysis is instant).
+    // 2. Upload: name + a REAL multi-column CSV file (the file is actually parsed at mapping).
     await user.type(screen.getByLabelText('Source name'), 'Weekly export')
-    const file = new File(['item_code,qty\nX,1'], 'sales.csv', { type: 'text/csv' })
+    const file = new File(
+      ['item_code,qty,sold_at\nSKU-1,2,31-12-2025\nSKU-2,1,01-01-2026'],
+      'sales.csv',
+      { type: 'text/csv' },
+    )
     await user.upload(screen.getByLabelText('CSV file'), file)
     await user.click(screen.getByRole('button', { name: 'Next' }))
 
@@ -139,17 +143,19 @@ describe('ConnectorSetup (CSV / SFTP branch)', () => {
     expect(await screen.findByRole('radio', { name: 'Sales' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Inventory change' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Catalogue snapshot' })).toBeInTheDocument()
-    // Cannot advance until a type is chosen.
-    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled() // until a type is chosen
     await user.click(screen.getByRole('radio', { name: 'Sales' }))
     await user.click(screen.getByRole('button', { name: 'Next' }))
 
-    // 4. AI mapping: the CSV columns render; the unmapped 'cashier_note' blocks Continue until
-    // ignored. Canonical targets come from the type-aware (sales) catalog.
+    // 4. AI mapping: the REAL parsed columns render (from the uploaded CSV headers), targets from
+    // the type-aware sales catalog. The template-level Number locale picker is present; ignore a
+    // column (Ignored badge). Continue is enabled (every non-ignored column has a target).
     expect(await screen.findByText('item_code')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Continue to preview' })).toBeDisabled()
-    await user.click(screen.getByRole('checkbox', { name: 'Ignore cashier_note' }))
-    expect(screen.getByRole('button', { name: 'Continue to preview' })).toBeEnabled()
+    expect(screen.getByText('sold_at')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Number locale' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Number locale' }), 'eu')
+    await user.click(screen.getByRole('checkbox', { name: 'Ignore item_code' }))
+    expect(screen.getByText('Ignored')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Continue to preview' }))
 
     // 5. Preview: the template type is shown READ-ONLY (chosen earlier, no re-pick).
@@ -157,9 +163,11 @@ describe('ConnectorSetup (CSV / SFTP branch)', () => {
     expect(screen.queryByRole('combobox', { name: 'Template type' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create template' }))
 
-    // 6. Template created (stubbed, D88 "Created and live").
-    expect(await screen.findByRole('status')).toHaveTextContent('Created and live')
-    expect(screen.getByText('Active v1')).toBeInTheDocument()
+    // 6. Template created: HONEST synthetic-201 (fixture: draft v1, no active version), so the
+    // copy is "Submitted" - NOT "Created and live" - per slice-16a (nothing persisted until 16c).
+    expect(await screen.findByRole('status')).toHaveTextContent('Submitted')
+    expect(screen.getByText('Draft v1')).toBeInTheDocument()
+    expect(screen.queryByText('Created and live')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Done' })).toBeInTheDocument()
   })
 })

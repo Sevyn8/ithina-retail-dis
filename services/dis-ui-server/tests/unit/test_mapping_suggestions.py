@@ -127,6 +127,64 @@ def test_handler_rejects_a_malformed_profile(suggest_client: TestClient, mint_to
     assert resp.status_code == 422
 
 
+# -- type-aware catalog selection (D90) ---------------------------------------------
+
+
+class _RecordingSuggester:
+    """Records the catalog the handler hands it, so the catalog SELECTION can be asserted."""
+
+    def __init__(self) -> None:
+        self.catalog = None
+
+    async def suggest(self, columns, catalog):  # type: ignore[no-untyped-def]
+        self.catalog = catalog
+        return ("fallback", None, [])
+
+
+def test_handler_scopes_to_the_per_type_catalog_when_template_type_is_present(
+    suggest_client: TestClient,
+    mint_token,  # type: ignore[no-untyped-def]
+) -> None:
+    # A valid template_type selects THAT type's per-type catalog (snapshot included).
+    fake = _RecordingSuggester()
+    cast(FastAPI, suggest_client.app).state.gemini = fake
+    resp = suggest_client.post(
+        "/api/v1/mapping-suggestions",
+        json={**_BODY, "template_type": "snapshot"},
+        headers={"Authorization": f"Bearer {mint_token()}"},
+    )
+    assert resp.status_code == 200
+    # the exact per-type catalog object the lifespan built for snapshot was passed through
+    assert fake.catalog is cast(FastAPI, suggest_client.app).state.field_catalogs["snapshot"]
+
+
+def test_handler_falls_back_to_the_union_catalog_when_template_type_is_absent(
+    suggest_client: TestClient,
+    mint_token,  # type: ignore[no-untyped-def]
+) -> None:
+    # No template_type -> today's sales+inventory_change union (the /upload flow is unchanged).
+    fake = _RecordingSuggester()
+    cast(FastAPI, suggest_client.app).state.gemini = fake
+    resp = suggest_client.post(
+        "/api/v1/mapping-suggestions",
+        json=_BODY,
+        headers={"Authorization": f"Bearer {mint_token()}"},
+    )
+    assert resp.status_code == 200
+    assert fake.catalog is cast(FastAPI, suggest_client.app).state.field_catalog
+
+
+def test_handler_400s_on_an_invalid_template_type(suggest_client: TestClient, mint_token) -> None:  # type: ignore[no-untyped-def]
+    _set_gemini(suggest_client, _FakeSuggester(("fallback", None, [])))
+    resp = suggest_client.post(
+        "/api/v1/mapping-suggestions",
+        json={**_BODY, "template_type": "not_a_type"},
+        headers={"Authorization": f"Bearer {mint_token()}"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_template_type"
+
+
 # -- GeminiSuggester tests ----------------------------------------------------------
 
 _COLUMNS = [ColumnProfile(name="qty", inferred_datatype="integer", null_pct=0.0, sample_values=["1"])]

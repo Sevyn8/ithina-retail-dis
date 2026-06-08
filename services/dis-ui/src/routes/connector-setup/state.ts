@@ -1,12 +1,16 @@
 import type { ConnectorAuthMethod, ConnectorKey } from '../../lib/dis-ui-server/connectors-catalog'
 import type {
   ConnectorAccount,
+  ConnectorColumn,
   ConnectorDataType,
   ConnectorMappingField,
   CreatedTemplate,
   LiveConnectorSource,
+  LocaleKey,
+  LocalePreset,
   SyncCadence,
 } from '../../lib/dis-ui-server/connectors-api'
+import type { FieldDatatype } from '../../lib/dis-ui-server/mapping-fields'
 import type { Branch, StepKey } from './steps'
 import { flowFor } from './steps'
 
@@ -17,6 +21,11 @@ import { flowFor } from './steps'
 // (the wired GETs + the stubbed calls) and dispatches actions into this reducer.
 
 export type LocationMapping = { checked: boolean; storeId: string }
+
+// CSV branch: the operator's per-column source-format declaration (16a). datetimeFormat for
+// datetime/date targets; isPercentage for number targets. Decimal/thousand separators are
+// template-level (csvLocale), not per column.
+export type CsvColumnFormat = { datetimeFormat?: string; isPercentage?: boolean }
 
 export type ConnectorWizardState = {
   // null until a Source tile is picked; 'pos' for a live-sync connector, 'csv' for CSV/SFTP.
@@ -46,6 +55,10 @@ export type ConnectorWizardState = {
   ignored: Record<string, boolean>
   // The chosen template type (CSV branch picks it on the Template type step; POS defaults it).
   templateType: string
+  // CSV branch source-format declarations (16a). Template-level locale (decimal/thousand) +
+  // per-column datetime format / percentage flag, assembled into the create columns[] body.
+  csvLocale: LocaleKey
+  csvColumnFormat: Record<string, CsvColumnFormat>
   // Terminal results (branch-specific).
   liveSource: LiveConnectorSource | null
   createdTemplate: CreatedTemplate | null
@@ -68,6 +81,8 @@ export const initialConnectorWizardState: ConnectorWizardState = {
   mappingOverrides: {},
   ignored: {},
   templateType: '',
+  csvLocale: 'us',
+  csvColumnFormat: {},
   liveSource: null,
   createdTemplate: null,
 }
@@ -89,6 +104,9 @@ export type ConnectorWizardAction =
   | { type: 'setMappingTarget'; sourceField: string; target: string }
   | { type: 'toggleIgnore'; sourceField: string }
   | { type: 'setTemplateType'; value: string }
+  | { type: 'setCsvLocale'; locale: LocaleKey }
+  | { type: 'setCsvDatetimeFormat'; sourceField: string; format: string }
+  | { type: 'setCsvPercentage'; sourceField: string; isPercentage: boolean }
   | { type: 'setLiveSource'; source: LiveConnectorSource }
   | { type: 'setCreatedTemplate'; template: CreatedTemplate }
   | { type: 'next' }
@@ -112,6 +130,8 @@ function resetForSourceChange(state: ConnectorWizardState): ConnectorWizardState
     mappingOverrides: {},
     ignored: {},
     templateType: '',
+    csvLocale: 'us',
+    csvColumnFormat: {},
     liveSource: null,
     createdTemplate: null,
   }
@@ -188,6 +208,30 @@ export function connectorWizardReducer(
       }
     case 'setTemplateType':
       return { ...state, templateType: action.value }
+    case 'setCsvLocale':
+      return { ...state, csvLocale: action.locale }
+    case 'setCsvDatetimeFormat':
+      return {
+        ...state,
+        csvColumnFormat: {
+          ...state.csvColumnFormat,
+          [action.sourceField]: {
+            ...state.csvColumnFormat[action.sourceField],
+            datetimeFormat: action.format,
+          },
+        },
+      }
+    case 'setCsvPercentage':
+      return {
+        ...state,
+        csvColumnFormat: {
+          ...state.csvColumnFormat,
+          [action.sourceField]: {
+            ...state.csvColumnFormat[action.sourceField],
+            isPercentage: action.isPercentage,
+          },
+        },
+      }
     case 'setLiveSource':
       return { ...state, liveSource: action.source }
     case 'setCreatedTemplate':
@@ -271,4 +315,50 @@ export function canAdvance(
     default:
       return false
   }
+}
+
+// Slugify the source name into a 16a-valid source_id (^[a-z0-9_]{1,128}$). PROVISIONAL stopgap
+// (collision/quality risk): a dedicated source_id field or registry comes later. Empty/odd
+// names degrade to a safe placeholder so the create body is always well-formed.
+export function slugifySourceId(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 128)
+  return slug.length > 0 ? slug : 'csv_source'
+}
+
+// Assemble the Slice-16a create columns[] from the wizard state. Ignored columns -> dest_key
+// "__ignore__" (no format). Otherwise dest_key is the chosen catalog key; format declarations
+// are attached by the TARGET datatype: datetime/date -> src_datetime_format (per-column);
+// number -> the template-level locale's decimal/thousand separators + the per-column percentage
+// flag. Other datatypes carry no format declaration. `datatypeByKey` maps dest_key -> datatype
+// (from the type-aware catalog the branch fetched).
+export function assembleConnectorColumns(
+  state: ConnectorWizardState,
+  mappingFields: ConnectorMappingField[],
+  datatypeByKey: Map<string, FieldDatatype | null>,
+  locale: LocalePreset,
+): ConnectorColumn[] {
+  return mappingFields.map((field) => {
+    const srcKey = field.sourceField
+    if (isIgnored(state, srcKey)) {
+      return { src_key: srcKey, dest_key: '__ignore__' }
+    }
+    const destKey = mappingTargetFor(state, field)
+    const datatype = datatypeByKey.get(destKey) ?? null
+    const decl = state.csvColumnFormat[srcKey]
+    const column: ConnectorColumn = { src_key: srcKey, dest_key: destKey }
+    if (datatype === 'datetime' || datatype === 'date') {
+      column.src_datetime_format = decl?.datetimeFormat ?? null
+    } else if (datatype === 'number') {
+      column.src_decimal_separator = locale.decimal
+      column.src_thousand_separator = locale.thousand
+      if (decl?.isPercentage === true) {
+        column.src_is_percentage = true
+      }
+    }
+    return column
+  })
 }

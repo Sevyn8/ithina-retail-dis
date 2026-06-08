@@ -1332,3 +1332,18 @@ _require_subscription now runs against real GCP). Cross-refs D58.
 **Deferred.** 16b — the new engine ops the declarations imply (e.g. `parse_percent` for `src_is_percentage`). 16c — translate `{src_key, dest_key, declarations}` + `template_type` into the stored D49 `mapping_rules`, run the semantic gate, and write the DRAFT (restoring the skipped assertions). A later separate change may rename the catalog response `key` to `dest_key` for symmetry (out of 16a scope).
 
 **Cross-refs.** D49 (the `mapping_rules` shape 16c will produce), D68 (template grain), D17 (DRAFT lifecycle), Slice 14b (the endpoint whose request body 16a replaces), Slice 14d / D86 / D87 (the type-aware catalog and sink derivation 16a relies on), Slices 16b / 16c (the deferred ops and persistence).
+
+### D90 `POST /mapping-suggestions` is type-aware (optional `template_type`; absent falls back to the legacy union) `RESOLVED`
+
+**Status.** `RESOLVED`. Makes the LLM mapping-suggestion endpoint score against the right per-type field catalog, so the type-aware "Connect a System" CSV branch (which picks `template_type` before mapping) gets suggestions drawn from the SAME catalog its targets come from (`GET /template-mapping-fields?template_type=`).
+
+**The decision.** `MappingSuggestionRequest` gains an OPTIONAL `template_type`. The handler selects the catalog it hands the suggester:
+- **Present + valid** (a member of `dis_validation.TEMPLATE_TYPES`): score against THAT type's per-type catalog `app.state.field_catalogs[template_type]` (snapshot included). This removes cross-type noise and makes `snapshot` suggestable at all (the union never contained it).
+- **Absent**: fall back to TODAY's exact behaviour, the `app.state.field_catalogs["sales"] + ["inventory_change"]` union (`app.state.field_catalog`). The not-yet-retired `/upload` onboarding flow sends no `template_type`, so it is UNCHANGED. This is a deliberate backward-compat fallback.
+- **Present + invalid**: clean 400 `InvalidTemplateTypeError` (`invalid_template_type`), consistent with the other type-aware endpoints.
+
+**Why optional, not required.** The legacy `/upload` flow still calls this endpoint without a type; flipping to REQUIRED now would break it. The fallback becomes dead the moment `/upload` is retired; at that point this **tightens to REQUIRED** (a follow-up). No producer/`GeminiSuggester`/`fallback_matcher` signature change: only the chosen catalog differs. The per-type catalogs were already on `app.state.field_catalogs` (Slice 14d); the union stays on `app.state.field_catalog` for the fallback.
+
+**Scope.** dis-ui-server only (`schemas/mapping_suggestions.py`, `handlers/mapping_suggestions.py`, API_CONTRACT). No persistence, no create-path change. The frontend (Connect a System CSV branch) passes the chosen `template_type`; the old `/upload` caller keeps sending none.
+
+**Cross-refs.** Slice 14d / D86 / D87 (the per-type catalogs this selects among), D89 / Slice 16a (the create contract the same branch wires alongside this), the LLM mapping-suggestion contract (`docs/slices/llm-mapping-suggestion-contract.md`).

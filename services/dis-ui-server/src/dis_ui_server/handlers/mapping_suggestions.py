@@ -20,7 +20,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 
 from dis_ui_server.auth.identity import Identity
-from dis_ui_server.auth.scope import require_tenant
+from dis_ui_server.auth.scope import require_tenant, tenant_uuid_of
+from dis_ui_server.mapping_validation import require_template_type
 from dis_ui_server.schemas.mapping_suggestions import (
     MappingSuggestionRequest,
     MappingSuggestionResponse,
@@ -35,8 +36,18 @@ async def post_mapping_suggestions(
     body: MappingSuggestionRequest,
     identity: Annotated[Identity, Depends(require_tenant)],
 ) -> MappingSuggestionResponse:
-    """Suggest a canonical field per source column; ``source`` flags llm vs fallback."""
-    catalog = request.app.state.field_catalog
+    """Suggest a canonical field per source column; ``source`` flags llm vs fallback.
+
+    Type-aware (D90): with a valid ``template_type`` the suggester scores against THAT type's
+    per-type catalog (``app.state.field_catalogs[template_type]``, snapshot included); WITHOUT
+    one it falls back to the legacy ``sales + inventory_change`` union (``app.state.field_catalog``)
+    so the not-yet-retired /upload flow is unchanged. An invalid type is a clean 400.
+    """
+    if body.template_type is None:
+        catalog = request.app.state.field_catalog
+    else:
+        require_template_type(body.template_type, tenant_id=str(tenant_uuid_of(identity)))
+        catalog = request.app.state.field_catalogs[body.template_type]
     suggester = request.app.state.gemini
     source, model, suggestions = await suggester.suggest(body.columns, catalog)
     return MappingSuggestionResponse(source=source, model=model, suggestions=suggestions)

@@ -1,23 +1,24 @@
 import type { LocaleDeclaration } from '../../components/locale-rules'
+import { parseCsvFile } from '../onboarding/analyze-csv'
+import { postJson } from './client'
+import { isRealMode } from './mode'
+import { getMappingSuggestions } from './mapping-suggestions'
+import type { CatalogField, FieldDatatype, TemplateMappingField } from './mapping-fields'
 import type { ConnectorKey } from './connectors-catalog'
 
 // =====================================================================================
-// Live Sync connectors API - THE SINGLE STUB SEAM (Chunk 1, UI-only).
+// Connectors API seam for the "Connect a System" surface.
 //
-// Every function here returns MOCK data and performs NO network call. This is deliberately
-// the only place the new "Connect a System" surface touches a backend boundary, so wiring
-// the real integration later == replacing the bodies in this one module (the call sites,
-// types, and step components do not change). Each function documents the expected REAL
-// request/response with a `TODO(wire)` marker.
-//
-// Why it lives under lib/dis-ui-server/: the service rule says backend access goes only
-// through lib/dis-ui-server/*. This module is that seam for connectors; it simply has no
-// real implementation yet. It does NOT import client.ts / postJson in this pass.
-//
-// Shapes mirror the existing mapping-suggestion contract (suggestion + alternatives) and
-// reuse the existing locale/format mechanism (LocaleDeclaration from locale-rules) rather
-// than inventing a new detected-format API. Confidence/reasoning are placeholders shaped to
-// the real Vertex mapping-suggestion response, marked TODO(wire) for the swap.
+// MIXED now (Chunk 3): the CSV branch's analyze + create are REAL (they compose existing,
+// deployed endpoints); the POS branch and the CSV preview stay stubbed (no confirmed
+// contract). Real paths go through lib/dis-ui-server/* (the only allowed backend boundary):
+//   - analyzeCsvSample: client-side parse (papaparse, analyze-csv.ts) + POST /mapping-suggestions
+//     (type-aware, D90) for per-column targets/confidence/reasoning.
+//   - createCsvTemplate: POST /mapping-templates with the Slice-16a semantic columns[] shape
+//     (D89). 16a returns a SYNTHETIC 201 (nothing persisted until 16c); the UI reads it honestly.
+// Still STUBBED with TODO(wire): the POS authorize/locations/suggest/create, and the CSV
+// preview rows. detectedFormat is no longer server-provided; the operator DECLARES format in
+// the mapping step (locale picker + per-column datetime format), assembled into the 16a body.
 // =====================================================================================
 
 // ----- OAuth (recommended path) ------------------------------------------------------
@@ -324,111 +325,154 @@ export function createConnectorSource(
 // upload/analysis, the create, and the preview are stubbed. Each marked TODO(wire).
 // =====================================================================================
 
-// TODO(wire): NO confirmed CSV sample-upload / analysis endpoint yet. The real flow would POST
-// the file (or reference an SFTP drop), the server would profile the columns and (via Vertex)
-// return per-column suggestions: { source, fields: [{ source_column, suggested_target,
-// alternatives, confidence, reasoning, detected_format }] }. This stub returns a fixed CSV
-// column profile whose suggested targets are real `sales` catalog keys (so the wired type-aware
-// catalog has matching options); confidence/reasoning/format are placeholder-shaped-to-Vertex.
-export function analyzeCsvSample(fileName: string): Promise<ConnectorMappingResponse> {
-  void fileName
-  return Promise.resolve({
-    source: 'vertex',
-    fields: [
-      {
-        sourceField: 'item_code',
-        suggestedTarget: 'sku_id',
-        alternatives: ['sku_variant'],
-        confidence: 0.96,
-        reasoning: 'Column name and values match the canonical SKU identifier.',
-        detectedFormat: null,
-        sampleValues: ['TSHIRT-RED-M', 'MUG-001'],
-      },
-      {
-        sourceField: 'qty',
-        suggestedTarget: 'quantity',
-        alternatives: [],
-        confidence: 0.93,
-        reasoning: 'Abbreviation of quantity; integer-like values.',
-        detectedFormat: { decimal_separator: '.', thousands_separator: '' },
-        sampleValues: ['2', '1'],
-      },
-      {
-        sourceField: 'unit_price',
-        suggestedTarget: 'unit_sale_price',
-        alternatives: ['unit_retail_price'],
-        confidence: 0.71,
-        reasoning: 'Likely the price charged per unit; confirm against retail price.',
-        detectedFormat: { decimal_separator: '.', thousands_separator: ',' },
-        sampleValues: ['1,299.50', '19.00'],
-      },
-      {
-        sourceField: 'sold_at',
-        suggestedTarget: 'source_sale_timestamp',
-        alternatives: [],
-        confidence: 0.89,
-        reasoning: 'Timestamp column aligns with the sale time.',
-        detectedFormat: { format: '%d/%m/%Y', timezone: 'Europe/London' },
-        sampleValues: ['31/12/2025', '01/01/2026'],
-      },
-      {
-        sourceField: 'txn_id',
-        suggestedTarget: 'transaction_id',
-        alternatives: [],
-        confidence: 0.85,
-        reasoning: 'Receipt / transaction reference.',
-        detectedFormat: null,
-        sampleValues: ['R-1001', 'R-1002'],
-      },
-      {
-        sourceField: 'kind',
-        suggestedTarget: 'event_subtype',
-        alternatives: [],
-        confidence: 0.64,
-        reasoning: 'Values resemble the sale/return/void enumeration.',
-        detectedFormat: null,
-        sampleValues: ['SALE', 'RETURN'],
-      },
-      {
-        sourceField: 'cashier_note',
-        suggestedTarget: null,
-        alternatives: [],
-        confidence: 0.18,
-        reasoning: 'No confident canonical target; review or ignore this column.',
-        detectedFormat: null,
-        sampleValues: ['gift wrap', ''],
-      },
-    ],
-  })
+// REAL (D90): parse the uploaded file client-side (papaparse, analyze-csv.ts) into a column
+// profile, then call the type-aware /mapping-suggestions endpoint PASSING `template_type` so
+// the suggested targets come from the SAME per-type catalog the mapping step's dropdown uses.
+// `detectedFormat` is null on purpose: the server returns no format, so the operator DECLARES
+// it in the mapping step (locale picker + per-column datetime format), which createCsvTemplate
+// assembles into the 16a `src_*` declarations. `catalog` is used ONLY by the fixture-mode
+// mechanical matcher (real mode ignores it and the server reads its own per-type catalog).
+export async function analyzeCsvSample(
+  file: File,
+  templateType: string,
+  catalog: CatalogField[],
+): Promise<ConnectorMappingResponse> {
+  const parsed = await parseCsvFile(file)
+  // Adapt the type-aware CatalogField[] to the legacy TemplateMappingField shape the fixture
+  // matcher reads, dropping the __ignore__/system sentinel (datatype null). The matcher scores
+  // on key/display_name/datatype only; section is irrelevant, so the cast is safe.
+  const fixtureCatalog: TemplateMappingField[] = catalog
+    .filter((f) => f.section !== 'system' && f.key !== '__ignore__' && f.datatype !== null)
+    .map((f) => ({
+      key: f.key,
+      display_name: f.display_name,
+      section: f.section as TemplateMappingField['section'],
+      mandatory: f.mandatory,
+      datatype: f.datatype as FieldDatatype,
+      description: f.description,
+      allowed_values: f.allowed_values ?? undefined,
+      max_length: f.max_length ?? undefined,
+    }))
+  const resp = await getMappingSuggestions(
+    { columns: parsed.columns, template_type: templateType },
+    fixtureCatalog,
+  )
+  const byColumn = new Map(parsed.columns.map((c) => [c.name, c]))
+  const fields: ConnectorMappingField[] = resp.suggestions.map((s) => ({
+    sourceField: s.source_column,
+    suggestedTarget: s.suggested_target,
+    alternatives: s.alternatives ?? [],
+    confidence: s.confidence,
+    reasoning: s.reasoning ?? null,
+    detectedFormat: null, // server returns no format; declared client-side (locale picker)
+    sampleValues: byColumn.get(s.source_column)?.sample_values ?? [],
+  }))
+  // MappingSuggestionResponse.source is "llm"/"fallback"; map "llm" -> the surface's "vertex".
+  return { source: resp.source === 'llm' ? 'vertex' : 'fallback', fields }
 }
 
+// ----- Locale picker (build-ahead, full target set) -----------------------------------
+// US / EU / Swiss decimal+thousand presets. KNOWN GAP: as shipped in 16a, the create endpoint
+// accepts src_thousand_separator ONLY in {",", "'"} (NOT "."), so the EU dot-thousands preset
+// 422s until Sanjeev's 16b. We build the picker for ALL THREE locales anyway (per the brief);
+// the type below intentionally allows "." so the EU preset compiles and is offered.
+export type LocaleKey = 'us' | 'eu' | 'swiss'
+export type LocalePreset = {
+  key: LocaleKey
+  label: string
+  decimal: '.' | ','
+  thousand: '.' | ',' | "'"
+}
+export const LOCALE_PRESETS: LocalePreset[] = [
+  { key: 'us', label: 'US (1,299.50)', decimal: '.', thousand: ',' },
+  { key: 'eu', label: 'EU (1.299,50)', decimal: ',', thousand: '.' }, // thousand "." 422s until 16b
+  { key: 'swiss', label: "Swiss (1'299.50)", decimal: '.', thousand: "'" },
+]
+export function localePreset(key: LocaleKey): LocalePreset {
+  return LOCALE_PRESETS.find((p) => p.key === key) ?? LOCALE_PRESETS[0]
+}
+
+// Per-datetime-column format choices, in the Slice-16a token vocab ("DD-MM-YYYY" style).
+// PROVISIONAL VOCAB: only "DD-MM-YYYY" is CONFIRMED from Sanjeev's 16a doc; the rest are our
+// UX choice and are unchecked until 16c (src_datetime_format is a free string in 16a). The
+// exact token vocab MUST be reconciled with Sanjeev's 16c parser when it lands.
+export const CSV_DATETIME_FORMATS: { value: string; label: string }[] = [
+  { value: 'DD-MM-YYYY', label: 'Day-Month-Year (31-12-2025)' },
+  { value: 'MM-DD-YYYY', label: 'Month-Day-Year (12-31-2025)' },
+  { value: 'YYYY-MM-DD', label: 'Year-Month-Day (2025-12-31)' },
+  { value: 'DD/MM/YYYY', label: 'Day/Month/Year (31/12/2025)' },
+]
+
+// ----- Create (Slice-16a semantic columns[] contract, D89) ----------------------------
+
+// One source-to-destination column declaration, mirroring the backend MappingColumn (16a).
+// src_thousand_separator allows "." (the EU preset) even though 16a only accepts {",", "'"};
+// EU dot-thousands therefore 422s until 16b (deliberate, see LOCALE_PRESETS).
+export type ConnectorColumn = {
+  src_key: string
+  dest_key: string // catalog key for the chosen template_type, or "__ignore__"
+  src_datetime_format?: string | null
+  src_decimal_separator?: '.' | ',' | null
+  src_thousand_separator?: '.' | ',' | "'" | null
+  src_is_percentage?: boolean | null
+}
+
+export type CreateCsvTemplateInput = {
+  // PROVISIONAL: slugified from the source name as a stopgap (collision/quality risk); a
+  // dedicated source_id field or a source registry comes later.
+  sourceId: string
+  templateName: string
+  templateType: string
+  columns: ConnectorColumn[]
+}
+
+// The synthetic-201 reality (16a): a real fresh template_id but NOTHING persisted, no rules
+// assembled (draft v1, no active, mapping_version_id 0) until 16c. We read the response
+// gracefully - never hard-assume active_version - so the Created UI can be honest.
 export type CreatedTemplate = {
   templateId: string
   templateName: string
   templateType: string
-  activeVersion: number
+  activeVersion: number | null
+  draftVersion: number | null
 }
 
-export type CreateCsvTemplateInput = {
-  sourceName: string
-  templateType: string
-  // sourceField -> canonical target key (ignored columns carry the `__ignore__` sentinel).
-  fieldTargets: Record<string, string>
+type RawCreateResponse = {
+  template_id: string
+  template_name: string
+  template_type: string
+  active_version: number | null
+  draft_version: number | null
 }
 
-// TODO(wire): the create/save endpoint is NOT confirmed. The real shape (POST /mapping-templates
-// with template_type IN THE BODY, and whether create is create-as-ACTIVE per D88 or a separate
-// activate step) is still open in Sanjeev's doc. When wired this assembles the mapping_rules
-// document (rename/normalize/cast/derive) from fieldTargets + the declared formats and POSTs it;
-// ignored columns are represented by assigning them to the `__ignore__` catalog field. Stubbed:
-// returns a created-and-live template summary consistent with the D88 create-as-ACTIVE copy.
-export function createCsvTemplate(input: CreateCsvTemplateInput): Promise<CreatedTemplate> {
-  return Promise.resolve({
+// REAL (D89): POST /api/v1/mapping-templates with the semantic columns[] body (NO mapping_rules
+// - it is extra-forbidden and would 422). 16a shape-validates + returns a SYNTHETIC 201. Fixture
+// mode mirrors that synthetic shape (draft v1, no active). The create persists nothing until
+// 16c, so callers must present the result honestly (submitted, not live/listable/ingestible).
+export async function createCsvTemplate(input: CreateCsvTemplateInput): Promise<CreatedTemplate> {
+  if (isRealMode()) {
+    const raw = await postJson<RawCreateResponse>('/api/v1/mapping-templates', {
+      source_id: input.sourceId,
+      template_name: input.templateName,
+      template_type: input.templateType,
+      columns: input.columns,
+    })
+    return {
+      templateId: raw.template_id,
+      templateName: raw.template_name,
+      templateType: raw.template_type,
+      activeVersion: raw.active_version,
+      draftVersion: raw.draft_version,
+    }
+  }
+  // Fixture: mirror the slice-16a SYNTHETIC 201 (nothing persisted; draft v1, no active version).
+  return {
     templateId: 'tmpl_stub_csv',
-    templateName: input.sourceName,
+    templateName: input.templateName,
     templateType: input.templateType,
-    activeVersion: 1,
-  })
+    activeVersion: null,
+    draftVersion: 1,
+  }
 }
 
 // TODO(wire): the client-side preview shape is not re-confirmed for this surface. The real flow

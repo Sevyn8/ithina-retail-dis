@@ -2,6 +2,7 @@ import { ArrowRight } from 'lucide-react'
 import type { Dispatch } from 'react'
 
 import { Select } from '@/components/ui/select'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { LoadingState } from '../../components/states/LoadingState'
 import { StatusBadge } from '../../components/StatusBadge'
@@ -13,9 +14,15 @@ import {
 } from '../../components/locale-rules'
 import type { LocaleDeclaration, RuleKind } from '../../components/locale-rules'
 import type { FieldDatatype } from '../../lib/dis-ui-server/mapping-fields'
+import {
+  CSV_DATETIME_FORMATS,
+  LOCALE_PRESETS,
+  localePreset,
+} from '../../lib/dis-ui-server/connectors-api'
 import type {
   ConnectorMappingField,
   ConnectorMappingResponse,
+  LocaleKey,
 } from '../../lib/dis-ui-server/connectors-api'
 import { isIgnored, mappingTargetFor } from './state'
 import type { ConnectorWizardAction, ConnectorWizardState } from './state'
@@ -103,12 +110,17 @@ export function MappingStep({
   mapping,
   catalog,
   loading,
+  formatDeclarations = false,
 }: {
   state: ConnectorWizardState
   dispatch: Dispatch<ConnectorWizardAction>
   mapping: ConnectorMappingResponse | null
   catalog: MappingTargetField[]
   loading: boolean
+  // CSV branch only: show the source-format declaration controls (locale picker + per-column
+  // datetime format / percentage), assembled into the 16a create body. POS leaves it false and
+  // keeps the read-only "Detected format" line.
+  formatDeclarations?: boolean
 }) {
   if (loading || mapping === null) {
     return <LoadingState label="Suggesting field mappings..." />
@@ -146,14 +158,66 @@ export function MappingStep({
     ))
   }
 
+  // CSV-only (formatDeclarations): the per-column source-format declaration controls, by the
+  // TARGET datatype. datetime/date -> a date-format select (16a "DD-MM-YYYY" vocab); number ->
+  // a "values are percentages" checkbox (decimal/thousand come from the template-level locale).
+  function renderFormatDeclaration(field: ConnectorMappingField, datatype: FieldDatatype | null) {
+    const col = state.csvColumnFormat[field.sourceField]
+    if (datatype === 'datetime' || datatype === 'date') {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-caption text-muted-foreground">Source date format</span>
+          <Select
+            aria-label={`Date format for ${field.sourceField}`}
+            value={col?.datetimeFormat ?? ''}
+            onChange={(e) =>
+              dispatch({
+                type: 'setCsvDatetimeFormat',
+                sourceField: field.sourceField,
+                format: e.target.value,
+              })
+            }
+            className="h-8 w-auto"
+          >
+            <option value="">Declare format...</option>
+            {CSV_DATETIME_FORMATS.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )
+    }
+    if (datatype === 'number') {
+      return (
+        <label className="flex items-center gap-2 text-caption text-muted-foreground">
+          <input
+            type="checkbox"
+            aria-label={`Values are percentages for ${field.sourceField}`}
+            checked={col?.isPercentage ?? false}
+            onChange={(e) =>
+              dispatch({
+                type: 'setCsvPercentage',
+                sourceField: field.sourceField,
+                isPercentage: e.target.checked,
+              })
+            }
+          />
+          Values are percentages (numbers parsed as {localePreset(state.csvLocale).label})
+        </label>
+      )
+    }
+    return null
+  }
+
   function row(field: ConnectorMappingField) {
     const target = mappingTargetFor(state, field)
     const ignored = isIgnored(state, field.sourceField)
     const band = confidenceBand(field.confidence)
     // The locale rule the MAPPED field's datatype implies (recomputes with the target).
-    const datatype = catalogByKey.get(target)?.datatype
-    const kind: RuleKind =
-      datatype === undefined || datatype === null ? null : requiredRuleKind(datatype)
+    const datatype = catalogByKey.get(target)?.datatype ?? null
+    const kind: RuleKind = datatype === null ? null : requiredRuleKind(datatype)
     return (
       <div
         key={field.sourceField}
@@ -211,13 +275,18 @@ export function MappingStep({
 
         {!ignored ? (
           <>
-            {/* TODO-wire-to-Vertex: the "why" reasoning line is a placeholder from the stub. */}
             {field.reasoning != null && field.reasoning.length > 0 ? (
               <div className="text-body text-muted-foreground italic">Why: {field.reasoning}</div>
             ) : null}
-            <div className="text-body text-muted-foreground">
-              Detected format: {describeFormat(kind, field.detectedFormat)}
-            </div>
+            {formatDeclarations ? (
+              // CSV: the operator DECLARES source format (server returns none); assembled into
+              // the 16a create body. Shown only for datatypes that need it.
+              renderFormatDeclaration(field, datatype)
+            ) : (
+              <div className="text-body text-muted-foreground">
+                Detected format: {describeFormat(kind, field.detectedFormat)}
+              </div>
+            )}
           </>
         ) : (
           <div className="text-body text-muted-foreground">
@@ -230,13 +299,36 @@ export function MappingStep({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         {/* TODO-wire-to-Vertex: source label mirrors MappingSuggestionResponse.source. */}
         {mapping.source === 'vertex' ? (
           <StatusBadge tone="info">Suggestions: AI</StatusBadge>
         ) : (
           <StatusBadge tone="neutral">Suggestions: basic match</StatusBadge>
         )}
+        {/* CSV: template-level number locale (decimal/thousand separators). Built for the full
+            target set (US/EU/Swiss); EU dot-thousands 422s until 16b (see connectors-api). */}
+        {formatDeclarations ? (
+          <div className="flex items-center gap-2">
+            <Label htmlFor="csv-number-locale" className="text-caption text-muted-foreground">
+              Number locale
+            </Label>
+            <Select
+              id="csv-number-locale"
+              value={state.csvLocale}
+              onChange={(e) =>
+                dispatch({ type: 'setCsvLocale', locale: e.target.value as LocaleKey })
+              }
+              className="h-8 w-auto"
+            >
+              {LOCALE_PRESETS.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        ) : null}
       </div>
       <div className="flex flex-col gap-3">{mapping.fields.map((field) => row(field))}</div>
     </div>

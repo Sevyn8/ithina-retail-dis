@@ -6,26 +6,31 @@ import { FileDropzone } from '../../components/FileDropzone'
 import type { ConnectorWizardAction, ConnectorWizardState } from './state'
 
 // CSV branch step 2 (Upload): a source name + a sample file (reusing the shared FileDropzone).
-// STUBBED: selecting a file records its name and marks the (instant) stub analysis ready - no
-// real upload/parse happens (the analysis + suggestions come from the connectors-api stub).
-// Source name + a read sample gate Next.
+// REAL: the selected File is lifted to the route (onSelectFile) which parses it (papaparse) and
+// calls the type-aware /mapping-suggestions endpoint at the mapping step. The reducer still
+// records the file NAME (display + the source-name + file gate on Next). Nothing is ingested -
+// only the columns are read for mapping.
 export function CsvUploadStep({
   state,
   dispatch,
+  onSelectFile,
 }: {
   state: ConnectorWizardState
   dispatch: Dispatch<ConnectorWizardAction>
+  // Lift the real File to the route (kept out of the pure reducer; non-serializable).
+  onSelectFile: (file: File | null) => void
 }) {
   // Reconstruct a File-like handle for the dropzone's selected card from the recorded name.
   const selected = state.csvFileName.length > 0 ? new File([], state.csvFileName) : null
 
   function onSelect(file: File | null): void {
+    onSelectFile(file)
     if (file === null) {
       dispatch({ type: 'setCsvFile', fileName: '' })
       return
     }
-    // Record the file, then mark the stubbed analysis ready (instant; the real analysis is a
-    // TODO(wire) at the connectors-api seam).
+    // Record the file name (display + Next gate). The real parse + suggestions run at the
+    // mapping step, once the chosen template_type is known.
     dispatch({ type: 'setCsvFile', fileName: file.name })
     dispatch({ type: 'setCsvAnalysisReady' })
   }

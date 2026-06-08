@@ -16,23 +16,27 @@ import {
   fetchPreviewRows,
   fetchTemplateType,
   initiateOAuth,
+  localePreset,
   submitApiToken,
 } from '../lib/dis-ui-server/connectors-api'
 import {
   useTemplateMappingFields,
   useTemplateMappingFieldsForType,
 } from '../lib/dis-ui-server/mapping-fields'
+import type { FieldDatatype } from '../lib/dis-ui-server/mapping-fields'
 import { useTemplateTypes } from '../lib/dis-ui-server/template-types'
 import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
 import { StepRail } from './connector-setup/StepRail'
 import { STEP_DEFS, flowFor } from './connector-setup/steps'
 import {
+  assembleConnectorColumns,
   canAdvance,
   connectorWizardReducer,
   currentStepKey,
   initialConnectorWizardState,
   isIgnored,
   mappingTargetFor,
+  slugifySourceId,
 } from './connector-setup/state'
 import { SourceStep } from './connector-setup/SourceStep'
 import { ConnectStep } from './connector-setup/ConnectStep'
@@ -57,6 +61,9 @@ export function ConnectorSetup() {
   const { snapshot } = useAuth()
   const [state, dispatch] = useReducer(connectorWizardReducer, initialConnectorWizardState)
   const [authorizing, setAuthorizing] = useState(false)
+  // The real uploaded CSV File (non-serializable; kept out of the pure reducer). The reducer
+  // holds only the file NAME for display/gating; this is what analyzeCsvSample actually parses.
+  const [csvFile, setCsvFile] = useState<File | null>(null)
 
   const stepKey = currentStepKey(state)
   const isCsv = state.branch === 'csv'
@@ -94,15 +101,24 @@ export function ConnectorSetup() {
     retry: false,
   })
 
-  // ----- CSV branch data (WIRED catalog + types; stubbed upload/preview) -----
+  // ----- CSV branch data (WIRED: type-aware catalog + types + analysis; stubbed preview) -----
   const templateTypesQuery = useTemplateTypes()
   // WIRED: the type-aware canonical catalog (requires the chosen template_type).
   const csvFieldsQuery = useTemplateMappingFieldsForType(isCsv ? state.templateType : null)
-  // STUBBED: the CSV sample analysis + suggestions.
+  // WIRED (D90): real parse (papaparse) + type-aware /mapping-suggestions. Runs at the mapping
+  // step, once the file AND the chosen template_type are both known (queryKey keys on both).
   const csvAnalysisQuery = useQuery({
-    queryKey: ['connectors', 'csv-analysis', state.csvFileName],
-    queryFn: () => analyzeCsvSample(state.csvFileName),
-    enabled: isCsv && state.csvAnalysisReady,
+    queryKey: ['connectors', 'csv-analysis', state.csvFileName, state.templateType],
+    queryFn: () => analyzeCsvSample(csvFile as File, state.templateType, csvFieldsQuery.data ?? []),
+    // Gate on the type-aware catalog being loaded too: the fixture-mode mechanical matcher scores
+    // against it (real mode ignores it and reads its own), so running before it lands would yield
+    // empty suggestions. The catalog is keyed by template_type and stable, so this resolves once.
+    enabled:
+      isCsv &&
+      stepKey === 'mapping' &&
+      csvFile !== null &&
+      state.templateType.length > 0 &&
+      (csvFieldsQuery.data?.length ?? 0) > 0,
     staleTime: Infinity,
     retry: false,
   })
@@ -180,19 +196,31 @@ export function ConnectorSetup() {
     dispatch({ type: 'next' })
   }
 
-  // Create the mapping template (CSV, STUBBED). Ignored columns are represented by assigning
-  // them to the `__ignore__` catalog field. No real POST (the create contract is unconfirmed).
+  // Create the mapping template (CSV, REAL: Slice-16a semantic columns[] contract, D89). Assemble
+  // per-column { src_key, dest_key, format declarations } from the wizard state (ignored columns
+  // -> dest_key "__ignore__"; datatype-driven format from the chosen locale + per-column picker),
+  // then POST. 16a returns a SYNTHETIC 201 (nothing persisted until 16c); the Created step reads
+  // the response honestly.
   async function handleCreateTemplate(): Promise<void> {
-    const fieldTargets: Record<string, string> = {}
-    for (const field of mappingFields) {
-      fieldTargets[field.sourceField] = isIgnored(state, field.sourceField)
-        ? '__ignore__'
-        : mappingTargetFor(state, field)
+    // dest_key -> datatype, from the type-aware catalog, so the assembler attaches the right
+    // format declarations (datetime format / number separators) per column.
+    const datatypeByKey = new Map<string, FieldDatatype | null>()
+    for (const f of csvFieldsQuery.data ?? []) {
+      if (!datatypeByKey.has(f.key)) {
+        datatypeByKey.set(f.key, f.datatype)
+      }
     }
+    const columns = assembleConnectorColumns(
+      state,
+      mappingFields,
+      datatypeByKey,
+      localePreset(state.csvLocale),
+    )
     const created = await createCsvTemplate({
-      sourceName: state.sourceName,
+      sourceId: slugifySourceId(state.sourceName),
+      templateName: state.sourceName,
       templateType: state.templateType,
-      fieldTargets,
+      columns,
     })
     dispatch({ type: 'setCreatedTemplate', template: created })
     dispatch({ type: 'next' })
@@ -226,7 +254,7 @@ export function ConnectorSetup() {
       case 'dataSync':
         return <DataSyncStep state={state} dispatch={dispatch} />
       case 'upload':
-        return <CsvUploadStep state={state} dispatch={dispatch} />
+        return <CsvUploadStep state={state} dispatch={dispatch} onSelectFile={setCsvFile} />
       case 'templateType':
         return (
           <TemplateTypeStep
@@ -244,6 +272,7 @@ export function ConnectorSetup() {
             mapping={mapping}
             catalog={mappingCatalog}
             loading={mappingLoading}
+            formatDeclarations={isCsv}
           />
         )
       case 'preview':

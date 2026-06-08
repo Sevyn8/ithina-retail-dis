@@ -33,6 +33,12 @@ class MappingSuggestionRequest(BaseModel):
     columns: list[ColumnProfile] = Field(min_length=1)
     source_id: str | None = None  # optional prompt context; advisory, never trusted for scope
     template_name: str | None = None  # optional prompt context
+    # Type-aware suggestions (D90): when present + valid, the endpoint scores against THAT
+    # type's per-type field catalog (snapshot included). When ABSENT, the endpoint falls back
+    # to the legacy sales+inventory_change union (so the not-yet-retired /upload onboarding flow,
+    # which sends no template_type, is unchanged). Present + invalid -> 400 invalid_template_type.
+    # Tightens to REQUIRED when /upload is retired.
+    template_type: str | None = None
 
 
 class Suggestion(BaseModel):
