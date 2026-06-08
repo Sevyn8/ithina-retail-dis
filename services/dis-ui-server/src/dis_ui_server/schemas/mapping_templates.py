@@ -83,7 +83,7 @@ class MappingColumn(BaseModel):
     # datetime format is a free str on purpose — token validity is semantic (16c).
     src_datetime_format: str | None = None  # e.g. "DD-MM-YYYY"
     src_decimal_separator: Literal[".", ","] | None = None
-    src_thousand_separator: Literal[",", "'"] | None = None
+    src_thousand_separator: Literal[".", ",", "'"] | None = None
     src_is_percentage: bool | None = None  # true only when the source is a percentage
 
 

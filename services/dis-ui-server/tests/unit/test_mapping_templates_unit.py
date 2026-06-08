@@ -179,6 +179,31 @@ def test_malformed_declaration_is_422(client: TestClient, mint_token: Callable[.
     assert ";" not in response.text  # 422 strips submitted values
 
 
+def test_eu_thousands_separator_is_accepted_and_non_member_is_422(
+    client: TestClient, mint_token: Callable[..., str]
+) -> None:
+    # Slice 16b widens src_thousand_separator to include "." so EU-format numbers
+    # (1.234,56) are declarable. The closed set still rejects a genuine non-member.
+    headers = _bearer(mint_token())
+    eu = _valid_create_body()
+    eu["columns"] = [
+        {"src_key": "sku", "dest_key": "sku_id"},
+        {
+            "src_key": "prezzovend",
+            "dest_key": "current_retail_price",
+            "src_decimal_separator": ",",
+            "src_thousand_separator": ".",
+        },
+    ]
+    assert client.post("/api/v1/mapping-templates", headers=headers, json=eu).status_code == 201
+
+    bad = _valid_create_body()
+    bad["columns"] = [{"src_key": "p", "dest_key": "current_retail_price", "src_thousand_separator": ";"}]
+    response = client.post("/api/v1/mapping-templates", headers=headers, json=bad)
+    assert response.status_code == 422
+    assert ";" not in response.text  # 422 strips submitted values
+
+
 def test_unknown_column_key_is_422(client: TestClient, mint_token: Callable[..., str]) -> None:
     # Strict columns (extra="forbid", open Q1): a stray key fails loud, not silently dropped.
     body = _valid_create_body()

@@ -110,6 +110,34 @@ def test_parse_decimal_same_separator_for_both_roles_fails() -> None:
         )
 
 
+def test_parse_percent_requires_decimal_and_thousands_separator() -> None:
+    # parse_percent takes the same mandatory separator declarations as parse_decimal.
+    with pytest.raises(MappingConfigError, match="missing required arg.*decimal_separator"):
+        SourceMapping.model_validate(
+            _mapping(normalize={"unit_cost": [{"op": "parse_percent", "args": {"thousands_separator": "."}}]})
+        )
+    with pytest.raises(MappingConfigError, match="missing required arg.*thousands_separator"):
+        SourceMapping.model_validate(
+            _mapping(normalize={"unit_cost": [{"op": "parse_percent", "args": {"decimal_separator": ","}}]})
+        )
+
+
+def test_parse_percent_explicit_null_thousands_separator_is_a_valid_declaration() -> None:
+    mapping = SourceMapping.model_validate(
+        _mapping(
+            normalize={
+                "unit_cost": [
+                    {
+                        "op": "parse_percent",
+                        "args": {"decimal_separator": ".", "thousands_separator": None},
+                    }
+                ]
+            }
+        )
+    )
+    assert mapping.normalize["unit_cost"][0].op == "parse_percent"
+
+
 def test_parse_integer_separator_is_mandatory() -> None:
     with pytest.raises(MappingConfigError, match="missing required arg.*thousands_separator"):
         SourceMapping.model_validate(_mapping(normalize={"unit_cost": [{"op": "parse_integer", "args": {}}]}))

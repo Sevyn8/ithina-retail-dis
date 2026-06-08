@@ -38,6 +38,7 @@ NORMALIZE_OPS: frozenset[str] = frozenset(
         "parse_date",
         "parse_datetime",
         "parse_decimal",
+        "parse_percent",
         "parse_integer",
         "parse_boolean",
         "map_enum",
@@ -146,25 +147,27 @@ def validate_normalize_args(spec: TransformSpec, column: str) -> None:
                 f"the %z offset in format {fmt!r}; declare one, not both",
                 column=column,
             )
-    elif op == "parse_decimal":
-        # Locale rule: BOTH separators are mandatory declarations.
+    elif op in ("parse_decimal", "parse_percent"):
+        # Locale rule: BOTH separators are mandatory declarations. parse_percent takes
+        # the same separator args as parse_decimal (it parses the numeric body identically,
+        # then divides by 100); they validate by the same rules.
         _require_keys(op, column, args, frozenset({"decimal_separator", "thousands_separator"}), frozenset())
         dec = _require_str(op, column, args, "decimal_separator")
         if len(dec) != 1:
             raise MappingConfigError(
-                f"op 'parse_decimal' on column {column!r}: decimal_separator must be one character",
+                f"op {op!r} on column {column!r}: decimal_separator must be one character",
                 column=column,
             )
         thou = args["thousands_separator"]
         if thou is not None and (not isinstance(thou, str) or len(thou) != 1):
             raise MappingConfigError(
-                f"op 'parse_decimal' on column {column!r}: thousands_separator must be one "
+                f"op {op!r} on column {column!r}: thousands_separator must be one "
                 "character or an explicit null (declared 'no thousands separator')",
                 column=column,
             )
         if thou == dec:
             raise MappingConfigError(
-                f"op 'parse_decimal' on column {column!r}: decimal and thousands separators must differ",
+                f"op {op!r} on column {column!r}: decimal and thousands separators must differ",
                 column=column,
             )
     elif op == "parse_integer":

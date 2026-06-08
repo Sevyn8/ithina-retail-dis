@@ -101,6 +101,43 @@ def test_parse_decimal_null_thousands_declaration_means_none_tolerated() -> None
     assert out.failed.to_list() == [False, True]
 
 
+def test_parse_percent_divides_by_100_under_declared_separators() -> None:
+    # US declaration: "%" optional (the declaration marks it a percentage, not the glyph),
+    # so a bare "12.5" parses the same as "12.5%". Non-numeric fails loud.
+    us = _run(
+        "parse_percent",
+        ["12.5%", "12.5", "1,299.50%", "nope", None],
+        {"decimal_separator": ".", "thousands_separator": ","},
+    )
+    assert us.values.to_list() == ["0.125", "0.125", "12.995", None, None]
+    assert us.failed.to_list() == [False, False, False, True, False]
+
+    # EU declaration: "," decimal, "." thousands — "12,5%" is the same 0.125.
+    eu = _run(
+        "parse_percent",
+        ["12,5%", "1.299,50%"],
+        {"decimal_separator": ",", "thousands_separator": "."},
+    )
+    assert eu.values.to_list() == ["0.125", "12.995"]
+    assert eu.failed.to_list() == [False, False]
+
+
+def test_parse_percent_is_lossless_and_inherits_sign() -> None:
+    # The /100 must be EXACT (no float artifact) and a leading sign is inherited from the
+    # numeric body pattern, exactly like parse_decimal. "2.37" and "1299.50" are
+    # float-HOSTILE: under a Float64/100 path Polars stringifies them as
+    # "0.023700000000000002" / "12.995000000000001", so these cases fail unless the divide
+    # is done in Decimal. (12.567/-12.5/100 happen to be float-clean — keep but do not rely
+    # on them to pin the property.)
+    out = _run(
+        "parse_percent",
+        ["2.37%", "1299.50%", "12.567%", "-12.5%", "100%"],
+        {"decimal_separator": ".", "thousands_separator": None},
+    )
+    assert out.values.to_list() == ["0.0237", "12.995", "0.12567", "-0.125", "1"]
+    assert out.failed.to_list() == [False, False, False, False, False]
+
+
 def test_parse_integer_with_declared_thousands() -> None:
     out = _run("parse_integer", ["1,299", "12.5", None], {"thousands_separator": ","})
     assert out.values.to_list() == ["1299", None, None]
@@ -156,6 +193,7 @@ def test_every_op_passes_null_through_untouched() -> None:
         "parse_date": {"format": "%Y-%m-%d"},
         "parse_datetime": {"format": "%Y-%m-%d %H:%M", "timezone": "UTC"},
         "parse_decimal": {"decimal_separator": ".", "thousands_separator": None},
+        "parse_percent": {"decimal_separator": ".", "thousands_separator": None},
         "parse_integer": {"thousands_separator": None},
         "parse_boolean": {"true_values": ["y"], "false_values": ["n"]},
         "map_enum": {"mapping": {"a": "A"}},

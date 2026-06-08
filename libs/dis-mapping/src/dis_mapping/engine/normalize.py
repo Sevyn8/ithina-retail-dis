@@ -118,6 +118,31 @@ def _parse_decimal(s: pl.Series, args: Mapping[str, Any]) -> OpOutcome:
     return OpOutcome(_null_where(cleaned, failed), failed, expected)
 
 
+def _parse_percent(s: pl.Series, args: Mapping[str, Any]) -> OpOutcome:
+    dec: str = args["decimal_separator"]
+    thou: str | None = args["thousands_separator"]
+    # Validate the ORIGINAL string (with an OPTIONAL trailing "%") against the declared
+    # locale BEFORE stripping — same discipline as parse_decimal. The leading sign comes
+    # from the body pattern, so "-12.5%" is valid. The "%" glyph is optional: the
+    # declaration (not the glyph) marks the column a percentage, so a bare "12.5" parses too.
+    pattern = rf"^[+-]?{_numeric_body_pattern(thou)}({re.escape(dec)}\d+)?%?$"
+    ok = s.str.contains(pattern)
+    failed = s.is_not_null() & ~ok.fill_null(False)
+    body = s.str.replace(r"%$", "")
+    cleaned = _strip_separators(body, dec, thou)
+    # Divide by 100 LOSSLESSLY via Decimal (never float — 12.567/100 must be exact), then
+    # trim the trailing zeros the fixed-scale cast leaves and any dangling ".". Stays
+    # vectorized (Series-level), matching the other ops.
+    divided = (
+        (cleaned.cast(pl.Decimal(scale=18), strict=False) / 100)
+        .cast(pl.String)
+        .str.replace(r"0+$", "")
+        .str.replace(r"\.$", "")
+    )
+    expected = f"percentage with decimal separator {dec!r}" + (f" and thousands {thou!r}" if thou else "")
+    return OpOutcome(_null_where(divided, failed), failed, expected)
+
+
 def _parse_integer(s: pl.Series, args: Mapping[str, Any]) -> OpOutcome:
     thou: str | None = args["thousands_separator"]
     pattern = rf"^[+-]?{_numeric_body_pattern(thou)}$"
@@ -190,6 +215,7 @@ NORMALIZE_IMPLS: dict[str, Callable[[pl.Series, Mapping[str, Any]], OpOutcome]] 
     "parse_date": _parse_date,
     "parse_datetime": _parse_datetime,
     "parse_decimal": _parse_decimal,
+    "parse_percent": _parse_percent,
     "parse_integer": _parse_integer,
     "parse_boolean": _parse_boolean,
     "map_enum": _map_enum,
