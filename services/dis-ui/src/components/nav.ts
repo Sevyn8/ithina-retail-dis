@@ -4,6 +4,7 @@ import {
   Database,
   FileSearch,
   LayoutDashboard,
+  Plug,
   Plus,
   ShieldAlert,
   Terminal,
@@ -45,6 +46,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Upload CSV', to: '/ingest', icon: Database, section: 'DATA' },
   { label: 'New CSV Template', to: '/upload', icon: Upload, section: 'DATA' },
   { label: 'Add Source', to: '/connect', icon: Plus, section: 'DATA' },
+  // "Connect a System" (Chunk 1): the NEW Live Sync connector wizard (/connectors/new) for POS
+  // (Shopify/Square/Clover). Sits beside the existing "Add Source" (unchanged); separate route.
+  { label: 'Connect a System', to: '/connectors/new', icon: Plug, section: 'DATA' },
   // MONITORING: Quarantine and Audit are scope-aware (T9): a tenant sees their own tenant
   // (scope locked, no tenant filter); an ops user sees the fleet-wide view with a tenant
   // filter, via the SAME route/screen (the component branches on isOps). Always visible.

@@ -5,6 +5,7 @@ import { OpsBoundary } from '../auth/OpsBoundary'
 import { AppLayout } from './AppLayout'
 import { AuditLookup } from './AuditLookup'
 import { ConnectorPicker } from './ConnectorPicker'
+import { ConnectorSetup } from './ConnectorSetup'
 import { DevLogin } from './DevLogin'
 import { IndexRoute } from './IndexRoute'
 import { IngestData } from './IngestData'
@@ -46,6 +47,10 @@ export function AppRoutes() {
           <Route path="/connect" element={<ConnectorPicker />} />
           {/* Thin POS connect step (redesign R5): coming-soon, parameterized by POS type. */}
           <Route path="/connect/:posType" element={<PosConnect />} />
+          {/* Connect a System (Chunk 1): the NEW, separate Live Sync connector wizard for POS
+              (Shopify/Square/Clover). UI-only, all backend actions stubbed (connectors-api).
+              Distinct from the existing Add Source surface (/connect), which is unchanged. */}
+          <Route path="/connectors/new" element={<ConnectorSetup />} />
           {/* T5: Ingest Data is the flat template list (per-row ingest). Source CRUD
               stays at /sources (SourcesIndex), reached via its "Manage sources" link. */}
           <Route path="/ingest" element={<IngestData />} />

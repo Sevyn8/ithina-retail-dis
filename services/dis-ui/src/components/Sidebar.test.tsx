@@ -138,7 +138,8 @@ describe('Sidebar nav gating', () => {
 
   it('places each item under the right section header (DOM order)', () => {
     const { container } = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
-    // The DATA header is immediately followed by its three items, then MONITORING.
+    // The DATA header is immediately followed by its items, then MONITORING. "Connect a System"
+    // (Chunk 1: the Live Sync connector wizard) sits right after "Add Source" in DATA.
     const order = Array.from(container.querySelectorAll('h2, a')).map((el) => el.textContent)
     const dataIdx = order.indexOf('DATA')
     const monIdx = order.indexOf('MONITORING')
@@ -148,6 +149,7 @@ describe('Sidebar nav gating', () => {
       'Upload CSV',
       'New CSV Template',
       'Add Source',
+      'Connect a System',
     ])
     // OVERVIEW (Dashboard) precedes DATA.
     expect(order.indexOf('OVERVIEW')).toBeLessThan(dataIdx)
