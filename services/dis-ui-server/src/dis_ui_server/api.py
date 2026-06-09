@@ -22,6 +22,7 @@ from dis_ui_server.handlers import (
     csv_uploads,
     mapping_suggestions,
     mapping_templates,
+    quarantine,
     stores,
     template_mapping_fields,
 )
@@ -32,3 +33,4 @@ api_router.include_router(template_mapping_fields.router)
 api_router.include_router(mapping_templates.router)
 api_router.include_router(csv_uploads.router)
 api_router.include_router(mapping_suggestions.router)
+api_router.include_router(quarantine.router)
