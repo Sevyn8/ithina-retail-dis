@@ -30,30 +30,35 @@ describe('Dashboard (honest skeleton)', () => {
     )
   })
 
-  it('shows the REAL active-pipelines count and "Metrics pending" for the other KPIs (no numbers)', async () => {
+  it('shows all four REAL KPI tiles (active pipelines + metrics), Records in canonical replacing Freshness', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
     await screen.findByRole('heading', { name: 'Dashboard' })
-    // REAL: 3 templates have an active version (Sales, Inventory, Orders).
-    expect(screen.getByText('Active pipelines')).toBeInTheDocument()
-    expect(screen.getByText('3')).toBeInTheDocument()
-    // The three metric tiles with no endpoint render an honest placeholder, never a number.
-    expect(screen.getByText('Rows ingested (24h)')).toBeInTheDocument()
-    expect(screen.getByText('Quarantine rate (24h)')).toBeInTheDocument()
-    expect(screen.getByText('Freshness')).toBeInTheDocument()
-    expect(screen.getAllByText('Metrics pending')).toHaveLength(3)
+    // REAL: 3 templates have an active version (Sales, Inventory, Orders). Scope the count to
+    // the Active pipelines tile (the quarantine tile may also show "3").
+    expect(screen.getByText('Active pipelines').parentElement).toHaveTextContent('3')
+    // The three metrics tiles are now real (GET /dashboard/metrics fixture): rows ingested,
+    // quarantined, records in canonical. Freshness is gone; nothing renders "Metrics pending".
+    // Anchor on the unique quarantine sub-line to know the metrics query resolved, then assert
+    // each KPI within its own tile (numbers like 1,247 also appear in the sub and the Flow row).
+    expect(await screen.findByText(/of 1[,\s]?247 rows received/i)).toBeInTheDocument()
+    expect(screen.getByText('Rows ingested (24h)').parentElement).toHaveTextContent(/1[,\s]?247/)
+    expect(screen.getByText('Quarantined (24h)')).toBeInTheDocument()
+    expect(screen.getByText('Records in canonical').parentElement).toHaveTextContent('65')
+    expect(screen.queryByText('Freshness')).not.toBeInTheDocument()
+    expect(screen.queryByText('Metrics pending')).not.toBeInTheDocument()
   })
 
-  it('renders honest placeholders for Needs attention, Flow, and Quality (no fabricated data)', async () => {
+  it('renders the REAL Flow panel and keeps Quality + Needs attention honest', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
     await screen.findByRole('heading', { name: 'Dashboard' })
     expect(screen.getByText('Needs attention')).toBeInTheDocument()
     expect(
       screen.getByText(/Alerts appear here once data-quality metrics are available/i),
     ).toBeInTheDocument()
+    // Flow is real now: the fixture flow row resolves to the Sales template name.
     expect(screen.getByText('Flow')).toBeInTheDocument()
-    expect(
-      screen.getByText(/Per-source volume and freshness will appear here/i),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/rows in 24h/i)).toBeInTheDocument()
+    // Quality stays an honest placeholder (no DQ metrics endpoint).
     expect(screen.getByText('Quality')).toBeInTheDocument()
     expect(
       screen.getByText(/Pass rate and rejection reasons will appear here/i),

@@ -1,87 +1,89 @@
 import { useQuery } from '@tanstack/react-query'
 
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
-import { SERVER_MODE } from './mode'
+import { getJson } from './client'
+import { isRealMode } from './mode'
 
-// Tenant Dashboard summary (demand list 1.2), tenant slice. Fixture mode (default)
-// returns the inlined fixture; real mode is OPEN (slice 13) and throws, mirroring
-// sources.ts / quarantine.ts. Shapes are PROVISIONAL pending Sanjeev's slices 15-17.
+// Tenant Dashboard metrics (the KPI tiles + Flow), tenant slice. Shaped EXACTLY to the real
+// dis-ui-server contract (services/dis-ui-server/.../schemas/dashboard.py:DashboardMetrics):
+// GET /api/v1/dashboard/metrics, one tenant-scoped read over audit.events + quarantine.* +
+// canonical.*. Mode-aware (T10): real mode calls the live endpoint; fixture mode (default +
+// tests) returns plausible inlined numbers so local dev needs no backend.
+//
+// The earlier fabricated per-source rollup (DashboardSummary / useDashboardSummary) was removed
+// when this real metrics endpoint landed: it was a fixture-only stand-in the screen never used.
 
-// PROVISIONAL: demand list 1.2's example only shows health "healthy"; the full
-// vocabulary is not enumerated. Modeled as healthy | warning | failing (the surface
-// map shows healthy/warning; failing mirrors the 1.3 sources status enum).
-export type SourceHealth = 'healthy' | 'warning' | 'failing'
+// 24h quarantine numbers: the raw counts plus the approximate (window-aligned) rate. `rate` is
+// null when nothing was received in the window. The UI leads with the raw count, not the rate.
+export type QuarantineMetrics = {
+  quarantined_rows: number
+  received_rows: number
+  rate: number | null
+}
 
-export type DashboardSource = {
-  source_id: string
-  name: string
-  // The source-type identity key (csv | shopify_pos | square | other), used by the
-  // Dashboard "where your data comes from" breakdown to group sources by connector type
-  // and resolve each row's identity. Classification metadata, not a metric.
-  source_type: string
-  health: SourceHealth
+export type CanonicalTableCount = {
+  table: string
+  count: number
+}
+
+// Total canonical rows for the tenant (the mapping-produced ingest tables), with a per-table
+// breakdown. signal_history is excluded server-side (derived daily-compute, not ingested rows).
+export type CanonicalRecords = {
+  total: number
+  by_table: CanonicalTableCount[]
+}
+
+// Per-template recent ingest volume + last-received (the Flow panel). Keyed by template_id; the
+// screen resolves the display name / source from the mapping-templates it already lists.
+export type FlowRow = {
+  template_id: string | null
   rows_24h: number
-  last_ok_at: string
-  quarantined_open: number
+  last_received_at: string | null
 }
 
-export type LatencySnapshot = {
-  p50_ms: number
-  p95_ms: number
-  p99_ms: number
+export type DashboardMetrics = {
+  rows_ingested_24h: number
+  quarantine_24h: QuarantineMetrics
+  records_in_canonical: CanonicalRecords
+  flow: FlowRow[]
 }
 
-export type DashboardSummary = {
-  tenant_id: string
-  sources: DashboardSource[]
-  latency_1h: LatencySnapshot
-}
-
-// Fixture for the primary tenant, grounded on the same kind-style source_ids as the
-// Quarantine fixtures (manual_csv_upload is the real seeded source; shopify_pos_v2 a
-// schema-example kind-style id). No invented src_*.
-const DASHBOARD_FIXTURES: Record<string, DashboardSummary> = {
-  t_acme9k2l1mn4: {
-    tenant_id: 't_acme9k2l1mn4',
-    sources: [
-      {
-        source_id: 'manual_csv_upload',
-        name: 'Manual CSV Upload',
-        source_type: 'csv',
-        health: 'healthy',
-        rows_24h: 1247,
-        last_ok_at: '2026-06-03T09:12:00Z',
-        quarantined_open: 0,
-      },
-      {
-        source_id: 'shopify_pos_v2',
-        name: 'Shopify POS',
-        source_type: 'shopify_pos',
-        health: 'warning',
-        rows_24h: 832,
-        last_ok_at: '2026-06-03T08:40:00Z',
-        quarantined_open: 2,
-      },
+// Plausible fixture, grounded on the Sales fixture template id (mapping-templates.ts) so the
+// Flow panel resolves a real name in fixture mode. Numbers are illustrative, not fabricated
+// truth: fixture mode is local-dev/test only; real mode reads the live endpoint.
+const FIXTURE_METRICS: DashboardMetrics = {
+  rows_ingested_24h: 1247,
+  quarantine_24h: { quarantined_rows: 3, received_rows: 1247, rate: 3 / 1247 },
+  records_in_canonical: {
+    total: 65,
+    by_table: [
+      { table: 'store_sku_current_position', count: 65 },
+      { table: 'store_sku_sale_events', count: 0 },
+      { table: 'store_sku_change_events', count: 0 },
     ],
-    latency_1h: { p50_ms: 2100, p95_ms: 6800, p99_ms: 11200 },
   },
+  flow: [
+    {
+      template_id: '0190ac10-5a00-7000-8a00-0000000000a1',
+      rows_24h: 1247,
+      last_received_at: '2026-06-09T09:12:00Z',
+    },
+  ],
 }
 
-// Tenant-scoped (own-tenant only). Returns null for an unknown tenant - a
-// not-found result the Dashboard renders as the empty state.
-export async function getDashboardSummary(
-  snapshot: AuthSnapshot,
-): Promise<DashboardSummary | null> {
-  if (SERVER_MODE === 'real') {
-    throw new Error('real-mode getDashboardSummary() is not implemented (slice 13)')
+// GET /api/v1/dashboard/metrics. Tenant-scoped server-side (token tenant only). Real mode calls
+// the live endpoint; fixture mode returns the inlined metrics.
+export async function getDashboardMetrics(): Promise<DashboardMetrics> {
+  if (isRealMode()) {
+    return getJson<DashboardMetrics>('/api/v1/dashboard/metrics')
   }
-  return DASHBOARD_FIXTURES[snapshot.tenantId ?? ''] ?? null
+  return FIXTURE_METRICS
 }
 
-export function useDashboardSummary(snapshot: AuthSnapshot | null) {
+export function useDashboardMetrics(snapshot: AuthSnapshot | null) {
   return useQuery({
-    queryKey: ['dis-ui-server', 'dashboard', snapshot?.tenantId ?? 'none'],
-    queryFn: () => getDashboardSummary(snapshot as AuthSnapshot),
+    queryKey: ['dis-ui-server', 'dashboard', 'metrics', snapshot?.tenantId ?? 'none'],
+    queryFn: getDashboardMetrics,
     enabled: snapshot !== null,
     staleTime: Infinity,
     retry: false,
