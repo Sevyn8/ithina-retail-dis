@@ -4,6 +4,7 @@ import type { Dispatch } from 'react'
 import { Select } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { ErrorState } from '../../components/states/ErrorState'
 import { LoadingState } from '../../components/states/LoadingState'
 import { StatusBadge } from '../../components/StatusBadge'
 import type { StatusTone } from '../../components/StatusBadge'
@@ -111,6 +112,8 @@ export function MappingStep({
   catalog,
   loading,
   formatDeclarations = false,
+  error = null,
+  onRetry,
 }: {
   state: ConnectorWizardState
   dispatch: Dispatch<ConnectorWizardAction>
@@ -121,9 +124,24 @@ export function MappingStep({
   // datetime format / percentage), assembled into the 16a create body. POS leaves it false and
   // keeps the read-only "Detected format" line.
   formatDeclarations?: boolean
+  // CSV branch only: a parse / suggestions / catalog failure, shown with a retry instead of the
+  // perpetual loading spinner (mapping stays null on failure otherwise). POS leaves it null.
+  error?: string | null
+  onRetry?: () => void
 }) {
+  if (error !== null) {
+    return <ErrorState message={error} onRetry={onRetry} />
+  }
   if (loading || mapping === null) {
-    return <LoadingState label="Suggesting field mappings..." />
+    return (
+      <LoadingState
+        label={
+          formatDeclarations
+            ? 'Reading your file and suggesting field mappings...'
+            : 'Suggesting field mappings...'
+        }
+      />
+    )
   }
 
   // Catalog datatype lookup by key (first occurrence wins; datatype is consistent per key).

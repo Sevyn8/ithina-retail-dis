@@ -1,5 +1,6 @@
 import { useReducer, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Loader2 } from 'lucide-react'
 import { Link } from 'react-router'
 
 import { useAuth } from '../auth/useAuth'
@@ -49,6 +50,8 @@ import { MappingStep } from './connector-setup/MappingStep'
 import { PreviewStep } from './connector-setup/PreviewStep'
 import { LiveStep } from './connector-setup/LiveStep'
 import { CsvCreatedStep } from './connector-setup/CsvCreatedStep'
+import { describeAnalyzeError, describeCreateError } from './connector-setup/wizard-errors'
+import type { WizardErrorCopy } from './connector-setup/wizard-errors'
 
 // Unified Add Source surface (Chunk 1 POS + Chunk 2 CSV/SFTP), at /connectors/new. Two branches
 // share the shell (StepRail, container, typography) but run different step flows; the reducer is
@@ -64,6 +67,10 @@ export function ConnectorSetup() {
   // The real uploaded CSV File (non-serializable; kept out of the pure reducer). The reducer
   // holds only the file NAME for display/gating; this is what analyzeCsvSample actually parses.
   const [csvFile, setCsvFile] = useState<File | null>(null)
+  // CSV create (POST /mapping-templates) submit state + the rendered failure copy. A 4xx (the
+  // semantic gate) is caught and shown on the Preview step, never left as a console-only throw.
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<WizardErrorCopy | null>(null)
 
   const stepKey = currentStepKey(state)
   const isCsv = state.branch === 'csv'
@@ -71,7 +78,7 @@ export function ConnectorSetup() {
   const stores = useStoresOnboarded(snapshot)
 
   // ----- POS branch data (all stubbed, unchanged from Chunk 1) -----
-  const posCatalog = useTemplateMappingFields()
+  const posCatalog = useTemplateMappingFields(state.branch === 'pos')
   const locationsQuery = useQuery({
     queryKey: ['connectors', 'locations', state.connector],
     queryFn: () => fetchLocations(state.connector ?? 'shopify'),
@@ -140,6 +147,14 @@ export function ConnectorSetup() {
     : posMappingQuery.isLoading || posCatalog.isPending
   const previewRows = isCsv ? (csvPreviewQuery.data ?? []) : (posPreviewQuery.data ?? [])
   const previewLoading = isCsv ? csvPreviewQuery.isLoading : posPreviewQuery.isLoading
+  // CSV mapping step: a parse / suggestions / catalog failure is surfaced as an inline error with
+  // a retry, instead of the perpetual loading spinner (mapping stays null on failure otherwise).
+  const analyzeErrorRaw =
+    isCsv && stepKey === 'mapping' ? (csvFieldsQuery.error ?? csvAnalysisQuery.error ?? null) : null
+  function retryAnalyze(): void {
+    void csvFieldsQuery.refetch()
+    void csvAnalysisQuery.refetch()
+  }
   // POS keeps its Chunk-1 template-type handling (stub fetch + preview select); CSV uses the
   // type chosen on its own step.
   const effectiveTemplateType = isCsv
@@ -216,14 +231,24 @@ export function ConnectorSetup() {
       datatypeByKey,
       localePreset(state.csvLocale),
     )
-    const created = await createCsvTemplate({
-      sourceId: slugifySourceId(state.sourceName),
-      templateName: state.sourceName,
-      templateType: state.templateType,
-      columns,
-    })
-    dispatch({ type: 'setCreatedTemplate', template: created })
-    dispatch({ type: 'next' })
+    setCreateError(null)
+    setCreating(true)
+    try {
+      const created = await createCsvTemplate({
+        sourceId: slugifySourceId(state.sourceName),
+        templateName: state.sourceName,
+        templateType: state.templateType,
+        columns,
+      })
+      dispatch({ type: 'setCreatedTemplate', template: created })
+      dispatch({ type: 'next' })
+    } catch (err) {
+      // The backend's gate message (the named missing/illegal columns) is the actionable reason;
+      // hold it for the Preview step. Wizard state is preserved so the user can correct and retry.
+      setCreateError(describeCreateError(err))
+    } finally {
+      setCreating(false)
+    }
   }
 
   function renderStep() {
@@ -254,7 +279,14 @@ export function ConnectorSetup() {
       case 'dataSync':
         return <DataSyncStep state={state} dispatch={dispatch} />
       case 'upload':
-        return <CsvUploadStep state={state} dispatch={dispatch} onSelectFile={setCsvFile} />
+        return (
+          <CsvUploadStep
+            state={state}
+            dispatch={dispatch}
+            file={csvFile}
+            onSelectFile={setCsvFile}
+          />
+        )
       case 'templateType':
         return (
           <TemplateTypeStep
@@ -273,6 +305,8 @@ export function ConnectorSetup() {
             catalog={mappingCatalog}
             loading={mappingLoading}
             formatDeclarations={isCsv}
+            error={analyzeErrorRaw !== null ? describeAnalyzeError(analyzeErrorRaw) : null}
+            onRetry={retryAnalyze}
           />
         )
       case 'preview':
@@ -285,6 +319,7 @@ export function ConnectorSetup() {
             rows={previewRows}
             loading={previewLoading}
             readOnlyTemplateType={isCsv}
+            createError={createError}
           />
         )
       case 'live':
@@ -311,7 +346,14 @@ export function ConnectorSetup() {
 
     const back =
       state.stepIndex > 0 ? (
-        <Button type="button" variant="ghost" onClick={() => dispatch({ type: 'back' })}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setCreateError(null)
+            dispatch({ type: 'back' })
+          }}
+        >
           Back
         </Button>
       ) : null
@@ -321,6 +363,7 @@ export function ConnectorSetup() {
       return <div className="flex gap-3">{back}</div>
     }
 
+    const submitting = stepKey === 'preview' && isCsv && creating
     const label =
       stepKey === 'authorized'
         ? 'Continue'
@@ -328,7 +371,9 @@ export function ConnectorSetup() {
           ? 'Continue to preview'
           : stepKey === 'preview'
             ? isCsv
-              ? 'Create template'
+              ? submitting
+                ? 'Creating...'
+                : 'Create template'
               : 'Go live'
             : 'Next'
 
@@ -342,7 +387,12 @@ export function ConnectorSetup() {
     return (
       <div className="flex gap-3">
         {back}
-        <Button type="button" disabled={!canAdvance(state, mappingFields)} onClick={onClick}>
+        <Button
+          type="button"
+          disabled={submitting || !canAdvance(state, mappingFields)}
+          onClick={onClick}
+        >
+          {submitting ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : null}
           {label}
         </Button>
       </div>

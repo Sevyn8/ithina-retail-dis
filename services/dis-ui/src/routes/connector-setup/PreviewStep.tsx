@@ -16,6 +16,7 @@ import { StatusBadge } from '../../components/StatusBadge'
 import type { ConnectorMappingField } from '../../lib/dis-ui-server/connectors-api'
 import { isIgnored, mappingTargetFor } from './state'
 import type { ConnectorWizardAction, ConnectorWizardState } from './state'
+import type { WizardErrorCopy } from './wizard-errors'
 
 // Step 7 (Preview): the canonical preview table (STUBBED coerced rows) plus a "Template type"
 // field at the top (backend-provided, STUBBED value, TODO-wire). Ignored fields are listed and
@@ -36,6 +37,7 @@ export function PreviewStep({
   rows,
   loading,
   readOnlyTemplateType = false,
+  createError = null,
 }: {
   state: ConnectorWizardState
   dispatch: Dispatch<ConnectorWizardAction>
@@ -46,6 +48,9 @@ export function PreviewStep({
   // CSV branch: the template type was chosen on its own step, so show it read-only here (no
   // re-pick). POS branch leaves it as the editable select.
   readOnlyTemplateType?: boolean
+  // A failed create (the semantic gate or a conflict), surfaced inline so the user keeps wizard
+  // state and can go back to fix the mapping or change the type. Cleared on retry / Back.
+  createError?: WizardErrorCopy | null
 }) {
   if (loading) {
     return <LoadingState label="Building preview..." />
@@ -62,6 +67,17 @@ export function PreviewStep({
 
   return (
     <div className="flex flex-col gap-5">
+      {createError !== null ? (
+        <div
+          role="alert"
+          className="flex flex-col gap-1 rounded-md border border-danger/40 bg-danger/10 p-4"
+        >
+          <p className="text-body-strong text-danger">We could not create this template</p>
+          <p className="text-body text-foreground">{createError.reason}</p>
+          <p className="text-caption text-muted-foreground">{createError.action}</p>
+        </div>
+      ) : null}
+
       <div className="flex max-w-xs flex-col gap-1.5">
         <Label htmlFor="connector-template-type">Template type</Label>
         {readOnlyTemplateType ? (

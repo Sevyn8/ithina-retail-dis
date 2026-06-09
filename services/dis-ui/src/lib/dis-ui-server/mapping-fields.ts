@@ -365,10 +365,14 @@ export async function getTemplateMappingFields(): Promise<TemplateMappingField[]
   return [...CATALOG_FIXTURE]
 }
 
-export function useTemplateMappingFields() {
+// `enabled` gates the fetch: the bare (no-param) endpoint is rejected by the type-required
+// backend (slice-14d), so callers that have no template_type must NOT fire it. Defaults to true
+// so existing callers are unchanged; the unified connector route passes the POS-branch predicate.
+export function useTemplateMappingFields(enabled = true) {
   return useQuery({
     queryKey: ['dis-ui-server', 'template-mapping-fields'],
     queryFn: getTemplateMappingFields,
+    enabled,
     staleTime: Infinity,
     retry: false,
   })

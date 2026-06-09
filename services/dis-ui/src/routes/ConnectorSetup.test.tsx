@@ -137,6 +137,9 @@ describe('ConnectorSetup (CSV / SFTP branch)', () => {
       { type: 'text/csv' },
     )
     await user.upload(screen.getByLabelText('CSV file'), file)
+    // Fix 3: the selected-file card shows the REAL size (not the old 0-byte File([]) stub).
+    expect(screen.queryByText('0 B')).not.toBeInTheDocument()
+    expect(screen.getByText(/\d+ B/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Next' }))
 
     // 3. Template type (WIRED, fixture-backed): the three types render; pick Sales.

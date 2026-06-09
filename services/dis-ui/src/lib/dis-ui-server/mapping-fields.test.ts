@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { renderHook, waitFor } from '@testing-library/react'
+import { createElement } from 'react'
+import type { ReactNode } from 'react'
 
 import { clearToken, writeToken } from '../../auth/storage'
 import {
@@ -7,6 +11,7 @@ import {
   canonicalTargetKeys,
   getTemplateMappingFields,
   getTemplateMappingFieldsForType,
+  useTemplateMappingFields,
 } from './mapping-fields'
 import type { FieldDatatype, FieldSection } from './mapping-fields'
 
@@ -150,6 +155,30 @@ describe('type-aware template-mapping-fields (Chunk 2, fixture mode)', () => {
   it('an unknown template type degrades to just the __ignore__ sentinel (no crash)', async () => {
     const fields = await getTemplateMappingFieldsForType('not_a_type')
     expect(fields).toEqual([IGNORE_FIELD])
+  })
+})
+
+// The bare hook must NOT fire without a valid template_type: the type-required backend rejects a
+// param-less GET (400). The unified connector route passes `enabled = (branch === 'pos')`.
+describe('useTemplateMappingFields enabled gate', () => {
+  function makeWrapper() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children)
+  }
+
+  it('does not fetch when disabled (no param-less call)', () => {
+    const { result } = renderHook(() => useTemplateMappingFields(false), {
+      wrapper: makeWrapper(),
+    })
+    expect(result.current.fetchStatus).toBe('idle')
+    expect(result.current.data).toBeUndefined()
+  })
+
+  it('fetches when enabled (default)', async () => {
+    const { result } = renderHook(() => useTemplateMappingFields(), { wrapper: makeWrapper() })
+    await waitFor(() => expect(result.current.data).toBeDefined())
+    expect(result.current.data).toHaveLength(CATALOG_FIXTURE.length)
   })
 })
 

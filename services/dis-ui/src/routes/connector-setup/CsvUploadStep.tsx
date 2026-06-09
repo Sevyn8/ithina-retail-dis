@@ -13,25 +13,25 @@ import type { ConnectorWizardAction, ConnectorWizardState } from './state'
 export function CsvUploadStep({
   state,
   dispatch,
+  file,
   onSelectFile,
 }: {
   state: ConnectorWizardState
   dispatch: Dispatch<ConnectorWizardAction>
-  // Lift the real File to the route (kept out of the pure reducer; non-serializable).
+  // The real selected File, held by the route (kept out of the pure reducer; non-serializable).
+  // Used directly for the dropzone card so it shows the true name and size (not a 0-byte stub).
+  file: File | null
   onSelectFile: (file: File | null) => void
 }) {
-  // Reconstruct a File-like handle for the dropzone's selected card from the recorded name.
-  const selected = state.csvFileName.length > 0 ? new File([], state.csvFileName) : null
-
-  function onSelect(file: File | null): void {
-    onSelectFile(file)
-    if (file === null) {
+  function onSelect(next: File | null): void {
+    onSelectFile(next)
+    if (next === null) {
       dispatch({ type: 'setCsvFile', fileName: '' })
       return
     }
     // Record the file name (display + Next gate). The real parse + suggestions run at the
     // mapping step, once the chosen template_type is known.
-    dispatch({ type: 'setCsvFile', fileName: file.name })
+    dispatch({ type: 'setCsvFile', fileName: next.name })
     dispatch({ type: 'setCsvAnalysisReady' })
   }
 
@@ -52,7 +52,7 @@ export function CsvUploadStep({
         label="Sample file"
         accept=".csv,text/csv"
         hint="We read the columns from a sample. Nothing is ingested yet."
-        file={selected}
+        file={file}
         onSelect={onSelect}
       />
     </div>
