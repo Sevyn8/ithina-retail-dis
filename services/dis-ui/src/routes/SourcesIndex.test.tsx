@@ -72,8 +72,11 @@ describe('SourcesIndex', () => {
   it('offers Create and per-row Edit, with deprecate moved out (T6) and no hard-delete control', async () => {
     renderWithProviders(<SourcesIndex />, { snapshot: acmeSnapshot })
     await screen.findByRole('heading', { name: 'Manage sources' })
-    // R7: the connector picker is the add-source front door
-    expect(screen.getByRole('link', { name: 'New source' })).toHaveAttribute('href', '/connect')
+    // Connect a System is the add-source front door (the old /connect picker was retired)
+    expect(screen.getByRole('link', { name: 'New source' })).toHaveAttribute(
+      'href',
+      '/connectors/new',
+    )
     expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute(
       'href',
       '/sources/manual_csv_upload/edit',

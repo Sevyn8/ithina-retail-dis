@@ -21,10 +21,13 @@ describe('Dashboard (honest skeleton)', () => {
     vi.restoreAllMocks()
   })
 
-  it('routes the Add source affordance to the connector picker', async () => {
+  it('routes the Add source affordance to Connect a System', async () => {
     renderWithProviders(<Dashboard />, { snapshot: tenant })
     await screen.findByRole('heading', { name: 'Dashboard' })
-    expect(screen.getByRole('link', { name: 'Add source' })).toHaveAttribute('href', '/connect')
+    expect(screen.getByRole('link', { name: 'Add source' })).toHaveAttribute(
+      'href',
+      '/connectors/new',
+    )
   })
 
   it('shows the REAL active-pipelines count and "Metrics pending" for the other KPIs (no numbers)', async () => {

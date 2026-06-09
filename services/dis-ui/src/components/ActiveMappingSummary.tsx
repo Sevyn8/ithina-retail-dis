@@ -2,7 +2,7 @@ import { ArrowRight } from 'lucide-react'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { MappingTemplateVersion, NormalizeOp } from '../lib/dis-ui-server/mapping-templates'
-import type { TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
+import type { CatalogField } from '../lib/dis-ui-server/mapping-fields'
 
 // Render one normalize/derive op as "name (arg=value, ...)" - the format declarations
 // (date_format, decimal_separator) live in the args.
@@ -26,9 +26,9 @@ export function ActiveMappingSummary({
   catalog,
 }: {
   version: MappingTemplateVersion
-  catalog: TemplateMappingField[]
+  catalog: CatalogField[]
 }) {
-  const fieldByKey = new Map<string, TemplateMappingField>()
+  const fieldByKey = new Map<string, CatalogField>()
   for (const field of catalog) {
     if (!fieldByKey.has(field.key)) {
       fieldByKey.set(field.key, field)
@@ -39,7 +39,11 @@ export function ActiveMappingSummary({
   const renameEntries = Object.entries(rules.rename)
   // Format rules: union of the canonical columns touched by normalize / cast / derive.
   const ruleColumns = [
-    ...new Set([...Object.keys(rules.normalize), ...Object.keys(rules.cast), ...Object.keys(rules.derive)]),
+    ...new Set([
+      ...Object.keys(rules.normalize),
+      ...Object.keys(rules.cast),
+      ...Object.keys(rules.derive),
+    ]),
   ]
 
   return (
@@ -57,8 +61,13 @@ export function ActiveMappingSummary({
               const field = fieldByKey.get(canonicalKey)
               return (
                 <li key={sourceCol} className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="font-mono text-xs break-all text-muted-foreground">{sourceCol}</span>
-                  <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="font-mono text-xs break-all text-muted-foreground">
+                    {sourceCol}
+                  </span>
+                  <ArrowRight
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
                   <span className="font-medium break-all text-foreground">
                     {field ? field.display_name : canonicalKey}
                     {field?.mandatory ? ' *' : ''}
@@ -66,9 +75,15 @@ export function ActiveMappingSummary({
                   <span className="font-mono text-caption break-all text-muted-foreground">
                     {canonicalKey}
                   </span>
-                  <span className="text-caption text-muted-foreground">{field?.section ?? '-'}</span>
-                  <span aria-hidden="true" className="text-caption text-muted-foreground">·</span>
-                  <span className="text-caption text-muted-foreground">{field?.datatype ?? '-'}</span>
+                  <span className="text-caption text-muted-foreground">
+                    {field?.section ?? '-'}
+                  </span>
+                  <span aria-hidden="true" className="text-caption text-muted-foreground">
+                    ·
+                  </span>
+                  <span className="text-caption text-muted-foreground">
+                    {field?.datatype ?? '-'}
+                  </span>
                 </li>
               )
             })}
@@ -107,7 +122,9 @@ export function ActiveMappingSummary({
                 return (
                   <li key={col} className="flex flex-col gap-0.5">
                     <span className="font-mono text-xs break-all text-foreground">{col}</span>
-                    <span className="text-caption break-words text-muted-foreground">{parts.join('; ')}</span>
+                    <span className="text-caption break-words text-muted-foreground">
+                      {parts.join('; ')}
+                    </span>
                   </li>
                 )
               })}

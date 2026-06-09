@@ -5,7 +5,6 @@ import { clearToken, writeToken } from '../../auth/storage'
 import { DisUiServerHttpError } from './client'
 import {
   activeTemplateVersion,
-  createMappingTemplate,
   getMappingTemplate,
   getMappingTemplates,
   patchMappingTemplate,
@@ -209,21 +208,6 @@ describe('mapping-templates real mode (T10)', () => {
     await expect(getMappingTemplate(tenant, 'nope')).rejects.toBeInstanceOf(DisUiServerHttpError)
   })
 
-  it('create POSTs MappingTemplateCreate as a JSON body', async () => {
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
-      ok(RAW_DETAIL, 201),
-    )
-    vi.stubGlobal('fetch', fetchMock)
-    const body = { source_id: 'manual_csv_upload', template_name: 'Sales', mapping_rules: RULES }
-    const created = await createMappingTemplate(body)
-    const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://test.local/api/v1/mapping-templates')
-    expect((init as RequestInit).method).toBe('POST')
-    expect((init as RequestInit).headers).toMatchObject({ 'content-type': 'application/json' })
-    expect((init as RequestInit).body).toBe(JSON.stringify(body))
-    expect(created.ingestion_mode).toBe('file')
-  })
-
   it('patch PATCHes MappingTemplatePatch as a JSON body', async () => {
     const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
       ok(RAW_DETAIL),
@@ -243,28 +227,6 @@ describe('mapping-templates real mode (T10)', () => {
 // Create-as-ACTIVE (D88): create in FIXTURE mode synthesizes a LIVE v1 (active_version=1); edit
 // (patch) still synthesizes a DRAFT (the D17 lifecycle for changes). No mutable store, no backend.
 describe('mapping-templates create/patch fixture mode', () => {
-  it('createMappingTemplate synthesizes a live v1 ACTIVE from the request', async () => {
-    const rules: SourceMappingRules = {
-      version: 1,
-      rename: { a: 'sku_id', b: 'quantity' },
-      normalize: {},
-      cast: {},
-      derive: {},
-    }
-    const detail = await createMappingTemplate({
-      source_id: 'manual_csv_upload',
-      template_name: 'New',
-      mapping_rules: rules,
-    })
-    expect(detail.template_name).toBe('New')
-    expect(detail.active_version).toBe(1)
-    expect(detail.draft_version).toBeNull()
-    expect(detail.staged_version).toBeNull()
-    expect(detail.versions[0].status).toBe('active')
-    expect(detail.versions[0].activated_at).not.toBeNull()
-    expect(detail.versions[0].field_count).toBe(2)
-  })
-
   it('patchMappingTemplate synthesizes a DRAFT echoing the patch', async () => {
     const detail = await patchMappingTemplate('tmpl-1', { template_name: 'Renamed' })
     expect(detail.template_name).toBe('Renamed')

@@ -1,8 +1,37 @@
 import { render, screen, within } from '@testing-library/react'
 
 import { ActiveMappingSummary } from './ActiveMappingSummary'
-import { CATALOG_FIXTURE } from '../lib/dis-ui-server/mapping-fields'
+import type { CatalogField } from '../lib/dis-ui-server/mapping-fields'
 import type { MappingTemplateVersion } from '../lib/dis-ui-server/mapping-templates'
+
+// A minimal type-aware catalog (CatalogField[], the shape the summary now consumes): the two
+// canonical fields the version's renames target. sku_id is mandatory (renders the " *").
+const catalog: CatalogField[] = [
+  {
+    key: 'sku_id',
+    display_name: 'SKU',
+    section: 'identity',
+    mandatory: true,
+    constraints: null,
+    datatype: 'text',
+    description: '',
+    allowed_values: null,
+    max_length: 128,
+    sink: 'store_sku_current_position',
+  },
+  {
+    key: 'quantity',
+    display_name: 'Quantity',
+    section: 'sale_event',
+    mandatory: false,
+    constraints: null,
+    datatype: 'integer',
+    description: '',
+    allowed_values: null,
+    max_length: null,
+    sink: 'store_sku_sale_event',
+  },
+]
 
 // A minimal active version touching both concerns: two field mappings, and a format rule
 // (normalize + cast) on quantity. Shaped to the real MappingTemplateVersion / raw-D49 rules.
@@ -21,7 +50,9 @@ const version: MappingTemplateVersion = {
     version: 1,
     rename: { item_code: 'sku_id', qty: 'quantity' },
     normalize: {
-      quantity: [{ op: 'parse_decimal', args: { decimal_separator: '.', thousands_separator: null } }],
+      quantity: [
+        { op: 'parse_decimal', args: { decimal_separator: '.', thousands_separator: null } },
+      ],
     },
     cast: { quantity: { type: 'integer' } },
     derive: {},
@@ -33,7 +64,7 @@ const version: MappingTemplateVersion = {
 // upload), so the no-scroll guarantee lives here once.
 describe('ActiveMappingSummary (T8 compact, no in-card scroll)', () => {
   it('renders the two concerns without any horizontal-scroll container (FM2)', () => {
-    const { container } = render(<ActiveMappingSummary version={version} catalog={CATALOG_FIXTURE} />)
+    const { container } = render(<ActiveMappingSummary version={version} catalog={catalog} />)
     // both concern cards present
     expect(screen.getByText('Field mappings')).toBeInTheDocument()
     expect(screen.getByText('Format rules')).toBeInTheDocument()
@@ -49,7 +80,7 @@ describe('ActiveMappingSummary (T8 compact, no in-card scroll)', () => {
   it('mounts under the dark theme class', () => {
     const { container } = render(
       <div className="dark">
-        <ActiveMappingSummary version={version} catalog={CATALOG_FIXTURE} />
+        <ActiveMappingSummary version={version} catalog={catalog} />
       </div>,
     )
     expect(within(container).getByText('Field mappings')).toBeInTheDocument()

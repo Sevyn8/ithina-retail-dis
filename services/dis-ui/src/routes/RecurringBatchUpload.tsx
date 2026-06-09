@@ -15,8 +15,8 @@ import { DisUiServerHttpError } from '../lib/dis-ui-server/client'
 import { uploadCsvWithSessionToken } from '../lib/dis-ui-server/csv-uploads'
 import type { CsvUploadResult } from '../lib/dis-ui-server/csv-uploads'
 import { activeTemplateVersion, useMappingTemplate } from '../lib/dis-ui-server/mapping-templates'
-import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
-import type { TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
+import { useTemplateMappingFieldsForType } from '../lib/dis-ui-server/mapping-fields'
+import type { CatalogField } from '../lib/dis-ui-server/mapping-fields'
 import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
 
 // Ingest data (T5 / T4-real), at /sources/:sourceId/templates/:templateId/upload. A tenant
@@ -61,7 +61,9 @@ export function RecurringBatchUpload() {
   const { templateId } = useParams()
   const { snapshot } = useAuth()
   const detail = useMappingTemplate(snapshot, templateId ?? null)
-  const fields = useTemplateMappingFields()
+  // Type-aware catalog keyed on the template's own template_type (null while the detail
+  // loads, or if the type is absent -> the hook is gated, no param-less 400).
+  const fields = useTemplateMappingFieldsForType(detail.data?.template_type ?? null)
   const stores = useStoresOnboarded(snapshot)
 
   const [file, setFile] = useState<File | null>(null)
@@ -102,7 +104,7 @@ export function RecurringBatchUpload() {
   }
 
   const active = activeTemplateVersion(template)
-  const catalog: TemplateMappingField[] = fields.data ?? []
+  const catalog: CatalogField[] = fields.data ?? []
   // The endpoint requires an ACTIVE store WITH a store_code; offer only those (a non-active or
   // code-less store would be a server 404/409). store_code is nullable at source (D55).
   const uploadableStores = (stores.data ?? []).filter(

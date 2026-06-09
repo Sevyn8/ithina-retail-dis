@@ -3,7 +3,14 @@ import { Link, useParams } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { ActiveMappingSummary } from '../components/ActiveMappingSummary'
 import { EmptyState } from '../components/states/EmptyState'
 import { ErrorState } from '../components/states/ErrorState'
@@ -12,8 +19,8 @@ import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
 import { activeTemplateVersion, useMappingTemplate } from '../lib/dis-ui-server/mapping-templates'
 import type { MappingTemplateVersion, TemplateStatus } from '../lib/dis-ui-server/mapping-templates'
-import { useTemplateMappingFields } from '../lib/dis-ui-server/mapping-fields'
-import type { TemplateMappingField } from '../lib/dis-ui-server/mapping-fields'
+import { useTemplateMappingFieldsForType } from '../lib/dis-ui-server/mapping-fields'
+import type { CatalogField } from '../lib/dis-ui-server/mapping-fields'
 import { useStoresOnboarded } from '../lib/dis-ui-server/stores'
 
 function statusTone(status: TemplateStatus): StatusTone {
@@ -38,7 +45,9 @@ export function TemplateDetail() {
   const { templateId } = useParams()
   const { snapshot } = useAuth()
   const detail = useMappingTemplate(snapshot, templateId ?? null)
-  const fields = useTemplateMappingFields()
+  // Type-aware catalog keyed on the template's own template_type (null while the detail
+  // loads, or if the type is absent -> the hook is gated, no param-less 400).
+  const fields = useTemplateMappingFieldsForType(detail.data?.template_type ?? null)
   const stores = useStoresOnboarded(snapshot)
 
   if (templateId === undefined) {
@@ -54,7 +63,7 @@ export function TemplateDetail() {
 
   const template = detail.data
   const active = activeTemplateVersion(template)
-  const catalog: TemplateMappingField[] = fields.data ?? []
+  const catalog: CatalogField[] = fields.data ?? []
 
   return (
     <section className="flex flex-col gap-6">
@@ -104,36 +113,42 @@ export function TemplateDetail() {
           <CardTitle>Version history</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto"><Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Version</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Fields</TableHead>
-                <TableHead>Rules</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Active window</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {template.versions.map((version: MappingTemplateVersion) => (
-                <TableRow key={version.mapping_version_id}>
-                  <TableCell className="font-medium text-foreground">v{version.version}</TableCell>
-                  <TableCell>
-                    <StatusBadge tone={statusTone(version.status)}>{version.status}</StatusBadge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{version.field_count}</TableCell>
-                  <TableCell className="text-muted-foreground">{version.transform_count}</TableCell>
-                  <TableCell className="text-muted-foreground">{version.created_at}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {version.activated_at === null
-                      ? '-'
-                      : `${version.activated_at} to ${version.deprecated_at ?? 'current'}`}
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Version</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Fields</TableHead>
+                  <TableHead>Rules</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Active window</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table></div>
+              </TableHeader>
+              <TableBody>
+                {template.versions.map((version: MappingTemplateVersion) => (
+                  <TableRow key={version.mapping_version_id}>
+                    <TableCell className="font-medium text-foreground">
+                      v{version.version}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge tone={statusTone(version.status)}>{version.status}</StatusBadge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{version.field_count}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {version.transform_count}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{version.created_at}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {version.activated_at === null
+                        ? '-'
+                        : `${version.activated_at} to ${version.deprecated_at ?? 'current'}`}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
@@ -146,7 +161,8 @@ export function TemplateDetail() {
         <CardHeader>
           <CardTitle>Store context</CardTitle>
           <p className="text-caption text-muted-foreground">
-            Locale facts from your onboarded stores. Used as defaults; mapping store binding is resolved at ingest.
+            Locale facts from your onboarded stores. Used as defaults; mapping store binding is
+            resolved at ingest.
           </p>
         </CardHeader>
         <CardContent>
@@ -155,26 +171,28 @@ export function TemplateDetail() {
           ) : stores.isError || stores.data === undefined || stores.data.length === 0 ? (
             <p className="text-caption text-muted-foreground">No onboarded stores.</p>
           ) : (
-            <div className="overflow-x-auto"><Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Store</TableHead>
-                  <TableHead>Currency</TableHead>
-                  <TableHead>Timezone</TableHead>
-                  <TableHead>Tax</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stores.data.map((store) => (
-                  <TableRow key={store.store_id}>
-                    <TableCell className="font-medium text-foreground">{store.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{store.currency}</TableCell>
-                    <TableCell className="text-muted-foreground">{store.timezone}</TableCell>
-                    <TableCell className="text-muted-foreground">{store.tax_treatment}</TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Store</TableHead>
+                    <TableHead>Currency</TableHead>
+                    <TableHead>Timezone</TableHead>
+                    <TableHead>Tax</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table></div>
+                </TableHeader>
+                <TableBody>
+                  {stores.data.map((store) => (
+                    <TableRow key={store.store_id}>
+                      <TableCell className="font-medium text-foreground">{store.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{store.currency}</TableCell>
+                      <TableCell className="text-muted-foreground">{store.timezone}</TableCell>
+                      <TableCell className="text-muted-foreground">{store.tax_treatment}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

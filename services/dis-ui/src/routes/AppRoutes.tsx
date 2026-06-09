@@ -4,19 +4,15 @@ import { AuthBoundary } from '../auth/AuthBoundary'
 import { OpsBoundary } from '../auth/OpsBoundary'
 import { AppLayout } from './AppLayout'
 import { AuditLookup } from './AuditLookup'
-import { ConnectorPicker } from './ConnectorPicker'
 import { ConnectorSetup } from './ConnectorSetup'
 import { DevLogin } from './DevLogin'
 import { IndexRoute } from './IndexRoute'
 import { IngestData } from './IngestData'
-import { MappingReview } from './MappingReview'
 import { MappingVersions } from './MappingVersions'
 import { NotFound } from './NotFound'
-import { PosConnect } from './PosConnect'
 import { Notifications } from './Notifications'
 import { QuarantineConsole } from './QuarantineConsole'
 import { RecurringBatchUpload } from './RecurringBatchUpload'
-import { SampleUpload } from './SampleUpload'
 import { Shadow } from './Shadow'
 import { SourceCreate } from './SourceCreate'
 import { SourceEdit } from './SourceEdit'
@@ -41,14 +37,9 @@ export function AppRoutes() {
       <Route element={<AuthBoundary />}>
         <Route element={<AppLayout />}>
           <Route index element={<IndexRoute />} />
-          {/* Connector picker (redesign R2): the "add a source" surface. Net-new; not in
-              nav (the sidebar does not change). Entry points arrive in R4/R6. */}
-          <Route path="/connect" element={<ConnectorPicker />} />
-          {/* Thin POS connect step (redesign R5): coming-soon, parameterized by POS type. */}
-          <Route path="/connect/:posType" element={<PosConnect />} />
-          {/* Connect a System (Chunk 1): the NEW, separate Live Sync connector wizard for POS
-              (Shopify/Square/Clover). UI-only, all backend actions stubbed (connectors-api).
-              Distinct from the existing Add Source surface (/connect), which is unchanged. */}
+          {/* Connect a System: the unified add-source wizard (POS Live Sync branches +
+              CSV/SFTP branch). The retired OLD Add Source picker (/connect) and the old
+              /upload onboarding wizard were removed; this is the single add-source surface. */}
           <Route path="/connectors/new" element={<ConnectorSetup />} />
           {/* T5: Ingest Data is the flat template list (per-row ingest). Source CRUD
               stays at /sources (SourcesIndex), reached via its "Manage sources" link. */}
@@ -66,8 +57,6 @@ export function AppRoutes() {
             element={<RecurringBatchUpload />}
           />
           <Route path="/sources/:sourceId/shadow" element={<Shadow />} />
-          <Route path="/upload" element={<SampleUpload />} />
-          <Route path="/upload/:sampleId/review" element={<MappingReview />} />
           <Route path="/quarantine" element={<QuarantineConsole />} />
           <Route path="/audit" element={<AuditLookup />} />
           <Route path="/notifications" element={<Notifications />} />

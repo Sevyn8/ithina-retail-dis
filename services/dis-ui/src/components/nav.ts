@@ -1,4 +1,4 @@
-import { Bell, Database, FileSearch, LayoutDashboard, Plug, Plus, ShieldAlert } from 'lucide-react'
+import { Bell, Database, FileSearch, LayoutDashboard, Plug, ShieldAlert } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 // T7: nav items are grouped into labeled sections (Ithina-console look). The section is a
@@ -30,13 +30,10 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard, section: 'OVERVIEW' },
   // DATA: the source/template lifecycle, action-first. "Upload Data" is the flat template
-  // registry (/ingest), one card per template with View + per-template upload. The onboarding
-  // journey (/upload) has no dedicated nav door anymore - it is reached via "Add Source"
-  // (/connect)'s "Upload a CSV" CTA. "Add Source" promotes the connector picker (/connect).
+  // registry (/ingest), one card per template with View + per-template upload. "Connect a
+  // System" (/connectors/new) is the single add-source surface (POS Live Sync branches +
+  // CSV/SFTP branch); the old "Add Source" picker (/connect) and /upload wizard were retired.
   { label: 'Upload Data', to: '/ingest', icon: Database, section: 'DATA' },
-  { label: 'Add Source', to: '/connect', icon: Plus, section: 'DATA' },
-  // "Connect a System" (Chunk 1): the NEW Live Sync connector wizard (/connectors/new) for POS
-  // (Shopify/Square/Clover). Sits beside the existing "Add Source" (unchanged); separate route.
   { label: 'Connect a System', to: '/connectors/new', icon: Plug, section: 'DATA' },
   // MONITORING: Quarantine and Audit are scope-aware (T9): a tenant sees their own tenant
   // (scope locked, no tenant filter); an ops user sees the fleet-wide view with a tenant

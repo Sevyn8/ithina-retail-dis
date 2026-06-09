@@ -93,7 +93,7 @@ export function Dashboard() {
           Is your data flowing, and landing clean?
         </p>
       </div>
-      <Link to="/connect" className={buttonVariants({ variant: 'default', size: 'sm' })}>
+      <Link to="/connectors/new" className={buttonVariants({ variant: 'default', size: 'sm' })}>
         Add source
       </Link>
     </header>

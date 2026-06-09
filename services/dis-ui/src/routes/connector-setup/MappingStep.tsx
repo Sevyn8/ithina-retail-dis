@@ -39,9 +39,9 @@ import type { ConnectorWizardAction, ConnectorWizardState } from './state'
 // a NARROW structural type so both the legacy `TemplateMappingField[]` (POS) and the new
 // `CatalogField[]` (CSV) are assignable without coupling to either concrete shape.
 //
-// DELIBERATE DUPLICATION (unchanged from Chunk 1): the row + format-line rendering mirror
-// MappingReview.tsx rather than sharing a component, to keep the old Add Source surface
-// untouched. Confidence/reasoning/format are STUBBED (TODO-wire-to-Vertex in connectors-api).
+// This step owns its row + format-line rendering directly (it once mirrored the now-retired
+// MappingReview surface). Confidence/reasoning/format are STUBBED (TODO-wire-to-Vertex in
+// connectors-api).
 
 // The minimal field shape the mapping step needs from a catalog. Both the legacy event catalog
 // and the type-aware CatalogField satisfy this structurally.

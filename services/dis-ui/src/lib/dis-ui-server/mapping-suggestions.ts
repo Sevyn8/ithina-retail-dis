@@ -24,10 +24,13 @@ export type MappingSuggestionRequest = {
   columns: ColumnProfile[]
   source_id?: string | null
   template_name?: string | null
-  // Type-aware suggestions (D90): when set, the server scores against THAT type's per-type
-  // catalog (snapshot included). Omitted by the legacy /upload flow (server falls back to the
-  // sales+inventory_change union). The fixture mechanicalSuggest ignores it.
-  template_type?: string | null
+  // Type-aware suggestions (D90): the server scores against THIS type's per-type catalog
+  // (snapshot included). REQUIRED now that the legacy /upload flow (the only caller that omitted
+  // it) is retired: every caller is type-aware (connectors-api.analyzeCsvSample). The fixture
+  // mechanicalSuggest ignores it. NOTE: the dis-ui-server handler still keeps a no-template_type
+  // union fallback (unreachable dead code post-retirement) - removing it is a deferred backend
+  // follow-up (dis-ui-server domain), not bundled into this frontend cleanup.
+  template_type: string
 }
 
 // MappingSuggestionResponse.Suggestion. `suggested_target` is a catalog key or null;

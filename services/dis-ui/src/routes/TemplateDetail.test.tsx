@@ -32,6 +32,10 @@ describe('TemplateDetail (T2: lineage + field/rules split + store context)', () 
   it('presents the active mapping as FIELD mappings (catalog-enriched) and FORMAT rules', async () => {
     renderDetail(SALES)
     await screen.findByRole('heading', { name: 'Sales' })
+    // The type-aware catalog is keyed on the template's template_type, so it resolves just
+    // after the detail; wait for the enrichment (the catalog section renders only once a
+    // field is resolved) before asserting the enriched rows.
+    await screen.findAllByText('sale_event')
     // field mappings: a source column maps to a catalog field; the catalog enrichment
     // (canonical key + section) renders; store_id is never a target (FM3)
     expect(screen.getByText('Field mappings')).toBeInTheDocument()

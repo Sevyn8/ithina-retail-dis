@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import type { AuthSnapshot } from '../../auth/AuthSnapshot'
-import { getJson, patchJson, postJson } from './client'
+import { getJson, patchJson } from './client'
 import { isRealMode } from './mode'
 
 // Mapping-template endpoints (slice 14b, D68): a mapping is a TEMPLATE - a version lineage
@@ -384,7 +384,6 @@ function normalizeDetail(raw: RawMappingTemplateDetail): MappingTemplateDetail {
 // Fixture-mode synthesis (T10): build a plausible v1 detail from a create/edit request. No
 // mutable store - real mode is the source of truth for writes. `live` mirrors the backend
 // lifecycle: create writes the v1 ACTIVE (create-as-ACTIVE, D88), edit writes a DRAFT.
-const FIXTURE_DRAFT_TEMPLATE_ID = '0190ac10-5a00-7000-8a00-00000000fff1'
 function synthV1Detail(
   templateId: string,
   sourceId: string,
@@ -484,26 +483,6 @@ export async function getMappingTemplate(
     throw new Error(`mapping template ${templateId} not found`)
   }
   return found
-}
-
-// POST /api/v1/mapping-templates -> 201 MappingTemplateDetail (writes a v1 ACTIVE, create-as-
-// ACTIVE D88: go-live is live in one step). Real mode posts the body; fixture synthesizes an
-// ACTIVE v1 to mirror the contract.
-export async function createMappingTemplate(
-  body: MappingTemplateCreate,
-): Promise<MappingTemplateDetail> {
-  if (isRealMode()) {
-    return normalizeDetail(
-      await postJson<RawMappingTemplateDetail>('/api/v1/mapping-templates', body),
-    )
-  }
-  return synthV1Detail(
-    FIXTURE_DRAFT_TEMPLATE_ID,
-    body.source_id,
-    body.template_name,
-    body.mapping_rules,
-    true, // create-as-ACTIVE
-  )
 }
 
 // PATCH /api/v1/mapping-templates/{template_id} -> MappingTemplateDetail (DRAFT edit / new

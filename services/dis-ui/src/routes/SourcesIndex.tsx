@@ -8,7 +8,14 @@ import { ErrorState } from '../components/states/ErrorState'
 import { LoadingState } from '../components/states/LoadingState'
 import { StatusBadge } from '../components/StatusBadge'
 import type { StatusTone } from '../components/StatusBadge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { sourceIdentity } from '../components/source-identity'
 import { useSources } from '../lib/dis-ui-server/sources'
 import type { SourceStatus } from '../lib/dis-ui-server/sources'
@@ -51,7 +58,7 @@ export function SourcesIndex() {
             <h1 className="text-display">Manage sources</h1>
             <p className="text-caption text-muted-foreground">Your configured data sources.</p>
           </div>
-          <Link to="/connect" className={buttonVariants({ variant: 'default', size: 'sm' })}>
+          <Link to="/connectors/new" className={buttonVariants({ variant: 'default', size: 'sm' })}>
             New source
           </Link>
         </header>
@@ -67,7 +74,7 @@ export function SourcesIndex() {
           <h1 className="text-display">Manage sources</h1>
           <p className="text-caption text-muted-foreground">Your configured data sources.</p>
         </div>
-        <Link to="/connect" className={buttonVariants({ variant: 'default', size: 'sm' })}>
+        <Link to="/connectors/new" className={buttonVariants({ variant: 'default', size: 'sm' })}>
           New source
         </Link>
       </header>
@@ -92,45 +99,47 @@ export function SourcesIndex() {
                 const identity = sourceIdentity(source.type.toLowerCase())
                 const Icon = identity.icon
                 return (
-                <TableRow key={source.source_id}>
-                  <TableCell className="font-medium text-foreground">
-                    <span className="flex items-center gap-2">
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          'flex size-6 items-center justify-center rounded-md',
-                          identity.bgSoftClass,
-                          identity.textClass,
-                        )}
-                      >
-                        <Icon className="size-3.5" />
+                  <TableRow key={source.source_id}>
+                    <TableCell className="font-medium text-foreground">
+                      <span className="flex items-center gap-2">
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            'flex size-6 items-center justify-center rounded-md',
+                            identity.bgSoftClass,
+                            identity.textClass,
+                          )}
+                        >
+                          <Icon className="size-3.5" />
+                        </span>
+                        {source.name}
                       </span>
-                      {source.name}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{source.type}</TableCell>
-                  <TableCell className="text-muted-foreground">{source.store}</TableCell>
-                  <TableCell>
-                    <StatusBadge tone={statusTone(source.status)}>{source.status}</StatusBadge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">v{source.active_version}</TableCell>
-                  <TableCell>
-                    <span className="flex items-center justify-end gap-2">
-                      <Link
-                        to={`/sources/${source.source_id}/templates`}
-                        className={buttonVariants({ variant: 'outline', size: 'sm' })}
-                      >
-                        Mappings
-                      </Link>
-                      <Link
-                        to={`/sources/${source.source_id}/edit`}
-                        className={buttonVariants({ variant: 'outline', size: 'sm' })}
-                      >
-                        Edit
-                      </Link>
-                    </span>
-                  </TableCell>
-                </TableRow>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{source.type}</TableCell>
+                    <TableCell className="text-muted-foreground">{source.store}</TableCell>
+                    <TableCell>
+                      <StatusBadge tone={statusTone(source.status)}>{source.status}</StatusBadge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      v{source.active_version}
+                    </TableCell>
+                    <TableCell>
+                      <span className="flex items-center justify-end gap-2">
+                        <Link
+                          to={`/sources/${source.source_id}/templates`}
+                          className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                        >
+                          Mappings
+                        </Link>
+                        <Link
+                          to={`/sources/${source.source_id}/edit`}
+                          className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                        >
+                          Edit
+                        </Link>
+                      </span>
+                    </TableCell>
+                  </TableRow>
                 )
               })}
             </TableBody>

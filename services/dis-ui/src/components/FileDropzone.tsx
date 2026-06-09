@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label'
 import { formatBytes } from '../lib/format-bytes'
 
 // Shared CSV dropzone with upload feedback. ONE component so every caller behaves the same
-// (FM1): the create-template parse (SampleUpload) and the batch ingest (RecurringBatchUpload).
+// (FM1): the Connect a System CSV branch (CsvUploadStep) and the batch ingest (RecurringBatchUpload).
 //
 // States:
 // - EMPTY: the dashed prompt (drag-and-drop or browse). Real drag-and-drop is wired here
