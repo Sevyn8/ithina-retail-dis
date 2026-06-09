@@ -392,15 +392,18 @@ export function localePreset(key: LocaleKey): LocalePreset {
   return LOCALE_PRESETS.find((p) => p.key === key) ?? LOCALE_PRESETS[0]
 }
 
-// Per-datetime-column format choices, in the Slice-16a token vocab ("DD-MM-YYYY" style).
-// PROVISIONAL VOCAB: only "DD-MM-YYYY" is CONFIRMED from Sanjeev's 16a doc; the rest are our
-// UX choice and are unchecked until 16c (src_datetime_format is a free string in 16a). The
-// exact token vocab MUST be reconciled with Sanjeev's 16c parser when it lands.
+// Per-datetime-column format choices. The `value` is the wire token sent verbatim as
+// src_datetime_format in the create columns[] body (a READABLE token, never a strptime code):
+// Sanjeev's slice-16c translation layer converts the token to the engine format and REJECTS
+// any token outside the locked five with a 4xx. This set is held in EXACT lockstep with that
+// backend set (DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD, DD-MM-YY); labels are friendly,
+// only the value is load-bearing.
 export const CSV_DATETIME_FORMATS: { value: string; label: string }[] = [
   { value: 'DD-MM-YYYY', label: 'Day-Month-Year (31-12-2025)' },
-  { value: 'MM-DD-YYYY', label: 'Month-Day-Year (12-31-2025)' },
-  { value: 'YYYY-MM-DD', label: 'Year-Month-Day (2025-12-31)' },
   { value: 'DD/MM/YYYY', label: 'Day/Month/Year (31/12/2025)' },
+  { value: 'MM/DD/YYYY', label: 'Month/Day/Year (12/31/2025)' },
+  { value: 'YYYY-MM-DD', label: 'Year-Month-Day (2025-12-31)' },
+  { value: 'DD-MM-YY', label: 'Day-Month-Year, 2-digit year (31-12-25)' },
 ]
 
 // ----- Create (Slice-16a semantic columns[] contract, D89) ----------------------------
@@ -465,13 +468,15 @@ export async function createCsvTemplate(input: CreateCsvTemplateInput): Promise<
       draftVersion: raw.draft_version,
     }
   }
-  // Fixture: mirror the slice-16a SYNTHETIC 201 (nothing persisted; draft v1, no active version).
+  // Fixture: mirror the slice-16c REAL create (create-as-ACTIVE, D88): the row is written ACTIVE
+  // and persisted, so the response carries active_version 1 (no draft). Keeps dev/tests in step
+  // with real behavior, so CsvCreatedStep shows "Created and live" consistently.
   return {
     templateId: 'tmpl_stub_csv',
     templateName: input.templateName,
     templateType: input.templateType,
-    activeVersion: null,
-    draftVersion: 1,
+    activeVersion: 1,
+    draftVersion: null,
   }
 }
 

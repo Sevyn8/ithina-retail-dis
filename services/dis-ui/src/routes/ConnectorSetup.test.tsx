@@ -120,7 +120,7 @@ describe('ConnectorSetup (Live Sync wizard)', () => {
 })
 
 describe('ConnectorSetup (CSV / SFTP branch)', () => {
-  it('walks Source -> Upload -> Template type -> AI mapping (real parse) -> Preview -> Submitted', async () => {
+  it('walks Source -> Upload -> Template type -> AI mapping (real parse) -> Preview -> Created and live', async () => {
     const user = userEvent.setup()
     renderWizard()
     await screen.findByRole('heading', { name: 'Connect a system' })
@@ -163,11 +163,11 @@ describe('ConnectorSetup (CSV / SFTP branch)', () => {
     expect(screen.queryByRole('combobox', { name: 'Template type' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create template' }))
 
-    // 6. Template created: HONEST synthetic-201 (fixture: draft v1, no active version), so the
-    // copy is "Submitted" - NOT "Created and live" - per slice-16a (nothing persisted until 16c).
-    expect(await screen.findByRole('status')).toHaveTextContent('Submitted')
-    expect(screen.getByText('Draft v1')).toBeInTheDocument()
-    expect(screen.queryByText('Created and live')).not.toBeInTheDocument()
+    // 6. Template created: slice-16c create-as-ACTIVE (fixture mirrors real: active v1, no draft),
+    // so the copy is "Created and live" with an Active v1 badge.
+    expect(await screen.findByRole('status')).toHaveTextContent('Created and live')
+    expect(screen.getByText('Active v1')).toBeInTheDocument()
+    expect(screen.queryByText('Submitted')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Done' })).toBeInTheDocument()
   })
 })

@@ -204,13 +204,13 @@ describe('createCsvTemplate (REAL: Slice-16a columns[] contract, D89)', () => {
     ],
   }
 
-  it('fixture mode mirrors the synthetic 201 (draft v1, no active version)', async () => {
+  it('fixture mode mirrors the real 16c create (create-as-ACTIVE: active v1, no draft)', async () => {
     const created = await createCsvTemplate(INPUT)
     expect(created).toMatchObject({
       templateName: 'Weekly export',
       templateType: 'sales',
-      activeVersion: null,
-      draftVersion: 1,
+      activeVersion: 1,
+      draftVersion: null,
     })
     expect(created.templateId.length).toBeGreaterThan(0)
   })
@@ -237,8 +237,8 @@ describe('createCsvTemplate (REAL: Slice-16a columns[] contract, D89)', () => {
               template_id: 'tmpl_real_1',
               template_name: 'Weekly export',
               template_type: 'sales',
-              active_version: null,
-              draft_version: 1,
+              active_version: 1,
+              draft_version: null,
             }),
           }) as unknown as Response,
       )
@@ -254,15 +254,15 @@ describe('createCsvTemplate (REAL: Slice-16a columns[] contract, D89)', () => {
         template_type: 'sales',
         columns: INPUT.columns,
       })
-      expect('mapping_rules' in body).toBe(false) // extra-forbidden in 16a -> would 422
+      expect('mapping_rules' in body).toBe(false) // extra-forbidden -> would 422
       // ignored column carried as __ignore__; format declarations preserved (incl EU "." thousands)
       expect(body.columns[2]).toEqual({ src_key: 'junk', dest_key: '__ignore__' })
       expect(body.columns[1].src_thousand_separator).toBe('.')
-      // response read gracefully (synthetic 201: no active version)
+      // response read gracefully: 16c create-as-ACTIVE returns active v1, no draft
       expect(created).toMatchObject({
         templateId: 'tmpl_real_1',
-        activeVersion: null,
-        draftVersion: 1,
+        activeVersion: 1,
+        draftVersion: null,
       })
     })
   })
