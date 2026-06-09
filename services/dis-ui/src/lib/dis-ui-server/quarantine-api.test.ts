@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { renderHook, waitFor } from '@testing-library/react'
+import { createElement } from 'react'
+import type { ReactNode } from 'react'
 
+import type { AuthSnapshot } from '../../auth/AuthSnapshot'
 import { clearToken, writeToken } from '../../auth/storage'
-import { getQuarantineDetail, getQuarantineList } from './quarantine-api'
+import { getQuarantineDetail, getQuarantineList, useQuarantineList } from './quarantine-api'
 
 // Tenant Quarantine reads (GET /quarantine[/{item_id}]). Fixture mode applies the filters
 // client-side and serves inlined items; real mode builds the query string + path and GETs.
@@ -93,5 +98,83 @@ describe('quarantine-api real mode (mocked fetch)', () => {
     expect(url).toBe(
       'http://test.local/api/v1/quarantine/row%3A0190ac0e-1a01-7001-8a01-000000000001',
     )
+  })
+})
+
+// Regression pin: the EXACT real 200 body observed in staging (chunk row, microsecond+Z
+// timestamp, the list-only field set - no detail-only fields) must flow through the fetcher AND
+// the hook without throwing. getJson returns the body verbatim (no envelope, no validation, no
+// field renaming), and QuarantineListResponse matches {items, open_count} field-for-field.
+const REAL_200_BODY = {
+  items: [
+    {
+      id: 'chunk:019eabff-1111-7000-8000-000000000001',
+      kind: 'chunk',
+      trace_id: '019eabde-2222-7000-8000-000000000001',
+      source_id: 'wsp',
+      source: 'wsp',
+      error_reason: 'PRE_VALIDATION_FAILED',
+      failure_stage: 'source-shape',
+      failed_at: '2026-06-09T10:49:00.371792Z',
+      status: 'open',
+    },
+    {
+      id: 'row:019eabff-1111-7000-8000-000000000002',
+      kind: 'row',
+      trace_id: '019eabde-2222-7000-8000-000000000002',
+      source_id: 'wsp',
+      source: 'wsp',
+      error_reason: 'POST_VALIDATION_FAILED',
+      failure_stage: 'canonical-shape',
+      failed_at: '2026-06-09T10:48:00.000000Z',
+      status: 'open',
+    },
+  ],
+  open_count: 3,
+}
+
+describe('quarantine-api real 200 body (staging regression pin)', () => {
+  beforeEach(() => {
+    vi.stubEnv('VITE_DIS_UI_SERVER_MODE', 'real')
+    vi.stubEnv('VITE_DIS_UI_SERVER_BASE_URL', 'http://test.local')
+    writeToken('tok-real')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({ ok: true, status: 200, json: async () => REAL_200_BODY }) as unknown as Response,
+      ),
+    )
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    clearToken()
+  })
+
+  it('getQuarantineList parses the exact real response (no throw, verbatim shape)', async () => {
+    const res = await getQuarantineList({})
+    expect(res.open_count).toBe(3)
+    expect(res.items).toHaveLength(2)
+    expect(res.items[0].id).toBe('chunk:019eabff-1111-7000-8000-000000000001')
+    expect(res.items[0].failure_stage).toBe('source-shape')
+    expect(res.items[0].error_reason).toBe('PRE_VALIDATION_FAILED')
+  })
+
+  it('useQuarantineList resolves to success (not error) on the exact real response', async () => {
+    const snapshot: AuthSnapshot = {
+      userId: 'u1',
+      tenantId: 't_acme9k2l1mn4',
+      storeId: 's1',
+      roles: ['dis:read'],
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children)
+    const { result } = renderHook(() => useQuarantineList(snapshot, {}), { wrapper })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.isError).toBe(false)
+    expect(result.current.data?.open_count).toBe(3)
+    expect(result.current.data?.items).toHaveLength(2)
   })
 })
