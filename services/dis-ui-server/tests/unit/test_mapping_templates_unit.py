@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
-from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
+from dis_core.errors import MappingConfigError
+from dis_ui_server.mapping_translation import date_token_to_strptime, translate_columns_to_mapping_rules
 from dis_ui_server.repos.mapping_templates import _violates
+from dis_ui_server.schemas.mapping_templates import MappingTemplateCreate
 
 TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
 
@@ -78,73 +81,178 @@ def test_malformed_tenant_claim_is_403_not_500(client: TestClient, mint_token: C
     assert "t_not_a_uuid" not in response.text
 
 
-# -- 16a synthetic create (shape-validate, no persistence, no mapping_rules) --------
+# -- 16c translation (the columns contract -> a mapping_rules document) -------------
 #
-# The client's DB is UNREACHABLE (conftest), so a 201 from the create path is itself
-# the proof that no rls_session / write was attempted (the hard 16a limit: no DB write
-# in the create path). Persistence + the real mapping_rules return in 16c.
+# These call the translator FUNCTION directly (pure, no HTTP, no DB): a snapshot/sales
+# body in, the engine mapping_rules dict out. The semantic-rejection HTTP tests below
+# (DB UNREACHABLE) then prove an invalid request is a 4xx BEFORE any rls_session.
 
 
-def test_create_returns_201_synthetic_detail(client: TestClient, mint_token: Callable[..., str]) -> None:
-    response = client.post(
-        "/api/v1/mapping-templates", headers=_bearer(mint_token()), json=_valid_create_body()
+def _make_create(columns: list[dict[str, Any]], *, template_type: str = "snapshot") -> MappingTemplateCreate:
+    return MappingTemplateCreate(
+        source_id="manual_csv_upload", template_name="catalogue", template_type=template_type, columns=columns
     )
-    assert response.status_code == 201, response.text
-    body = response.json()
-    # Echoed request fields.
-    assert body["source_id"] == "manual_csv_upload"
-    assert body["template_name"] == "sales"
-    assert body["template_type"] == "sales"
-    # A realistic but non-persisted UUIDv7 (Q2).
-    assert UUID(body["template_id"]).version == 7
-    # Lineage summary: a single synthetic DRAFT.
-    assert body["latest_version"] == 1
-    assert body["draft_version"] == 1
-    assert body["active_version"] is None and body["staged_version"] is None
-    assert body["versions_count"] == 1
-    (version,) = body["versions"]
-    assert version["status"] == "draft"
-    assert version["version"] == 1
-    assert version["mapping_version_id"] == 0  # sentinel: nothing persisted
-    # Empty mapping_rules = the explicit "translation pending (16c)" signal.
-    assert version["mapping_rules"] == {
-        "version": 1,
-        "rename": {},
-        "normalize": {},
-        "cast": {},
-        "derive": {},
-    }
-    assert version["field_count"] == 0
-    assert version["transform_count"] == 0
 
 
-def test_create_does_not_touch_the_db(client: TestClient, mint_token: Callable[..., str]) -> None:
-    # With the DB unreachable, a 201 proves the create path opened no rls_session and
-    # attempted no write (a DB touch would raise, never return 201). The hard 16a limit.
-    response = client.post(
-        "/api/v1/mapping-templates", headers=_bearer(mint_token()), json=_valid_create_body()
-    )
-    assert response.status_code == 201, response.text
-
-
-def test_well_formed_declarations_are_accepted(client: TestClient, mint_token: Callable[..., str]) -> None:
-    # Every format-declaration field, plus an __ignore__ column. 16a checks they are
-    # well-formed; it does NOT check membership or whether one is required (16c).
-    body = _valid_create_body()
-    body["columns"] = [
-        {"src_key": "sku", "dest_key": "sku_id"},
-        {
-            "src_key": "prezzovend",
-            "dest_key": "current_retail_price",
-            "src_decimal_separator": ".",
-            "src_thousand_separator": ",",
-            "src_is_percentage": True,
-        },
-        {"src_key": "dataprezzo", "dest_key": "expiry_date", "src_datetime_format": "DD-MM-YYYY"},
-        {"src_key": "in_volantino", "dest_key": "__ignore__"},
+def _snapshot_columns(extra: tuple[dict[str, Any], ...] = ()) -> list[dict[str, Any]]:
+    """The mandatory snapshot mapping-produced columns (a gate-valid set), plus any extra."""
+    return [
+        {"src_key": "a", "dest_key": "sku_id"},
+        {"src_key": "b", "dest_key": "product_name"},
+        {"src_key": "c", "dest_key": "product_category"},
+        {"src_key": "d", "dest_key": "current_retail_price", "src_decimal_separator": "."},
+        {"src_key": "e", "dest_key": "unit_cost", "src_decimal_separator": "."},
+        {"src_key": "f", "dest_key": "currency"},
+        *extra,
     ]
+
+
+def test_translator_builds_rename_normalize_cast_and_drops_ignore() -> None:
+    body = _make_create(
+        [
+            {"src_key": "codice", "dest_key": "sku_id"},  # text -> cast string, no normalize
+            {"src_key": "prezzo", "dest_key": "current_retail_price", "src_decimal_separator": ","},
+            {"src_key": "scad", "dest_key": "expiry_date", "src_datetime_format": "DD-MM-YYYY"},
+            {"src_key": "vol", "dest_key": "__ignore__"},  # dropped entirely
+        ]
+    )
+    rules = translate_columns_to_mapping_rules(body, tenant_id=TENANT_A)
+
+    assert rules["rename"] == {"codice": "sku_id", "prezzo": "current_retail_price", "scad": "expiry_date"}
+    # parse op chosen by the TARGET datatype: a date column gets parse_date (never datetime).
+    assert rules["normalize"]["expiry_date"] == [{"op": "parse_date", "args": {"format": "%d-%m-%Y"}}]
+    assert rules["normalize"]["current_retail_price"] == [
+        {"op": "parse_decimal", "args": {"decimal_separator": ",", "thousands_separator": None}}
+    ]
+    assert rules["cast"]["sku_id"] == {"type": "string"}
+    assert rules["cast"]["expiry_date"] == {"type": "date"}
+    # Cast precision/scale reflected from the dis-canonical model (internal, not the request).
+    assert rules["cast"]["current_retail_price"] == {"type": "decimal", "precision": 12, "scale": 4}
+    assert rules["derive"] == {}
+
+
+@pytest.mark.parametrize(
+    ("token", "code"),
+    [
+        ("DD-MM-YYYY", "%d-%m-%Y"),
+        ("DD/MM/YYYY", "%d/%m/%Y"),
+        ("MM/DD/YYYY", "%m/%d/%Y"),
+        ("YYYY-MM-DD", "%Y-%m-%d"),
+        ("DD-MM-YY", "%d-%m-%y"),
+    ],
+)
+def test_each_accepted_date_token_converts(token: str, code: str) -> None:
+    assert date_token_to_strptime(token, tenant_id=TENANT_A) == code
+
+
+def test_unknown_date_token_is_rejected() -> None:
+    with pytest.raises(MappingConfigError):
+        date_token_to_strptime("YYYY/MM/DD", tenant_id=TENANT_A)  # outside the locked five
+
+
+def test_absent_thousands_separator_is_an_explicit_null() -> None:
+    body = _make_create([{"src_key": "p", "dest_key": "unit_cost", "src_decimal_separator": "."}])
+    rules = translate_columns_to_mapping_rules(body, tenant_id=TENANT_A)
+    args = rules["normalize"]["unit_cost"][0]["args"]
+    assert args == {"decimal_separator": ".", "thousands_separator": None}  # key present, value null
+
+
+def test_present_thousands_separator_rides_into_the_op() -> None:
+    body = _make_create(
+        [
+            {
+                "src_key": "p",
+                "dest_key": "current_retail_price",
+                "src_decimal_separator": ",",
+                "src_thousand_separator": ".",
+            }
+        ]
+    )
+    rules = translate_columns_to_mapping_rules(body, tenant_id=TENANT_A)
+    assert rules["normalize"]["current_retail_price"][0]["args"] == {
+        "decimal_separator": ",",
+        "thousands_separator": ".",
+    }
+
+
+def test_percentage_emits_parse_percent_with_separators() -> None:
+    body = _make_create(
+        [
+            {
+                "src_key": "conf",
+                "dest_key": "expiry_confidence",
+                "src_is_percentage": True,
+                "src_decimal_separator": ".",
+            }
+        ]
+    )
+    rules = translate_columns_to_mapping_rules(body, tenant_id=TENANT_A)
+    assert rules["normalize"]["expiry_confidence"] == [
+        {"op": "parse_percent", "args": {"decimal_separator": ".", "thousands_separator": None}}
+    ]
+    assert rules["cast"]["expiry_confidence"] == {"type": "decimal", "precision": 3, "scale": 2}
+
+
+def test_datetime_target_gets_parse_datetime_with_utc() -> None:
+    # source_sale_timestamp is the only mapping-produced DATETIME target (sales model).
+    body = _make_create(
+        [{"src_key": "ts", "dest_key": "source_sale_timestamp", "src_datetime_format": "YYYY-MM-DD"}],
+        template_type="sales",
+    )
+    rules = translate_columns_to_mapping_rules(body, tenant_id=TENANT_A)
+    assert rules["normalize"]["source_sale_timestamp"] == [
+        {"op": "parse_datetime", "args": {"format": "%Y-%m-%d", "timezone": "UTC"}}
+    ]
+    assert rules["cast"]["source_sale_timestamp"] == {"type": "datetime"}
+
+
+# -- 16c semantic rejections (the gate 4xx, BEFORE any DB — the client's DB is UNREACHABLE) --
+#
+# A 4xx here proves the gate ran and rejected before any rls_session: a rejected create
+# cannot write even in principle (validation-first ordering). MappingConfigError -> 400.
+
+
+def test_bad_dest_key_is_400_before_any_db(client: TestClient, mint_token: Callable[..., str]) -> None:
+    # _valid_create_body() targets "quantity_sold" — not a sales column -> target legality 400.
+    response = client.post(
+        "/api/v1/mapping-templates", headers=_bearer(mint_token()), json=_valid_create_body()
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "mapping_config"
+
+
+def test_missing_mandatory_field_is_400_before_any_db(
+    client: TestClient, mint_token: Callable[..., str]
+) -> None:
+    body = _make_create([{"src_key": "x", "dest_key": "sku_id"}]).model_dump()  # legal but incomplete
     response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
-    assert response.status_code == 201, response.text
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "mapping_config"
+
+
+def test_broken_presence_pairing_is_400_before_any_db(
+    client: TestClient, mint_token: Callable[..., str]
+) -> None:
+    # All mandatory snapshot columns PLUS promo_identifier without promo_price -> pairing 400.
+    body = _make_create(
+        _snapshot_columns(({"src_key": "promo", "dest_key": "promo_identifier"},))
+    ).model_dump()
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "mapping_config"
+
+
+def test_unknown_date_token_is_400_before_any_db(client: TestClient, mint_token: Callable[..., str]) -> None:
+    # receipt_date is a standalone date target (no presence pairing); a bad token 400s in
+    # translation, before the gate and before any DB touch.
+    body = _make_create(
+        _snapshot_columns(
+            ({"src_key": "rec", "dest_key": "receipt_date", "src_datetime_format": "YYYY/MM/DD"},)
+        )
+    ).model_dump()
+    response = client.post("/api/v1/mapping-templates", headers=_bearer(mint_token()), json=body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "mapping_config"
 
 
 # -- 16a shape rejections (4xx ahead of any DB) -------------------------------------
@@ -179,23 +287,30 @@ def test_malformed_declaration_is_422(client: TestClient, mint_token: Callable[.
     assert ";" not in response.text  # 422 strips submitted values
 
 
-def test_eu_thousands_separator_is_accepted_and_non_member_is_422(
+def test_eu_thousands_separator_is_accepted_at_shape_and_non_member_is_422(
     client: TestClient, mint_token: Callable[..., str]
 ) -> None:
     # Slice 16b widens src_thousand_separator to include "." so EU-format numbers
-    # (1.234,56) are declarable. The closed set still rejects a genuine non-member.
+    # (1.234,56) are declarable. The "." is accepted at the SHAPE layer (no 422); the
+    # request then reaches the semantic gate — here an incomplete snapshot, so a clean 400
+    # (not a 422), proving the declaration itself passed. A genuine non-member ";" is a 422.
     headers = _bearer(mint_token())
-    eu = _valid_create_body()
-    eu["columns"] = [
-        {"src_key": "sku", "dest_key": "sku_id"},
-        {
-            "src_key": "prezzovend",
-            "dest_key": "current_retail_price",
-            "src_decimal_separator": ",",
-            "src_thousand_separator": ".",
-        },
-    ]
-    assert client.post("/api/v1/mapping-templates", headers=headers, json=eu).status_code == 201
+    eu = {
+        "source_id": "manual_csv_upload",
+        "template_name": "catalogue",
+        "template_type": "snapshot",
+        "columns": [
+            {
+                "src_key": "prezzovend",
+                "dest_key": "current_retail_price",
+                "src_decimal_separator": ",",
+                "src_thousand_separator": ".",
+            }
+        ],
+    }
+    eu_response = client.post("/api/v1/mapping-templates", headers=headers, json=eu)
+    assert eu_response.status_code == 400, eu_response.text
+    assert eu_response.json()["error"]["code"] == "mapping_config"
 
     bad = _valid_create_body()
     bad["columns"] = [{"src_key": "p", "dest_key": "current_retail_price", "src_thousand_separator": ";"}]

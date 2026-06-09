@@ -99,6 +99,33 @@ def _max_length(metadata: tuple[Any, ...]) -> int | None:
     return None
 
 
+def _meta_int(metadata: tuple[Any, ...], attr: str) -> int | None:
+    """Find an int constraint ``attr`` across metadata, descending one level into the
+    ``FieldInfo`` wrapper that an Optional field nests its constraint under (required
+    fields carry the ``_PydanticGeneralMetadata`` directly; optional fields wrap it)."""
+    for item in metadata:
+        value = getattr(item, attr, None)
+        if isinstance(value, int):
+            return value
+        nested = getattr(item, "metadata", None)
+        if isinstance(nested, list):
+            for inner in nested:
+                inner_value = getattr(inner, attr, None)
+                if isinstance(inner_value, int):
+                    return inner_value
+    return None
+
+
+def _max_digits(metadata: tuple[Any, ...]) -> int | None:
+    """The declared decimal precision (``Field(max_digits=...)``), wherever stashed."""
+    return _meta_int(metadata, "max_digits")
+
+
+def _decimal_places(metadata: tuple[Any, ...]) -> int | None:
+    """The declared decimal scale (``Field(decimal_places=...)``), wherever stashed."""
+    return _meta_int(metadata, "decimal_places")
+
+
 def _datatype_and_values(base: Any) -> tuple[FieldDatatype, list[str] | None]:
     """The friendly datatype label + allowed values for choice/enum types."""
     if typing.get_origin(base) is typing.Literal:
@@ -152,6 +179,23 @@ def _structural(model: type[BaseModel], name: str) -> tuple[FieldDatatype, list[
     base, inline_meta = _split_annotated(_unwrap_optional(field.annotation))
     datatype, allowed_values = _datatype_and_values(base)
     return datatype, allowed_values, _max_length(tuple(field.metadata) + inline_meta)
+
+
+def reflect_field_shape(model: type[BaseModel], name: str) -> tuple[FieldDatatype, int | None, int | None]:
+    """The (datatype, precision, scale) of one canonical field — the translator's
+    internal cast-shape source (Slice 16c).
+
+    Reuses the same Annotated peelers + datatype dispatch the catalog builder uses,
+    but additionally reads ``max_digits``/``decimal_places`` (precision/scale) off the
+    Pydantic Field metadata so the translator can build a decimal ``CastSpec`` per
+    dest_key. INTERNAL to translation: precision/scale are deliberately NOT surfaced
+    on the catalog wire object (``TemplateMappingField``) — the picker sees no new
+    fields. Pure model reflection (no DB round-trip)."""
+    field = model.model_fields[name]
+    base, inline_meta = _split_annotated(_unwrap_optional(field.annotation))
+    datatype, _ = _datatype_and_values(base)
+    metadata = tuple(field.metadata) + inline_meta
+    return datatype, _max_digits(metadata), _decimal_places(metadata)
 
 
 def _entries(

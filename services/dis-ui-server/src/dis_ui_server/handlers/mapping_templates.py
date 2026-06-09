@@ -4,16 +4,15 @@ The resource is the TEMPLATE (a lineage of versions, D68); ``{template_id}`` is
 the only URL key. Reads and writes run through ``repos/mapping_templates.py``
 (``rls_session``, tenant from token). Detail/PATCH lookups are throw-style 404
 (``ResourceNotFoundError``) — under RLS, absent and other-tenant are the same
-404, no existence oracle. Create and edit write DRAFT rows only; lifecycle
-transitions (promote/reject) and the ``mapping.changed`` publish are a later
-slice — DRAFT writes are invisible to the streaming consumer, which reads
-``status='ACTIVE'`` only.
+404, no existence oracle. Create writes a single ACTIVE row (Slice 16c, D88:
+translate -> validate -> ACTIVE write, no DRAFT/staging); PATCH edits a DRAFT in
+place or chains a new DRAFT. The promote/deprecate transitions and the
+``mapping.changed`` publish are a later slice.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -26,8 +25,10 @@ from dis_core.ids import new_uuid7
 from dis_mapping import SourceMapping
 from dis_ui_server.auth.identity import Identity
 from dis_ui_server.auth.scope import require_tenant, tenant_uuid_of
+from dis_ui_server.mapping_translation import translate_columns_to_mapping_rules
 from dis_ui_server.mapping_validation import require_template_type, validate_mapping_rules_for_type
 from dis_ui_server.repos.mapping_templates import (
+    create_template,
     get_template_rows,
     list_template_rows,
     patch_template,
@@ -150,62 +151,51 @@ async def get_mapping_template(
     return _to_detail(rows)
 
 
-def _synthetic_detail(body: MappingTemplateCreate) -> MappingTemplateDetail:
-    """The Slice 16a synthetic create response: a realistic ``MappingTemplateDetail``
-    that is NOT persisted. ``template_id`` is a real UUIDv7 (so the wire shape is
-    realistic) but no row is written and no ``mapping_rules`` is assembled — both
-    land in 16c. The single DRAFT version carries an EMPTY ``SourceMapping`` (counts
-    0): the explicit "translation pending (16c)" signal, keeping the response shape
-    identical. ``mapping_version_id`` is a 0 sentinel (no BIGSERIAL exists yet)."""
-    now = datetime.now(tz=UTC)
-    version = MappingTemplateVersion(
-        mapping_version_id=0,  # sentinel: no BIGSERIAL minted (nothing persisted in 16a)
-        version=1,
-        status="draft",
-        mapping_rules=SourceMapping(version=1),  # empty; 16a assembles no rules (16c does)
-        field_count=0,
-        transform_count=0,
-        predecessor_version_id=None,
-        created_at=now,
-        created_by_user_id=None,
-        activated_at=None,
-        deprecated_at=None,
-    )
-    return MappingTemplateDetail(
-        template_id=str(new_uuid7()),
-        source_id=body.source_id,
-        template_name=body.template_name,
-        template_type=body.template_type,
-        latest_version=1,
-        active_version=None,
-        staged_version=None,
-        draft_version=1,
-        versions_count=1,
-        created_at=now,
-        latest_version_created_at=now,
-        versions=[version],
-    )
-
-
 @router.post("/mapping-templates", status_code=201)
 async def create_mapping_template(
+    request: Request,
     identity: Annotated[Identity, Depends(require_tenant)],
     body: MappingTemplateCreate,
 ) -> MappingTemplateDetail:
-    """Create a template (Slice 16a: shape-validate + synthetic 201).
+    """Create a template (Slice 16c: translate -> validate -> ACTIVE write).
 
-    Persists NOTHING and assembles NO ``mapping_rules`` — translation to the D49
-    document and the DB write return in 16c. The request carries semantic intent
-    per column (``src_key`` -> ``dest_key`` + format declarations), not engine ops.
-    This endpoint validates the request SHAPE (pydantic), checks ``template_type``
-    against the in-code vocabulary (a clean 400), then mints a realistic but
-    non-persisted UUIDv7 and returns the synthetic ``MappingTemplateDetail``. A
-    GET/list will NOT find the returned ``template_id`` until 16c lands persistence.
-    No engine is touched on this path (no ``rls_session``, no write).
+    The request carries semantic intent per column (``src_key`` -> ``dest_key`` +
+    source-format declarations), not engine ops. This endpoint, in order:
+
+    1. checks ``template_type`` against the in-code vocabulary (a clean 400);
+    2. TRANSLATES the columns + declarations into a ``mapping_rules`` document
+       (``mapping_translation``) — an unknown date token is a 400 here;
+    3. runs the full semantic gate (``validate_mapping_rules_for_type``: target
+       legality, mandatory coverage, presence pairings) — any failure is a 400
+       BEFORE any DB touch, so an invalid request never opens an ``rls_session``;
+    4. mints a fresh ``template_id`` (UUIDv7) and writes a single ACTIVE row via
+       ``create_template`` (status ACTIVE, ``activated_at`` stamped, version minted).
+
+    Single state: success writes ACTIVE (no DRAFT, no staging); any failure is a 4xx
+    with nothing persisted. Returns the real ``MappingTemplateDetail`` off the row.
     """
+    engine: AsyncEngine = request.app.state.engine
     tenant_id = tenant_uuid_of(identity)  # 401/403 at the auth seam (malformed claim -> 403)
     require_template_type(body.template_type, tenant_id=str(tenant_id))  # 400 if outside vocab
-    return _synthetic_detail(body)
+    raw_rules = translate_columns_to_mapping_rules(body, tenant_id=str(tenant_id))  # 400 on bad token
+    # The gate is the LAST step before the write: a semantic failure (bad dest_key,
+    # missing mandatory, broken presence pairing) raises here, never persisting. We store
+    # the gate's VALIDATED document (its canonical dump — non-decimal casts gain explicit
+    # null precision/scale), so the write can never carry un-gated rules.
+    source = validate_mapping_rules_for_type(
+        raw_rules, template_type=body.template_type, tenant_id=str(tenant_id)
+    )
+    row = await create_template(
+        engine,
+        tenant_id,
+        template_id=new_uuid7(),  # fresh per create => no prior ACTIVE for the triple
+        source_id=body.source_id,
+        template_name=body.template_name,
+        template_type=body.template_type,
+        mapping_rules=source.model_dump(mode="json"),
+        created_by_user_id=_created_by_uuid(identity),
+    )
+    return _to_detail([row])
 
 
 @router.patch("/mapping-templates/{template_id}")

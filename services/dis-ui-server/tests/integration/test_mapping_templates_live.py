@@ -2,9 +2,10 @@
 
 Each test works under a scratch ``source_id`` unique to the run; teardown
 deletes those rows via the admin role (BYPASSRLS — cleanup only, never the path
-under test). Lifecycle states beyond DRAFT (ACTIVE/DEPRECATED heads) are staged
-by direct admin UPDATE — simulating the future promote slice's output — because
-no endpoint may produce them (that absence is itself asserted).
+under test). Create now writes ACTIVE directly (Slice 16c, single state); the
+remaining lifecycle states the create path does NOT produce (STAGED, DEPRECATED,
+multi-version heads) are still staged by direct admin UPDATE / seed, simulating
+the future promote slice's output.
 """
 
 from __future__ import annotations
@@ -96,13 +97,62 @@ def scratch_source(admin_engine: Engine) -> Iterator[str]:
         )
 
 
+def _snapshot_columns() -> list[dict[str, Any]]:
+    """A complete valid SNAPSHOT create body (columns contract, Slice 16a/c): exactly the
+    mandatory mapping-produced snapshot columns, so the gate passes with no derive (the
+    columns contract expresses none). No promo/expiry column, so no presence pairing fires."""
+    return [
+        {"src_key": "codice", "dest_key": "sku_id"},
+        {"src_key": "nome", "dest_key": "product_name"},
+        {"src_key": "categoria", "dest_key": "product_category"},
+        {"src_key": "prezzo", "dest_key": "current_retail_price", "src_decimal_separator": "."},
+        {"src_key": "costo", "dest_key": "unit_cost", "src_decimal_separator": "."},
+        {"src_key": "valuta", "dest_key": "currency"},
+    ]
+
+
+def _expected_snapshot_translation() -> dict[str, Any]:
+    """The engine ``mapping_rules`` a ``_snapshot_columns()`` body should translate to — an
+    INDEPENDENT oracle, hand-written (not the translator's own output). ``_canonical()``
+    normalizes it the same way the handler stores it (validated model dump: non-decimal
+    casts gain explicit null precision/scale), so the stored row must round-trip to it."""
+    return {
+        "version": 1,
+        "rename": {
+            "codice": "sku_id",
+            "nome": "product_name",
+            "categoria": "product_category",
+            "prezzo": "current_retail_price",
+            "costo": "unit_cost",
+            "valuta": "currency",
+        },
+        "normalize": {
+            "current_retail_price": [
+                {"op": "parse_decimal", "args": {"decimal_separator": ".", "thousands_separator": None}}
+            ],
+            "unit_cost": [
+                {"op": "parse_decimal", "args": {"decimal_separator": ".", "thousands_separator": None}}
+            ],
+        },
+        "cast": {
+            "sku_id": {"type": "string"},
+            "product_name": {"type": "string"},
+            "product_category": {"type": "string"},
+            "current_retail_price": {"type": "decimal", "precision": 12, "scale": 4},
+            "unit_cost": {"type": "decimal", "precision": 12, "scale": 4},
+            "currency": {"type": "string"},
+        },
+        "derive": {},
+    }
+
+
 def _create(
     client: TestClient,
     mint_token: Callable[..., str],
     source_id: str,
     *,
-    template_name: str = "sales",
-    template_type: str = "sales",
+    template_name: str = "catalogue",
+    template_type: str = "snapshot",
     tenant_id: str = TENANT_A,
 ) -> Any:
     return client.post(
@@ -112,7 +162,7 @@ def _create(
             "source_id": source_id,
             "template_name": template_name,
             "template_type": template_type,
-            "mapping_rules": _sale_rules(),
+            "columns": _snapshot_columns(),
         },
     )
 
@@ -171,17 +221,10 @@ def _force_status(admin_engine: Engine, mapping_version_id: int, status: str) ->
         )
 
 
-# -- create (d) ---------------------------------------------------------------------
-#
-# Slice 16a: create persists nothing (shape-validate + synthetic 201). These
-# persistence assertions are SKIPPED here, NOT deleted — 16c restores the write and
-# re-activates them unchanged (they still drive the create endpoint via `_create`).
-
-_RESTORE_IN_16C = "16a: create persists nothing; restore assertions in 16c"
+# -- create (d) — Slice 16c: translate -> validate -> ACTIVE write -------------------
 
 
-@pytest.mark.skip(reason=_RESTORE_IN_16C)
-def test_create_writes_a_valid_draft_with_a_minted_uuid7(
+def test_create_writes_a_valid_active_row_with_a_minted_uuid7(
     live_client: TestClient,
     mint_token: Callable[..., str],
     scratch_source: str,
@@ -193,38 +236,42 @@ def test_create_writes_a_valid_draft_with_a_minted_uuid7(
 
     assert UUID(body["template_id"]).version == 7  # minted server-side, UUIDv7 (hard rule 3)
     assert body["source_id"] == scratch_source
-    assert body["template_name"] == "sales"
-    assert body["template_type"] == "sales"  # captured + surfaced (Slice 14d)
+    assert body["template_name"] == "catalogue"
+    assert body["template_type"] == "snapshot"  # captured + surfaced (Slice 14d)
     assert body["latest_version"] == 1  # trigger-assigned, lineage starts at 1
-    assert body["draft_version"] == 1
-    assert body["active_version"] is None and body["staged_version"] is None
+    # Single state (Slice 16c): create is ACTIVE, not DRAFT.
+    assert body["active_version"] == 1
+    assert body["draft_version"] is None and body["staged_version"] is None
     assert body["versions_count"] == 1
 
     (version,) = body["versions"]
-    assert version["status"] == "draft"
+    assert version["status"] == "active"
     assert version["version"] == 1
+    assert version["mapping_version_id"] > 0  # real BIGSERIAL, not the 16a 0 sentinel
     assert version["predecessor_version_id"] is None
-    assert version["mapping_rules"] == _canonical(_sale_rules())  # the validated document round-trips
+    assert version["activated_at"] is not None  # stamped on the ACTIVE write
+    # The translated + validated document round-trips (the independent-oracle translation).
+    assert version["mapping_rules"] == _canonical(_expected_snapshot_translation())
     assert version["field_count"] == 6
-    assert version["transform_count"] == 6  # 2 normalize lists' ops + 2 casts + 2 derive ops
+    assert version["transform_count"] == 8  # 2 normalize ops + 6 casts + 0 derive
 
-    # The stored row, off the database directly (admin read): DRAFT, seq 1, tenant A.
+    # The stored row, off the database directly (admin read): ACTIVE, activated, seq 1, tenant A.
     with admin_engine.connect() as conn:
         row = conn.execute(
             text(
                 "SELECT tenant_id, status, version_seq_per_source, predecessor_version_id, "
-                "template_type FROM config.source_mappings WHERE source_id = :sid"
+                "template_type, activated_at FROM config.source_mappings WHERE source_id = :sid"
             ),
             {"sid": scratch_source},
         ).one()
     assert str(row.tenant_id) == TENANT_A
-    assert row.status == "DRAFT"
+    assert row.status == "ACTIVE"
+    assert row.activated_at is not None  # satisfies ck_csm_activated_at
     assert row.version_seq_per_source == 1
     assert row.predecessor_version_id is None
-    assert row.template_type == "sales"  # stored, not inferred (Slice 14d)
+    assert row.template_type == "snapshot"  # stored, not inferred (Slice 14d)
 
 
-@pytest.mark.skip(reason=_RESTORE_IN_16C)
 def test_duplicate_template_name_is_a_clean_409(
     live_client: TestClient, mint_token: Callable[..., str], scratch_source: str
 ) -> None:
@@ -234,12 +281,11 @@ def test_duplicate_template_name_is_a_clean_409(
     envelope = duplicate.json()["error"]
     assert envelope["code"] == "mapping_template_name_conflict"
     assert envelope["details"]["source_id"] == scratch_source
-    assert envelope["details"]["template_name"] == "sales"
+    assert envelope["details"]["template_name"] == "catalogue"
     # A second template under the SAME source with a DIFFERENT name is fine (D68 grain)...
     assert _create(live_client, mint_token, scratch_source, template_name="inventory").status_code == 201
 
 
-@pytest.mark.skip(reason=_RESTORE_IN_16C)
 def test_same_name_under_another_source_is_fine(
     live_client: TestClient,
     mint_token: Callable[..., str],
@@ -258,33 +304,65 @@ def test_same_name_under_another_source_is_fine(
             )
 
 
-def test_create_persists_nothing_against_the_live_stack(
+def test_create_persists_nothing_on_a_rejected_request(
     live_client: TestClient,
     mint_token: Callable[..., str],
     scratch_source: str,
     admin_engine: Engine,
 ) -> None:
-    """The core 16a guarantee, asserted DIRECTLY against the live DB (not the
-    unreachable-DB unit oracle): a valid create returns 201 and writes ZERO rows.
-    Persistence returns in 16c; until then config.source_mappings stays untouched
-    by this endpoint. NOT skipped — this is a live 16a property, not a 16c one."""
+    """The Slice 16c no-write-on-failure guarantee, asserted DIRECTLY against the live DB
+    (the inverse of the old 16a no-write test): a request the semantic gate REJECTS — here
+    an incomplete snapshot missing mandatory mapping-produced columns — is a 4xx and writes
+    ZERO rows. The gate runs before any ``rls_session``, so nothing reaches the DB."""
     response = live_client.post(
         "/api/v1/mapping-templates",
         headers=_bearer(mint_token(tenant_id=TENANT_A)),
         json={
             "source_id": scratch_source,
-            "template_name": "sales",
-            "template_type": "sales",
-            "columns": [{"src_key": "item", "dest_key": "sku_id"}],
+            "template_name": "catalogue",
+            "template_type": "snapshot",
+            "columns": [{"src_key": "item", "dest_key": "sku_id"}],  # missing mandatory columns
         },
     )
-    assert response.status_code == 201, response.text
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "mapping_config"
     with admin_engine.connect() as conn:
         count = conn.execute(
             text("SELECT count(*) FROM config.source_mappings WHERE source_id = :sid"),
             {"sid": scratch_source},
         ).scalar_one()
-    assert count == 0, f"16a create must persist nothing; found {count} row(s) for {scratch_source}"
+    assert count == 0, f"a rejected create must persist nothing; found {count} row(s)"
+
+
+def test_bad_dest_key_persists_nothing(
+    live_client: TestClient,
+    mint_token: Callable[..., str],
+    scratch_source: str,
+    admin_engine: Engine,
+) -> None:
+    """A SECOND live-DB no-write pin (beyond missing-mandatory): a request rejected for an
+    illegal dest_key (target legality) is a 4xx and writes ZERO rows. So the no-write-on-
+    failure guarantee is carried by a live-DB count for two distinct rejection paths, not by
+    DB-unreachable inference alone (closes the inventory's coverage gap)."""
+    response = live_client.post(
+        "/api/v1/mapping-templates",
+        headers=_bearer(mint_token(tenant_id=TENANT_A)),
+        json={
+            "source_id": scratch_source,
+            "template_name": "catalogue",
+            "template_type": "snapshot",
+            # all mandatory present, plus one ILLEGAL target -> check_target_legality 400
+            "columns": [*_snapshot_columns(), {"src_key": "bogus", "dest_key": "not_a_real_column"}],
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "mapping_config"
+    with admin_engine.connect() as conn:
+        count = conn.execute(
+            text("SELECT count(*) FROM config.source_mappings WHERE source_id = :sid"),
+            {"sid": scratch_source},
+        ).scalar_one()
+    assert count == 0, f"a target-legality rejection must persist nothing; found {count} row(s)"
 
 
 # -- reads (c) — RLS isolation -------------------------------------------------------
@@ -338,36 +416,36 @@ def test_unknown_template_is_404(live_client: TestClient, mint_token: Callable[.
     assert response.json()["error"]["code"] == "resource_not_found"
 
 
-@pytest.mark.skip(reason=_RESTORE_IN_16C)
-def test_non_uuid_token_sub_creates_with_null_created_by(
+def test_non_uuid_token_sub_creates_active_with_null_created_by(
     live_client: TestClient,
     mint_token: Callable[..., str],
     scratch_source: str,
     admin_engine: Engine,
 ) -> None:
-    """A verified token whose ``sub`` is not a UUID still creates (201); the
-    authorship column is NULL by design (handlers/mapping_templates.py
-    ``_created_by_uuid`` — the claim vocabulary is unsigned, D56/Blocker 5),
-    on the wire AND on the written row."""
+    """A verified token whose ``sub`` is not a UUID still creates an ACTIVE row (201); the
+    authorship column is NULL by design (handlers/mapping_templates.py ``_created_by_uuid``
+    — the claim vocabulary is unsigned, D56/Blocker 5), on the wire AND on the written row."""
     response = live_client.post(
         "/api/v1/mapping-templates",
         headers=_bearer(mint_token(tenant_id=TENANT_A, sub="svc-account-7")),  # not a UUID
         json={
             "source_id": scratch_source,
-            "template_name": "sales",
-            "template_type": "sales",
-            "mapping_rules": _sale_rules(),
+            "template_name": "catalogue",
+            "template_type": "snapshot",
+            "columns": _snapshot_columns(),
         },
     )
-    assert response.status_code == 201
+    assert response.status_code == 201, response.text
+    assert response.json()["versions"][0]["status"] == "active"
     assert response.json()["versions"][0]["created_by_user_id"] is None  # the wire shape
 
     with admin_engine.begin() as conn:  # and the written row itself
         stored = conn.execute(
-            text("SELECT created_by_user_id FROM config.source_mappings WHERE source_id = :sid"),
+            text("SELECT created_by_user_id, status FROM config.source_mappings WHERE source_id = :sid"),
             {"sid": scratch_source},
-        ).scalar_one()
-    assert stored is None
+        ).one()
+    assert stored.created_by_user_id is None
+    assert stored.status == "ACTIVE"
 
 
 # -- edit (e) — the D17 lifecycle ------------------------------------------------------
@@ -652,14 +730,13 @@ def test_rename_plus_rules_conflict_rolls_back_together(
     assert rules["derive"]["currency"][0]["args"]["value"] == "EUR"  # original rules intact
 
 
-@pytest.mark.skip(reason=_RESTORE_IN_16C)
 def test_well_formed_unknown_tenant_reads_empty_writes_403(
     live_client: TestClient, mint_token: Callable[..., str], scratch_source: str
 ) -> None:
     """A verified token whose tenant_id is a well-formed UUID DIS never mirrored:
     reads are indistinguishable from 'tenant with no data' (no oracle), and the
-    one place the difference is detectable — the tenant FK on create — is a
-    clean 403, not a 500."""
+    one place the difference is detectable — the tenant FK on the ACTIVE create write
+    — is a clean 403, not a 500."""
     ghost = str(new_uuid7())
     headers = _bearer(mint_token(tenant_id=ghost))
 
@@ -674,8 +751,8 @@ def test_well_formed_unknown_tenant_reads_empty_writes_403(
         json={
             "source_id": scratch_source,
             "template_name": "ghost",
-            "template_type": "sales",
-            "mapping_rules": _sale_rules(),
+            "template_type": "snapshot",
+            "columns": _snapshot_columns(),
         },
     )
     assert create.status_code == 403, create.text
@@ -691,8 +768,9 @@ def test_no_endpoint_can_mint_active_or_staged(
     admin_engine: Engine,
 ) -> None:
     # The 14a consumer `.first()` hazard guard: across a seeded DRAFT + an in-place
-    # edit + a rename, every stored row is still DRAFT (lifecycle transitions belong
-    # to the promote slice — no path here writes ACTIVE/STAGED).
+    # edit + a rename, every stored row is still DRAFT (the PATCH/rename paths never
+    # change a row's status; create-as-ACTIVE (Slice 16c) is a separate path, not
+    # exercised here — STAGED and the promote/deprecate transitions remain unbuilt).
     headers = _bearer(mint_token(tenant_id=TENANT_A))
     template_id = _seed_draft(admin_engine, scratch_source)["template_id"]
     live_client.patch(
