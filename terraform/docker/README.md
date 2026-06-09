@@ -10,10 +10,10 @@ service's real module before relying on them.
 | Image | Dockerfile | Kind | Build context |
 |---|---|---|---|
 | dis-ui-server | services/dis-ui-server/Dockerfile (existing) | HTTP (BFF) | repo root |
-| csv-ingest-worker | docker/csv-ingest-worker.Dockerfile | Pub/Sub consumer | repo root |
-| streaming-consumer | docker/streaming-consumer.Dockerfile | Pub/Sub consumer | repo root |
-| mirror-sync-consumer | docker/mirror-sync-consumer.Dockerfile | consumer | repo root |
-| dis-ui | docker/dis-ui.Dockerfile | static SPA (nginx) | services/dis-ui |
+| csv-ingest-worker | terraform/docker/csv-ingest-worker.Dockerfile | Pub/Sub consumer | repo root |
+| streaming-consumer | terraform/docker/streaming-consumer.Dockerfile | Pub/Sub consumer | repo root |
+| mirror-sync-consumer | terraform/docker/mirror-sync-consumer.Dockerfile | consumer | repo root |
+| dis-ui | terraform/docker/dis-ui.Dockerfile | static SPA (nginx) | services/dis-ui |
 
 The three workers build from the REPO ROOT because the Python workspace uses
 shared libs/ and a root uv.lock. The frontend builds from services/dis-ui (its
@@ -36,7 +36,7 @@ own package root with pnpm-lock.yaml).
 From the repo root:
 
 ```
-gcloud builds submit --config docker/cloudbuild.yaml \
+gcloud builds submit --config terraform/docker/cloudbuild.yaml \
   --substitutions=_REGION=asia-south1,_REPO=dis-images,_DIS_UI_SERVER_MODE=real,_DIS_UI_SERVER_BASE_URL=https://dis-ui-server-XXXX.run.app .
 ```
 
@@ -44,15 +44,26 @@ This builds and pushes all five images tagged with the commit short SHA and
 :latest. Then set the image_* variables in the Terraform tfvars to the pushed
 URIs (by SHA for reproducibility) and apply the service layer.
 
+For dis-ui specifically, prefer the dedicated terraform/docker/cloudbuild-dis-ui.yaml
+(context services/dis-ui, all four VITE args, --no-cache) so the SPA can never ship a
+stale cached bundle:
+
+```
+gcloud builds submit --config terraform/docker/cloudbuild-dis-ui.yaml \
+  --substitutions=SHORT_SHA=<sha>,_STUB_TOKEN_TENANT=<tok>,_STUB_TOKEN_OPS=<tok> .
+```
+
 ## Build a single image locally
 
 ```
 # a worker (from repo root)
-docker build -f docker/csv-ingest-worker.Dockerfile -t LOCAL/csv-ingest-worker .
+docker build -f terraform/docker/csv-ingest-worker.Dockerfile -t LOCAL/csv-ingest-worker .
 
 # the frontend (from repo root, context is the frontend dir). Omit the args for a
 # safe fixture-mode bundle; pass both for a real-mode bundle that calls dis-ui-server.
-docker build -f docker/dis-ui.Dockerfile \
+# --no-cache guarantees a fresh recompile (the context MUST be services/dis-ui; a
+# repo-root context silently bakes a stale cached bundle).
+docker build -f terraform/docker/dis-ui.Dockerfile --no-cache \
   --build-arg VITE_DIS_UI_SERVER_MODE=real \
   --build-arg VITE_DIS_UI_SERVER_BASE_URL=URL -t LOCAL/dis-ui services/dis-ui
 ```
