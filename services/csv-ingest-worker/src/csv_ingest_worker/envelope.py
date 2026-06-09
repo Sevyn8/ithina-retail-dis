@@ -46,6 +46,12 @@ class CsvReceivedEvent(BaseModel):
     upload_session_id: str = Field(pattern=_UPLOAD_SESSION_PATTERN)
     gcs_uri: str = Field(min_length=1)
     received_ts: datetime
+    # Additive/optional (Slice 16f), single-char default ",". Carried for contract
+    # symmetry with ingress.ready, but dis-ui-server does NOT populate it: the worker
+    # detects the delimiter fresh in preflight (Approach B, the single detector) and
+    # NEVER reads this field. Present here only so the drift guard (model_fields ==
+    # contract properties) stays green and a future dis-ui change is non-breaking.
+    delimiter: str = Field(default=",", min_length=1, max_length=1)
     # Optional in the schema, producer-required when publishing (D52). The worker
     # propagates them verbatim onto ingress.ready; it never fabricates a code.
     tenant_display_code: str | None = None

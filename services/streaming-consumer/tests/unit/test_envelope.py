@@ -53,6 +53,15 @@ def test_good_payload_parses() -> None:
     assert str(event.template_id) == "019e98c9-df80-7649-98cd-83fb6293777a"
     assert event.replay is False  # absent -> the contract default
     assert event.received_ts.tzinfo is not None
+    # Slice 16f backward-compat: a payload lacking delimiter (pre-16f / replayed)
+    # parses as comma — the same behaviour as before this slice.
+    assert event.delimiter == ","
+
+
+def test_delimiter_parsed_when_present() -> None:
+    # A 16f producer sets the detected separator; the consumer reads it verbatim.
+    event = parse_ingress_ready(json.dumps(_good_payload() | {"delimiter": ";"}).encode())
+    assert event.delimiter == ";"
 
 
 @pytest.mark.parametrize(

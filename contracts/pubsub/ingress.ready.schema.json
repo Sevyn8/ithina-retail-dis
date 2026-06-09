@@ -68,6 +68,13 @@
       "format": "date-time",
       "description": "ISO 8601 timestamp when the receiver accepted the request."
     },
+    "delimiter": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1,
+      "default": ",",
+      "description": "The single-character CSV field separator the worker's DuckDB preflight detected (comma, semicolon, tab, pipe — whatever sniff_csv returned). The streaming consumer parses the chunk with this separator (Slice 16f). Optional and additive: a pre-16f or replayed message lacking it is read as ',' (backward-compatible); the worker always sets it going forward, on the fresh and the resume publish paths."
+    },
     "replay": {
       "type": "boolean",
       "default": false,

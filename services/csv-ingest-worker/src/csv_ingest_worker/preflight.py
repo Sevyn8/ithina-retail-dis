@@ -36,6 +36,12 @@ class PreflightResult:
     column_types: tuple[str, ...]
     row_count: int
     size_bytes: int
+    # The single-character field separator DuckDB's sniff_csv detected (Slice 16f).
+    # Carried onto ingress.ready so the consumer parses with the right delimiter
+    # instead of a hardcoded comma. sniff_csv exposes no confidence signal, so the
+    # detected value is carried as-is (the locked decision); a wrong delimiter fails
+    # loudly at the consumer's mapping gate rather than corrupting silently.
+    delimiter: str
 
 
 def run_preflight(data: bytes, *, tenant_id: str, trace_id: str) -> PreflightResult:
@@ -66,7 +72,9 @@ def run_preflight(data: bytes, *, tenant_id: str, trace_id: str) -> PreflightRes
         con = duckdb.connect()
         try:
             try:
-                sniff = con.execute("SELECT HasHeader, Columns FROM sniff_csv(?)", [path]).fetchone()
+                sniff = con.execute(
+                    "SELECT Delimiter, HasHeader, Columns FROM sniff_csv(?)", [path]
+                ).fetchone()
                 if sniff is None:  # pragma: no cover - sniff_csv always yields one row
                     raise PreflightFailedError(
                         "structural preflight failed: sniff returned no result",
@@ -74,7 +82,7 @@ def run_preflight(data: bytes, *, tenant_id: str, trace_id: str) -> PreflightRes
                         tenant_id=tenant_id,
                         trace_id=trace_id,
                     )
-                has_header, columns_raw = sniff
+                delimiter, has_header, columns_raw = sniff
                 row = con.execute("SELECT count(*) FROM read_csv(?)", [path]).fetchone()
                 row_count = int(row[0]) if row is not None else 0
             except duckdb.Error as exc:
@@ -124,4 +132,5 @@ def run_preflight(data: bytes, *, tenant_id: str, trace_id: str) -> PreflightRes
         column_types=column_types,
         row_count=row_count,
         size_bytes=len(data),
+        delimiter=str(delimiter),
     )

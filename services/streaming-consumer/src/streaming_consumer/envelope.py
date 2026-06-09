@@ -50,6 +50,11 @@ class IngressReadyEvent(BaseModel):
     bronze_ref: UUID
     gcs_uri: str = Field(min_length=1)
     received_ts: datetime
+    # The CSV field separator the worker detected in preflight (Slice 16f); passed to
+    # pl.read_csv(separator=...) at fetch. Single-char, default "," — a pre-16f or
+    # replayed message that lacks it parses as comma (backward-compatible), the same
+    # behaviour as before this slice.
+    delimiter: str = Field(default=",", min_length=1, max_length=1)
     # Optional in the schema, producer-required when publishing (D52). Readability
     # only; never a substitute for the UUIDs.
     tenant_display_code: str | None = None

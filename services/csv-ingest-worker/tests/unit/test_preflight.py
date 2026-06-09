@@ -40,6 +40,27 @@ def test_well_formed_csv_passes_with_structure() -> None:
     assert result.row_count == 3
     assert result.size_bytes == len(_WELL_FORMED)
     assert len(result.column_types) == 4
+    assert result.delimiter == ","  # the comma fixture sniffs as comma (Slice 16f)
+
+
+# ---------------------------------------------------------------------------
+# Delimiter detection (Slice 16f): the separator sniff_csv detects is captured
+# and carried on PreflightResult. Comma, semicolon, tab, pipe.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sep", "expected"),
+    [(",", ","), (";", ";"), ("\t", "\t"), ("|", "|")],
+)
+def test_delimiter_is_detected_and_carried(sep: str, expected: str) -> None:
+    # Same 3-column structure under each separator -> the detected delimiter is
+    # the separator, and the columns still split correctly (structure intact).
+    data = f"sku{sep}qty{sep}price\nA-1{sep}5{sep}9.99\nB-2{sep}3{sep}4.50\n".encode()
+    result = _run(data)
+    assert result.delimiter == expected
+    assert result.columns == ("sku", "qty", "price")
+    assert result.row_count == 2
 
 
 def test_quoted_fields_and_crlf_pass() -> None:
@@ -108,15 +129,31 @@ def test_canary_sniff_csv_binds_prepared_param_and_returns_columns_shape(
     path.write_bytes(_WELL_FORMED)
     con = duckdb.connect()
     try:
-        row = con.execute("SELECT HasHeader, Columns FROM sniff_csv(?)", [str(path)]).fetchone()
+        row = con.execute("SELECT Delimiter, HasHeader, Columns FROM sniff_csv(?)", [str(path)]).fetchone()
     finally:
         con.close()
     assert row is not None
-    has_header, columns = row
+    delimiter, has_header, columns = row
+    # Relied-on (Slice 16f): Delimiter comes back as a single-character string.
+    assert isinstance(delimiter, str) and len(delimiter) == 1
+    assert delimiter == ","
     assert has_header is True
     assert isinstance(columns, list)
     assert {"name", "type"} <= set(columns[0].keys())
     assert [c["name"] for c in columns] == ["sku", "store_section", "qty_sold", "unit_price"]
+
+
+def test_canary_sniff_csv_detects_semicolon_delimiter(tmp_path: Path) -> None:
+    # Relied-on (Slice 16f): a non-comma file is sniffed with its real delimiter,
+    # exposed in the Delimiter column as a single char.
+    path = tmp_path / "canary_semi.csv"
+    path.write_bytes(b"sku;qty;price\nA-1;5;9.99\n")
+    con = duckdb.connect()
+    try:
+        row = con.execute("SELECT Delimiter FROM sniff_csv(?)", [str(path)]).fetchone()
+    finally:
+        con.close()
+    assert row is not None and row[0] == ";"
 
 
 def test_canary_sniffer_detects_headerless_numeric_file(tmp_path: Path) -> None:

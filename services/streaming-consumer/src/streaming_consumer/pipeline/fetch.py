@@ -137,10 +137,15 @@ async def read_bronze_row(engine: AsyncEngine, event: IngressReadyEvent) -> Bron
     )
 
 
-def parse_chunk(data: bytes, *, tenant_id: str, trace_id: str) -> pl.DataFrame:
-    """Parse the CSV bytes to an all-string frame; empty/unparseable raises loudly."""
+def parse_chunk(data: bytes, *, separator: str, tenant_id: str, trace_id: str) -> pl.DataFrame:
+    """Parse the CSV bytes to an all-string frame; empty/unparseable raises loudly.
+
+    ``separator`` is the delimiter the worker detected and carried on the envelope
+    (Slice 16f) — no longer a hardcoded comma. Polars' default ``"`` quoting still
+    applies, so a quoted field containing the separator stays one field (verified).
+    """
     try:
-        frame = pl.read_csv(io.BytesIO(data), infer_schema=False)
+        frame = pl.read_csv(io.BytesIO(data), separator=separator, infer_schema=False)
     except Exception as exc:
         raise EventContractError(
             f"bronze object is not parseable CSV: {type(exc).__name__}",
@@ -178,7 +183,12 @@ async def fetch_chunk(
     if on_bronze is not None:
         on_bronze(bronze)
     data = storage.download_bytes(object_key)
-    frame = parse_chunk(data, tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
+    frame = parse_chunk(
+        data,
+        separator=event.delimiter,
+        tenant_id=str(event.tenant_id),
+        trace_id=str(event.trace_id),
+    )
     return FetchedChunk(frame=frame, bronze=bronze)
 
 

@@ -133,7 +133,7 @@ class IngestPipeline:
                 trace_id=str(event.trace_id),
             )
         if prior is not None:
-            return await self._handle_duplicate(event, prior, lap)
+            return await self._handle_duplicate(event, prior, data, lap)
 
         # 4. Structural preflight (D13/D16). Failure → FAILED bronze row, no publish.
         try:
@@ -195,7 +195,11 @@ class IngestPipeline:
 
         # 7. Publish AFTER bronze lands (D5), then stamp the publish (D59).
         envelope = build_ingress_ready(
-            event, trace_id=event.trace_id, bronze_ref=bronze_id, received_at=received_at
+            event,
+            trace_id=event.trace_id,
+            bronze_ref=bronze_id,
+            received_at=received_at,
+            delimiter=preflight.delimiter,
         )
         self.publisher.publish(INGRESS_READY_TOPIC, envelope.to_bytes())
         async with rls_session(self.engine, event.tenant_id) as conn:
@@ -258,9 +262,17 @@ class IngestPipeline:
         return object_key
 
     async def _handle_duplicate(
-        self, event: CsvReceivedEvent, prior: PriorIngest, lap: _Lap
+        self, event: CsvReceivedEvent, prior: PriorIngest, data: bytes, lap: _Lap
     ) -> IngestOutcome:
-        """Redelivery semantics (D59): full no-op, or resume the lost publish."""
+        """Redelivery semantics (D59): full no-op, or resume the lost publish.
+
+        ``data`` (the downloaded bytes, in hand from the pre-dedup read) lets the
+        resume branch re-derive the delimiter via a fresh ``run_preflight`` so the
+        republished ``ingress.ready`` carries the correct separator (Slice 16f) — the
+        worker sets it on EVERY publish path, never defaults the resume to comma. The
+        re-sniff is deterministic over the same bytes; the prior row is RECEIVED, so
+        preflight already passed on them and passes again.
+        """
         log = _log.bind(stage="idempotency", tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
         if prior.processing_status == "FAILED" or prior.is_published:
             # Same content + session + tenant already concluded → no second bronze
@@ -285,11 +297,16 @@ class IngestPipeline:
         # Unpublished RECEIVED prior: bronze landed, the publish was lost. Complete
         # it under the PRIOR trace_id and mark it (no second bronze row). A rare
         # duplicate publish is tolerated (Pub/Sub is at-least-once; Slice 10 dedups).
+        # Re-derive the delimiter from the same bytes so the resumed publish carries
+        # the correct separator (Slice 16f); the prior RECEIVED row means preflight
+        # already passed on these bytes, so this re-sniff does not newly fail.
+        preflight = run_preflight(data, tenant_id=str(event.tenant_id), trace_id=str(event.trace_id))
         envelope = build_ingress_ready(
             event,
             trace_id=prior.trace_id,
             bronze_ref=prior.bronze_id,
             received_at=prior.received_at,
+            delimiter=preflight.delimiter,
         )
         self.publisher.publish(INGRESS_READY_TOPIC, envelope.to_bytes())
         async with rls_session(self.engine, event.tenant_id) as conn:

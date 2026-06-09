@@ -67,6 +67,13 @@
       "type": "string",
       "format": "date-time",
       "description": "ISO 8601 timestamp when the CSV save in GCS was confirmed and this event was published."
+    },
+    "delimiter": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1,
+      "default": ",",
+      "description": "The single-character CSV field separator. Additive/optional field (Slice 16f): the schema and model carry it for contract symmetry with ingress.ready, but dis-ui-server does NOT populate it yet (it is detected downstream by the worker's preflight, which is the single delimiter detector — Approach B). Defaults to ',' on every real csv.received message until a future dis-ui slice populates it; the worker never reads this field (it detects fresh in preflight)."
     }
   },
   "additionalProperties": false

@@ -55,6 +55,10 @@ class IngressReadyEnvelope(BaseModel):
     bronze_ref: UUID
     gcs_uri: str = Field(min_length=1)
     received_ts: datetime
+    # The delimiter the worker's preflight detected (Slice 16f); the consumer parses
+    # with it. Single-char, default "," (backward-compat for any reader of a pre-16f
+    # message). The worker POPULATES it on every publish path (fresh + resume).
+    delimiter: str = Field(default=",", min_length=1, max_length=1)
     tenant_display_code: str | None = None
     store_code: str | None = None
     replay: bool = False
@@ -73,6 +77,7 @@ def build_ingress_ready(
     trace_id: UUID,
     bronze_ref: UUID,
     received_at: datetime,
+    delimiter: str,
 ) -> IngressReadyEnvelope:
     """Populate the frozen envelope from the event + the landed bronze row.
 
@@ -85,6 +90,12 @@ def build_ingress_ready(
     Slice 8), never the bronze row — deliberately, so the resume-and-mark path
     cannot wedge on a pre-Slice-8 bronze row whose ``template_id`` column is NULL
     (the publish needs no bronze read for it).
+
+    ``delimiter`` is the separator the worker's preflight sniff detected (Slice
+    16f); it is passed explicitly because BOTH publish paths supply it — the fresh
+    path from this run's preflight, the resume path from a re-derive over the same
+    bytes (D59). The worker is the single detector; it never reads a delimiter off
+    the incoming ``csv.received`` event.
     """
     return IngressReadyEnvelope(
         trace_id=trace_id,
@@ -95,6 +106,7 @@ def build_ingress_ready(
         bronze_ref=bronze_ref,
         gcs_uri=event.gcs_uri,
         received_ts=ensure_utc(received_at),
+        delimiter=delimiter,
         tenant_display_code=event.tenant_display_code,
         store_code=event.store_code,
         replay=False,

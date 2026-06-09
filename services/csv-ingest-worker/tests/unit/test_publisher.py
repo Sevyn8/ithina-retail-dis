@@ -32,10 +32,14 @@ def _event_bytes(**overrides: object) -> bytes:
     return json.dumps(payload).encode()
 
 
-def _build(**event_overrides: object) -> IngressReadyEnvelope:
+def _build(*, delimiter: str = ",", **event_overrides: object) -> IngressReadyEnvelope:
     event = parse_csv_received(_event_bytes(**event_overrides))
     return build_ingress_ready(
-        event, trace_id=event.trace_id, bronze_ref=_BRONZE_ID, received_at=_RECEIVED_AT
+        event,
+        trace_id=event.trace_id,
+        bronze_ref=_BRONZE_ID,
+        received_at=_RECEIVED_AT,
+        delimiter=delimiter,
     )
 
 
@@ -73,7 +77,11 @@ def test_absent_codes_are_omitted_never_fabricated() -> None:
     del payload["store_code"]
     event = parse_csv_received(json.dumps(payload).encode())
     envelope = build_ingress_ready(
-        event, trace_id=event.trace_id, bronze_ref=_BRONZE_ID, received_at=_RECEIVED_AT
+        event,
+        trace_id=event.trace_id,
+        bronze_ref=_BRONZE_ID,
+        received_at=_RECEIVED_AT,
+        delimiter=",",
     )
     wire = json.loads(envelope.to_bytes())
     assert "tenant_display_code" not in wire
@@ -86,7 +94,11 @@ def test_resume_path_publishes_under_the_passed_prior_trace() -> None:
     event = parse_csv_received(_event_bytes())
     prior_trace = UUID("019e0000-0000-7000-8000-00000000aaaa")
     envelope = build_ingress_ready(
-        event, trace_id=prior_trace, bronze_ref=_BRONZE_ID, received_at=_RECEIVED_AT
+        event,
+        trace_id=prior_trace,
+        bronze_ref=_BRONZE_ID,
+        received_at=_RECEIVED_AT,
+        delimiter=",",
     )
     assert envelope.trace_id == prior_trace
     # template_id comes off the INCOMING event, never a bronze read — by
@@ -113,9 +125,37 @@ def test_wire_form_without_codes_still_validates() -> None:
     del payload["store_code"]
     event = parse_csv_received(json.dumps(payload).encode())
     envelope = build_ingress_ready(
-        event, trace_id=event.trace_id, bronze_ref=_BRONZE_ID, received_at=_RECEIVED_AT
+        event,
+        trace_id=event.trace_id,
+        bronze_ref=_BRONZE_ID,
+        received_at=_RECEIVED_AT,
+        delimiter=",",
     )
     Draft202012Validator(_SCHEMA, format_checker=FormatChecker()).validate(json.loads(envelope.to_bytes()))
+
+
+# ---------------------------------------------------------------------------
+# Delimiter (Slice 16f): populated from the detected separator, on the wire,
+# and a non-comma value validates against the frozen contract.
+# ---------------------------------------------------------------------------
+
+
+def test_delimiter_populated_and_on_the_wire() -> None:
+    envelope = _build(delimiter=";")
+    assert envelope.delimiter == ";"
+    wire = json.loads(envelope.to_bytes())
+    assert wire["delimiter"] == ";"  # default-non-None, so never omitted by exclude_none
+
+
+def test_default_delimiter_is_comma() -> None:
+    assert _build().delimiter == ","
+
+
+@pytest.mark.parametrize("sep", [",", ";", "\t", "|"])
+def test_wire_form_with_each_delimiter_validates_against_frozen_contract(sep: str) -> None:
+    wire = json.loads(_build(delimiter=sep).to_bytes())
+    Draft202012Validator(_SCHEMA, format_checker=FormatChecker()).validate(wire)
+    assert wire["delimiter"] == sep
 
 
 # ---------------------------------------------------------------------------

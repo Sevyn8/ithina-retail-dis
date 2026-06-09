@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 _GOOD_CSV = b"sku,store_section,qty_sold,unit_price\nA-1,front,5,9.99\nB-2,back,3,4.50\n"
+# Same structure, semicolon-delimited — the European-export shape 16f exists for.
+_SEMI_CSV = b"sku;store_section;qty_sold;unit_price\nA-1;front;5;9.99\nB-2;back;3;4.50\n"
 _PII_CSV = b"sku,customer_email,qty_sold\nA-1,a@example.com,5\n"
 _GARBAGE = b"\x00\x01\x02\xff\xfe not a csv \x00"
 
@@ -378,6 +380,55 @@ async def test_unpublished_prior_redelivery_resumes_and_marks(
             {"tid": event.trace_id},
         ).scalar()
     assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# Slice 16f: the detected delimiter is carried on the published ingress.ready,
+# on BOTH publish paths. Pins the PIPELINE WIRING (build_ingress_ready is unit-
+# tested in isolation; these prove the pipeline passes preflight.delimiter, not a
+# hardcoded comma) — fresh path AND the D59 resume re-derive.
+# ---------------------------------------------------------------------------
+
+
+async def test_fresh_ingest_publishes_the_detected_delimiter(
+    engine: AsyncEngine,
+    storage: StorageClient,
+    stack_env: dict[str, str],
+    cleanup_traces: list[UUID],
+) -> None:
+    bucket = stack_env["GCS_BUCKET_BRONZE"]
+    publisher = InMemoryPublisher()
+    pipeline = _pipeline(engine, storage, bucket, publisher)
+    event = _make_event(storage, bucket, _SEMI_CSV, cleanup_traces)
+
+    outcome = await pipeline.process(event)
+
+    assert outcome.disposition == "ingested"
+    [published] = publisher.messages_for("ingress.ready")
+    assert json.loads(published)["delimiter"] == ";"  # NOT a hardcoded comma
+
+
+async def test_unpublished_prior_resume_republishes_the_detected_delimiter(
+    engine: AsyncEngine,
+    storage: StorageClient,
+    stack_env: dict[str, str],
+    cleanup_traces: list[UUID],
+) -> None:
+    # The D59 resume path runs no fresh preflight in process(); it re-derives the
+    # delimiter from the same bytes. A ';' file must republish ';', never default
+    # to comma on the rare crash-between-write-and-publish window.
+    bucket = stack_env["GCS_BUCKET_BRONZE"]
+    publisher = _FailsOncePublisher()
+    pipeline = _pipeline(engine, storage, bucket, publisher)
+    event = _make_event(storage, bucket, _SEMI_CSV, cleanup_traces)
+
+    with pytest.raises(ConnectionError):
+        await pipeline.process(event)
+    outcome = await pipeline.process(event)
+
+    assert outcome.disposition == "duplicate_resumed"
+    [published] = publisher.messages_for("ingress.ready")
+    assert json.loads(published)["delimiter"] == ";"
 
 
 # ---------------------------------------------------------------------------
