@@ -66,6 +66,12 @@ variable "max_instances" {
   default = 2
 }
 
+variable "cpu_idle" {
+  description = "Cloud Run CPU allocation. false = CPU always allocated (a background pull loop keeps running when no request is in flight). null (default) omits the resources block entirely, preserving the prior shape (request-throttled CPU) for request-driven services."
+  type        = bool
+  default     = null
+}
+
 resource "google_cloud_run_v2_service" "this" {
   project  = var.project_id
   location = var.region
@@ -91,6 +97,16 @@ resource "google_cloud_run_v2_service" "this" {
 
     containers {
       image = var.image
+
+      # CPU allocation. Emitted ONLY when cpu_idle is set, so request-driven
+      # services (cpu_idle unset -> null) keep their prior shape with no diff.
+      # The background pull-loop workers pass cpu_idle=false (CPU always on).
+      dynamic "resources" {
+        for_each = var.cpu_idle == null ? [] : [1]
+        content {
+          cpu_idle = var.cpu_idle
+        }
+      }
 
       dynamic "env" {
         for_each = var.env

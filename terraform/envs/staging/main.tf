@@ -181,6 +181,12 @@ module "csv_ingest_worker" {
   # D58: the query-based dedup is single-instance only, so this worker is pinned to
   # ONE instance. This is a CORRECTNESS constraint (D83), not a scaling preference.
   max_instances = 1
+  # Pull-loop worker: keep one instance always alive with CPU always allocated, so the
+  # background subscribe loop keeps running when no HTTP request is in flight (only the
+  # /healthz probe arrives). Without these a scale-to-zero, CPU-throttled Service would
+  # stop consuming when idle.
+  min_instances = 1
+  cpu_idle      = false
 
   # Grounded in csv-ingest-worker config.py (REQUIRED: POSTGRES_URL, PUBSUB_PROJECT_ID,
   # GCS_BUCKET_BRONZE). RUN_HEALTH_SERVER=true runs the readiness /healthz on the
@@ -214,6 +220,13 @@ module "streaming_consumer" {
   service_account_email    = module.service_accounts.emails["streaming-consumer"]
   vpc_connector_id         = module.network.vpc_connector_id
   cloudsql_connection_name = module.cloud_sql.connection_name
+
+  # Pull-loop worker: keep one instance always alive with CPU always allocated, so the
+  # background subscribe loop keeps running when no HTTP request is in flight (only the
+  # /healthz probe arrives). max_instances keeps the module default (2); the consumer is
+  # concurrency-safe (atomic dual-write, read-time latest-wins).
+  min_instances = 1
+  cpu_idle      = false
 
   # Grounded in streaming-consumer config.py (REQUIRED: POSTGRES_URL, PUBSUB_PROJECT_ID,
   # GCS_BUCKET_BRONZE). RUN_HEALTH_SERVER=true runs the readiness /healthz on the
