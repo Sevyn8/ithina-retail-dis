@@ -38,7 +38,11 @@ steps:
   # resolve). -f is relative to the uploaded source root (/workspace = repo root).
   # --no-cache: this image silently shipped a stale bundle when built wrong; force a
   # fresh recompile every build (a ~1-2 min cost for a guarantee that burned us).
+  # DOCKER_BUILDKIT=1 is REQUIRED: the dis-ui Dockerfile uses a `# syntax=` directive
+  # and a heredoc `COPY <<NGINX` for the nginx config, which the classic builder cannot
+  # parse (it errors "unknown instruction: SERVER" on the nginx `server {` block).
   - name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
     args:
       - build
       - -f

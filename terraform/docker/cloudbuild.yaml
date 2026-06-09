@@ -86,7 +86,12 @@ steps:
   # context bakes a stale cached bundle). The four Vite vars are baked into the bundle
   # at build time (a runtime env does nothing for a static SPA). Prefer the dedicated
   # cloudbuild-dis-ui.yaml, which also forces --no-cache.
+  # DOCKER_BUILDKIT=1 is REQUIRED here: the dis-ui Dockerfile uses a `# syntax=`
+  # directive + a heredoc `COPY <<NGINX` that the classic builder cannot parse. The
+  # worker + dis-ui-server steps above use plain `COPY --from=` (no heredoc / no syntax
+  # directive), so they build on the classic builder and do not set this.
   - name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
     args:
       - build
       - -f
