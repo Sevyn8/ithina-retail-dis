@@ -33,7 +33,10 @@ describe('mechanicalSuggest (fixture stand-in, ports the server fallback matcher
 
 describe('getMappingSuggestions fixture mode', () => {
   it('returns the mechanical stand-in (source fallback) with no backend', async () => {
-    const res = await getMappingSuggestions({ columns: COLUMNS }, CATALOG_FIXTURE)
+    const res = await getMappingSuggestions(
+      { columns: COLUMNS, template_type: 'sales' },
+      CATALOG_FIXTURE,
+    )
     expect(res.source).toBe('fallback')
     expect(res.suggestions).toHaveLength(2)
   })
@@ -62,7 +65,12 @@ describe('getMappingSuggestions real mode (mocked fetch)', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     const res = await getMappingSuggestions(
-      { columns: COLUMNS, source_id: 'manual_csv_upload', template_name: 'Sales' },
+      {
+        columns: COLUMNS,
+        source_id: 'manual_csv_upload',
+        template_name: 'Sales',
+        template_type: 'sales',
+      },
       CATALOG_FIXTURE,
     )
     expect(res.source).toBe('llm')
