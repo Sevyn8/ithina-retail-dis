@@ -19,7 +19,12 @@
 #     --build-arg VITE_DIS_UI_SERVER_BASE_URL=https://dis-ui-server-XXXX.run.app \
 #     -t IMAGE .
 
-FROM node:20-slim AS build
+# Node 22 to MATCH the dev/CI node (see .nvmrc). The Vite/rollup output hash is
+# node-version-sensitive: building on a different major (the previous node:20 here vs
+# node 22 locally) produces a DIFFERENT index-<hash>.js for byte-identical source, which
+# was repeatedly misread as a "stale bundle." Pinning the build node to dev's node makes
+# the production bundle hash reproducible with local builds.
+FROM node:22-slim AS build
 WORKDIR /app
 
 # pnpm (the repo uses pnpm for the UI).
