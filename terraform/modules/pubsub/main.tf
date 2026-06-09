@@ -53,3 +53,15 @@ output "topic_ids" {
 output "subscription_ids" {
   value = { for k, s in google_pubsub_subscription.default : k => s.id }
 }
+
+# SHORT names (e.g. "dis-csv-received", "dis-csv-received-sub"), keyed by the contract
+# short key (e.g. "csv.received"). The app passes these to topic_path()/subscription_path(),
+# which build the full path themselves — so feed it .name, never .id. Wiring the app's
+# topic/subscription env vars from these outputs keeps app and infra from drifting.
+output "topic_names" {
+  value = { for k, t in google_pubsub_topic.this : k => t.name }
+}
+
+output "subscription_names" {
+  value = { for k, s in google_pubsub_subscription.default : k => s.name }
+}

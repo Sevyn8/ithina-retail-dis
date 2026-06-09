@@ -38,6 +38,7 @@ import os
 from dataclasses import dataclass
 
 from dis_core.errors import DisError
+from dis_core.pubsub_names import resolve_pubsub_name
 
 _POSTGRES_URL = "POSTGRES_URL"
 _PUBSUB_PROJECT_ID = "PUBSUB_PROJECT_ID"
@@ -47,10 +48,17 @@ _PORT = "PORT"
 
 SERVICE_NAME = "streaming-consumer"
 
-# Frozen contract names (hard rule 10) and this consumer's subscription on the
-# trigger topic. Provisioned locally by tools/local/create_topics.py.
+# This consumer SUBSCRIBES to ingress.ready (via INGRESS_READY_SUBSCRIPTION). The
+# contract names (hard rule 10) remain the defaults, so local dev (provisioned by
+# tools/local/create_topics.py, no env set) is unchanged. Deployment overrides
+# INGRESS_READY_SUBSCRIPTION with the actually-provisioned short name (terraform sources
+# it from the pubsub module output, so app and infra cannot drift). INGRESS_READY_TOPIC
+# is NOT env-resolved: the consumer does not publish; this constant only labels the
+# trigger in error strings.
 INGRESS_READY_TOPIC = "ingress.ready"
-INGRESS_READY_SUBSCRIPTION = "streaming-consumer.ingress.ready"
+INGRESS_READY_SUBSCRIPTION = resolve_pubsub_name(
+    "INGRESS_READY_SUBSCRIPTION", "streaming-consumer.ingress.ready"
+)
 
 # Architecture 4.6: manual batching, ~500 rows per per-tenant transaction. One
 # ingress chunk carries one tenant, so batches are chunk-sequential; each batch is

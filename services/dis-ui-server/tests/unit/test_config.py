@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
+import dis_ui_server.config as config_module
 from dis_core.errors import DisError
 from dis_ui_server.config import (
     API_PREFIX,
@@ -43,8 +46,27 @@ def test_present_required_env_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_service_constants_frozen() -> None:
     assert SERVICE_NAME == "dis-ui-server"
     assert API_PREFIX == "/api/v1"
-    # Slice 8: the frozen publish target (hard rule 10) and the upload ceiling
-    # (the synchronous-streaming register entry's decision value).
+    # Slice 8: the publish target defaults to the contract name (hard rule 10) and
+    # the upload ceiling (the synchronous-streaming register entry's decision value).
     assert CSV_RECEIVED_TOPIC == "csv.received"
     assert CSV_UPLOAD_MAX_FILE_BYTES == 10 * 1024 * 1024
     assert CSV_UPLOAD_BODY_CEILING_BYTES > CSV_UPLOAD_MAX_FILE_BYTES
+
+
+def test_csv_received_topic_defaults_to_contract_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No override -> the contract literal, so local dev is byte-for-byte unchanged.
+    monkeypatch.delenv("CSV_RECEIVED_TOPIC", raising=False)
+    reloaded = importlib.reload(config_module)
+    assert reloaded.CSV_RECEIVED_TOPIC == "csv.received"
+
+
+def test_csv_received_topic_honours_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Deployment (terraform, from the pubsub module output) points the publish at the
+    # actually-provisioned short name; the constant resolves at import, hence reload.
+    monkeypatch.setenv("CSV_RECEIVED_TOPIC", "dis-csv-received")
+    try:
+        reloaded = importlib.reload(config_module)
+        assert reloaded.CSV_RECEIVED_TOPIC == "dis-csv-received"
+    finally:
+        monkeypatch.delenv("CSV_RECEIVED_TOPIC", raising=False)
+        importlib.reload(config_module)

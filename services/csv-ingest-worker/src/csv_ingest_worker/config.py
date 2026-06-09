@@ -36,6 +36,7 @@ import os
 from dataclasses import dataclass
 
 from dis_core.errors import CsvIngestError
+from dis_core.pubsub_names import resolve_pubsub_name
 
 _POSTGRES_URL = "POSTGRES_URL"
 _PUBSUB_PROJECT_ID = "PUBSUB_PROJECT_ID"
@@ -45,11 +46,16 @@ _PORT = "PORT"
 
 SERVICE_NAME = "csv-ingest-worker"
 
-# Frozen contract names (hard rule 10) and the worker's subscription on the trigger
-# topic. Provisioned locally by tools/local/create_topics.py alongside the topics.
+# The worker SUBSCRIBES to csv.received (via CSV_RECEIVED_SUBSCRIPTION) and PUBLISHES
+# ingress.ready. The contract names (hard rule 10) remain the defaults, so local dev
+# (provisioned by tools/local/create_topics.py, no env set) is unchanged. Deployment
+# overrides INGRESS_READY_TOPIC and CSV_RECEIVED_SUBSCRIPTION with the actually-
+# provisioned short names (terraform sources them from the pubsub module output, so
+# app and infra cannot drift). CSV_RECEIVED_TOPIC is NOT env-resolved: the worker does
+# not publish it; this constant only labels the trigger in error/log strings.
 CSV_RECEIVED_TOPIC = "csv.received"
-INGRESS_READY_TOPIC = "ingress.ready"
-CSV_RECEIVED_SUBSCRIPTION = "csv-ingest-worker.csv.received"
+INGRESS_READY_TOPIC = resolve_pubsub_name("INGRESS_READY_TOPIC", "ingress.ready")
+CSV_RECEIVED_SUBSCRIPTION = resolve_pubsub_name("CSV_RECEIVED_SUBSCRIPTION", "csv-ingest-worker.csv.received")
 
 # The idempotency window (decisions/build-guide: same content hash + upload session +
 # tenant within 24h returns the prior trace_id). Measured against the prior bronze

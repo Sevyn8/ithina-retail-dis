@@ -45,6 +45,7 @@ import os
 from dataclasses import dataclass
 
 from dis_core.errors import DisError
+from dis_core.pubsub_names import resolve_pubsub_name
 
 _POSTGRES_URL = "POSTGRES_URL"
 _CORS_ALLOWED_ORIGINS = "CORS_ALLOWED_ORIGINS"
@@ -58,9 +59,12 @@ _GEMINI_IMPERSONATE_SA = "GEMINI_IMPERSONATE_SA"
 
 SERVICE_NAME = "dis-ui-server"
 
-# Frozen contract name (hard rule 10): the CSV-upload Phase 1 publish target.
-# The topic is provisioned by tools/local/create_topics.py, never by runtime code.
-CSV_RECEIVED_TOPIC = "csv.received"
+# The CSV-upload Phase 1 publish target. The contract name (hard rule 10) is
+# "csv.received" and remains the default, so local dev (provisioned by
+# tools/local/create_topics.py, no env set) is unchanged. Deployment overrides via
+# CSV_RECEIVED_TOPIC with the actually-provisioned short name (terraform sources it
+# from the pubsub module output, so app and infra cannot drift).
+CSV_RECEIVED_TOPIC = resolve_pubsub_name("CSV_RECEIVED_TOPIC", "csv.received")
 
 # The Slice 8 upload ceiling (a decision value, not deployment config): the
 # synchronous-streaming-upload register entry's rationale is that 10 MB removes

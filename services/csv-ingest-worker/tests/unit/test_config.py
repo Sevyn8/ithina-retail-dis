@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
+import csv_ingest_worker.config as config_module
 from csv_ingest_worker.config import (
     CSV_RECEIVED_SUBSCRIPTION,
     CSV_RECEIVED_TOPIC,
@@ -92,9 +95,33 @@ def test_toggle_other_value_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.health_port is None
 
 
-def test_contract_names_are_frozen_constants() -> None:
-    # Topic/subscription names are contract constants (hard rule 10), not env config.
+def test_contract_names_default_to_frozen_literals() -> None:
+    # Defaults are the contract names (hard rule 10), so local dev is unchanged.
+    # CSV_RECEIVED_TOPIC is NOT env-resolved (the worker subscribes, never publishes it).
     assert CSV_RECEIVED_TOPIC == "csv.received"
     assert INGRESS_READY_TOPIC == "ingress.ready"
     assert CSV_RECEIVED_SUBSCRIPTION == "csv-ingest-worker.csv.received"
     assert DEDUP_WINDOW_HOURS == 24
+
+
+def test_pubsub_names_default_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("INGRESS_READY_TOPIC", raising=False)
+    monkeypatch.delenv("CSV_RECEIVED_SUBSCRIPTION", raising=False)
+    reloaded = importlib.reload(config_module)
+    assert reloaded.INGRESS_READY_TOPIC == "ingress.ready"
+    assert reloaded.CSV_RECEIVED_SUBSCRIPTION == "csv-ingest-worker.csv.received"
+
+
+def test_pubsub_names_honour_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Deployment (terraform, from the pubsub module output) points the publish/subscribe
+    # at the actually-provisioned short names; constants resolve at import, hence reload.
+    monkeypatch.setenv("INGRESS_READY_TOPIC", "dis-ingress-ready")
+    monkeypatch.setenv("CSV_RECEIVED_SUBSCRIPTION", "dis-csv-received-sub")
+    try:
+        reloaded = importlib.reload(config_module)
+        assert reloaded.INGRESS_READY_TOPIC == "dis-ingress-ready"
+        assert reloaded.CSV_RECEIVED_SUBSCRIPTION == "dis-csv-received-sub"
+    finally:
+        monkeypatch.delenv("INGRESS_READY_TOPIC", raising=False)
+        monkeypatch.delenv("CSV_RECEIVED_SUBSCRIPTION", raising=False)
+        importlib.reload(config_module)

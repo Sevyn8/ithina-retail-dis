@@ -6,8 +6,11 @@ this module covers ONLY the 40a additions plus the LOCAL-UNCHANGED guarantee.
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
+import streaming_consumer.config as config_module
 from dis_core.errors import DisError
 from streaming_consumer.config import HEALTH_STALENESS_SECONDS, ConsumerConfig
 
@@ -71,3 +74,22 @@ def test_toggle_other_value_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_staleness_threshold_is_the_contract_value() -> None:
     # Design C: 60s, sized above the worst expected loop iteration.
     assert HEALTH_STALENESS_SECONDS == 60.0
+
+
+def test_ingress_ready_subscription_defaults_to_contract_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No override -> the local create_topics.py name, so local dev is unchanged.
+    monkeypatch.delenv("INGRESS_READY_SUBSCRIPTION", raising=False)
+    reloaded = importlib.reload(config_module)
+    assert reloaded.INGRESS_READY_SUBSCRIPTION == "streaming-consumer.ingress.ready"
+
+
+def test_ingress_ready_subscription_honours_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Deployment (terraform, from the pubsub module output) points the subscribe at the
+    # actually-provisioned short name; the constant resolves at import, hence reload.
+    monkeypatch.setenv("INGRESS_READY_SUBSCRIPTION", "dis-ingress-ready-sub")
+    try:
+        reloaded = importlib.reload(config_module)
+        assert reloaded.INGRESS_READY_SUBSCRIPTION == "dis-ingress-ready-sub"
+    finally:
+        monkeypatch.delenv("INGRESS_READY_SUBSCRIPTION", raising=False)
+        importlib.reload(config_module)

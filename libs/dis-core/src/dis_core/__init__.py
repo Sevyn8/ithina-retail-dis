@@ -11,4 +11,6 @@ Foundational, dependency-light building blocks every DIS service and lib imports
 - ``logging`` — structured JSON logging binding service/stage/tenant_id/trace_id.
 - ``bq`` — ``BqClient`` Phase-1 stub (inert; real client in Phase 3 / Slice 21).
 - ``identity`` — the Identity Service client interface (Slice 2).
+- ``pubsub_names`` — resolve a Pub/Sub topic/subscription SHORT name from env,
+  defaulting to the frozen contract literal (lets infra override the deployed name).
 """

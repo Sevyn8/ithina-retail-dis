@@ -107,6 +107,10 @@ module "dis_ui_server" {
     {
       GCS_BUCKET_BRONZE = module.buckets.names["bronze"]
       PUBSUB_PROJECT_ID = var.project_id
+      # The CSV-upload publish target, sourced from the pubsub module's provisioned
+      # SHORT topic name (dis-csv-received) so the app never drifts from infra. The
+      # app defaults to "csv.received" when this is unset (local dev).
+      CSV_RECEIVED_TOPIC = module.pubsub.topic_names["csv.received"]
       # Vertex AI (GCP-native auth, no API key). project+location turn the suggester
       # on; GEMINI_IMPERSONATE_SA makes the Vertex calls run as gemini-dis (dis-ui-server
       # keeps its own SA for everything else). All optional: if the grants are not yet
@@ -186,6 +190,12 @@ module "csv_ingest_worker" {
     PUBSUB_PROJECT_ID = var.project_id
     GCS_BUCKET_BRONZE = module.buckets.names["bronze"]
     RUN_HEALTH_SERVER = "true"
+    # The worker's subscription on csv.received and its ingress.ready publish target,
+    # sourced from the pubsub module's provisioned SHORT names (dis-csv-received-sub,
+    # dis-ingress-ready) so the app never drifts from infra. The app defaults to its
+    # local create_topics.py names when these are unset (local dev).
+    CSV_RECEIVED_SUBSCRIPTION = module.pubsub.subscription_names["csv.received"]
+    INGRESS_READY_TOPIC       = module.pubsub.topic_names["ingress.ready"]
   }
   secret_env = {
     POSTGRES_URL = "dis-database-url"
@@ -213,6 +223,10 @@ module "streaming_consumer" {
     PUBSUB_PROJECT_ID = var.project_id
     GCS_BUCKET_BRONZE = module.buckets.names["bronze"]
     RUN_HEALTH_SERVER = "true"
+    # The consumer's subscription on ingress.ready, sourced from the pubsub module's
+    # provisioned SHORT name (dis-ingress-ready-sub) so the app never drifts from infra.
+    # The app defaults to its local create_topics.py name when this is unset (local dev).
+    INGRESS_READY_SUBSCRIPTION = module.pubsub.subscription_names["ingress.ready"]
   }
   secret_env = {
     POSTGRES_URL = "dis-database-url"
