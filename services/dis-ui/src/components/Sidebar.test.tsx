@@ -19,11 +19,11 @@ const opsSnapshot: AuthSnapshot = {
   roles: ['dis:ops', 'dis:read'],
 }
 
-// Inject an ops-flagged item so the gate is exercised without registering a real
-// ops surface this slice. T7: items carry a section (grouping is visual only).
+// Inject an ops-flagged item so the gate is exercised without depending on a real ops nav item
+// (none remain in NAV_ITEMS after Ops Fleet was removed). T7: items carry a section.
 const ITEMS: NavItem[] = [
   { label: 'Sources', to: '/sources', section: 'DATA' },
-  { label: 'Ops Fleet', to: '/ops/fleet', ops: true, section: 'OPERATIONS' },
+  { label: 'Ops Tool', to: '/ops/tool', ops: true, section: 'MONITORING' },
 ]
 
 describe('Sidebar nav gating', () => {
@@ -34,12 +34,12 @@ describe('Sidebar nav gating', () => {
 
   it('hides ops items from a tenant snapshot', () => {
     renderWithProviders(<Sidebar items={ITEMS} />, { snapshot: tenantSnapshot })
-    expect(screen.queryByRole('link', { name: 'Ops Fleet' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Ops Tool' })).not.toBeInTheDocument()
   })
 
   it('shows ops items for an ops snapshot', () => {
     renderWithProviders(<Sidebar items={ITEMS} />, { snapshot: opsSnapshot })
-    expect(screen.getByRole('link', { name: 'Ops Fleet' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ops Tool' })).toBeInTheDocument()
   })
 
   it('marks the active route', () => {
@@ -53,12 +53,14 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Sources' }).className).toContain('bg-sidebar-accent')
   })
 
-  it('shows the Ops Fleet nav item for ops and hides it for tenant (default NAV_ITEMS)', () => {
+  it('no longer renders the removed Ops Fleet nav item, for ops or tenant (default NAV_ITEMS)', () => {
     const tenantView = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
     expect(screen.queryByRole('link', { name: 'Ops Fleet' })).not.toBeInTheDocument()
     tenantView.unmount()
     renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
-    expect(screen.getByRole('link', { name: 'Ops Fleet' })).toBeInTheDocument()
+    // Ops Fleet was removed; with no ops-only items left, the OPERATIONS section is gone too.
+    expect(screen.queryByRole('link', { name: 'Ops Fleet' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'OPERATIONS' })).not.toBeInTheDocument()
   })
 
   it('no longer renders the retired Fleet Quarantine / Fleet Audit items (T9), even for ops', () => {
@@ -76,13 +78,10 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('link', { name: 'Audit' })).toBeInTheDocument()
   })
 
-  it('OPERATIONS holds only Ops Fleet for ops (Query removed; no fleet Quarantine/Audit)', () => {
+  it('no longer renders an OPERATIONS section for ops (it had no items left after Ops Fleet)', () => {
     const { container } = renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
     const order = Array.from(container.querySelectorAll('h2, a')).map((el) => el.textContent)
-    const opsIdx = order.indexOf('OPERATIONS')
-    expect(opsIdx).toBeGreaterThanOrEqual(0)
-    // everything after the OPERATIONS header is exactly Ops Fleet (Query was removed)
-    expect(order.slice(opsIdx + 1)).toEqual(['Ops Fleet'])
+    expect(order).not.toContain('OPERATIONS')
   })
 
   it('no longer renders the removed Query ops item, for ops or tenant', () => {
@@ -133,7 +132,7 @@ describe('Sidebar nav gating', () => {
     expect(screen.getByRole('heading', { name: 'OVERVIEW' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'DATA' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'MONITORING' })).toBeInTheDocument()
-    // OPERATIONS is ops-gated: its header auto-hides for a tenant (no visible items).
+    // OPERATIONS was removed entirely (its last item, Ops Fleet, is gone), so it never renders.
     expect(screen.queryByRole('heading', { name: 'OPERATIONS' })).not.toBeInTheDocument()
   })
 
@@ -153,15 +152,6 @@ describe('Sidebar nav gating', () => {
     ])
     // OVERVIEW (Dashboard) precedes DATA.
     expect(order.indexOf('OVERVIEW')).toBeLessThan(dataIdx)
-  })
-
-  it('shows the OPERATIONS section (header + items) only for an ops snapshot', () => {
-    const tenantView = renderWithProviders(<Sidebar />, { snapshot: tenantSnapshot })
-    expect(screen.queryByRole('heading', { name: 'OPERATIONS' })).not.toBeInTheDocument()
-    tenantView.unmount()
-    renderWithProviders(<Sidebar />, { snapshot: opsSnapshot })
-    expect(screen.getByRole('heading', { name: 'OPERATIONS' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Ops Fleet' })).toBeInTheDocument()
   })
 
   it('renders thin-stroke icons on nav items', () => {

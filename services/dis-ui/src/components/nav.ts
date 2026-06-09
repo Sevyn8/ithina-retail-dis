@@ -1,22 +1,14 @@
-import {
-  Bell,
-  Building2,
-  Database,
-  FileSearch,
-  LayoutDashboard,
-  Plug,
-  Plus,
-  ShieldAlert,
-} from 'lucide-react'
+import { Bell, Database, FileSearch, LayoutDashboard, Plug, Plus, ShieldAlert } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 // T7: nav items are grouped into labeled sections (Ithina-console look). The section is a
 // visual/structural grouping only; it changes no route, target, label, icon, or ops-gating.
-export type NavSection = 'OVERVIEW' | 'DATA' | 'MONITORING' | 'OPERATIONS'
+// OPERATIONS was retired with the Ops Fleet screen (its last item; Query was removed earlier),
+// so the section is gone; the remaining ops surfaces are the scope-aware MONITORING screens.
+export type NavSection = 'OVERVIEW' | 'DATA' | 'MONITORING'
 
-// Render order of the section groups. OPERATIONS is last; its header auto-hides for tenants
-// because all its items are ops-gated (the Sidebar drops a section with no visible items).
-export const NAV_SECTION_ORDER: NavSection[] = ['OVERVIEW', 'DATA', 'MONITORING', 'OPERATIONS']
+// Render order of the section groups.
+export const NAV_SECTION_ORDER: NavSection[] = ['OVERVIEW', 'DATA', 'MONITORING']
 
 export type NavItem = {
   label: string
@@ -26,16 +18,15 @@ export type NavItem = {
   // Visual only (slice 23): the sidebar icon shown beside the label (and alone when
   // collapsed). Does not affect routing or gating.
   icon?: LucideIcon
-  // Ops-only item: rendered only when isOps(snapshot) is true. The flag is the single
-  // gate; the OPERATIONS section header derives its visibility from having ops items.
+  // Ops-only item: rendered only when isOps(snapshot) is true. The flag is the single gate
+  // (the Sidebar drops a section with no visible items). No ops-only items remain today, but
+  // the flag is kept for future ops surfaces.
   ops?: boolean
 }
 
-// Tenant navigation. Dashboard is the index (`/`); Mappings is intentionally NOT a
-// top-level item (reached via a source, /sources/:sourceId/mappings). The ops-flagged
-// items render only for an ops persona (Sidebar filters on isOps); Ops Fleet (slice 24)
-// is the first such destination. T7 tags each item with its section; routes/labels/gating
-// are unchanged from T6.
+// Tenant navigation. Dashboard is the index (`/`), the single landing for every persona;
+// Mappings is intentionally NOT a top-level item (reached via a source,
+// /sources/:sourceId/mappings). T7 tags each item with its section.
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard, section: 'OVERVIEW' },
   // DATA: the source/template lifecycle, action-first. "Upload Data" is the flat template
@@ -53,9 +44,4 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Quarantine', to: '/quarantine', icon: ShieldAlert, section: 'MONITORING' },
   { label: 'Audit', to: '/audit', icon: FileSearch, section: 'MONITORING' },
   { label: 'Notifications', to: '/notifications', icon: Bell, section: 'MONITORING' },
-  // OPERATIONS: ops-only surfaces with no tenant equivalent. T9 retired the separate Fleet
-  // Quarantine / Fleet Audit items - the fleet views now live in the scope-aware MONITORING
-  // Quarantine / Audit (ops mode); the DuckDB Query panel was removed, so OPERATIONS holds
-  // only Ops Fleet.
-  { label: 'Ops Fleet', to: '/ops/fleet', icon: Building2, ops: true, section: 'OPERATIONS' },
 ]

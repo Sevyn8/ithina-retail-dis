@@ -56,14 +56,10 @@ describe('AppRoutes', () => {
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
   })
 
-  it('redirects an ops persona from the index to Ops Fleet', async () => {
+  it('lands an ops persona on the one Dashboard at the index (Ops Fleet removed, no redirect)', async () => {
     renderAtAs(opsSnapshot, '/')
-    expect(await screen.findByRole('heading', { name: 'Ops Fleet' })).toBeInTheDocument()
-  })
-
-  it('denies a non-ops persona on /ops/fleet', async () => {
-    renderAt('/ops/fleet')
-    expect(await screen.findByRole('alert')).toHaveTextContent(/access denied/i)
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
+    // the retired Ops Fleet screen is gone for everyone
     expect(screen.queryByRole('heading', { name: 'Ops Fleet' })).not.toBeInTheDocument()
   })
 

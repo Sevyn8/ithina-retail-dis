@@ -14,7 +14,6 @@ import { MappingVersions } from './MappingVersions'
 import { NotFound } from './NotFound'
 import { PosConnect } from './PosConnect'
 import { Notifications } from './Notifications'
-import { OpsFleet } from './OpsFleet'
 import { QuarantineConsole } from './QuarantineConsole'
 import { RecurringBatchUpload } from './RecurringBatchUpload'
 import { SampleUpload } from './SampleUpload'
@@ -28,9 +27,10 @@ import { StyleReference } from '../_style/StyleReference'
 
 // Router-agnostic route registry. App.tsx wraps this in a BrowserRouter; tests
 // wrap it in a MemoryRouter. /dev/login is public; everything under AuthBoundary
-// requires a valid token. The index `/` branches by persona (IndexRoute): tenant ->
-// Tenant Dashboard, ops -> redirect to Ops Fleet. The /ops/* subtree is wrapped in
-// OpsBoundary (ops-gated). An unknown path renders the not-found state.
+// requires a valid token. The index `/` renders the one Dashboard for every persona
+// (IndexRoute; the Ops Fleet screen and its ops-landing redirect were removed). The
+// /ops/* subtree is still wrapped in OpsBoundary (ops-gated). An unknown path renders
+// the not-found state.
 export function AppRoutes() {
   return (
     <Routes>
@@ -71,9 +71,9 @@ export function AppRoutes() {
           <Route path="/quarantine" element={<QuarantineConsole />} />
           <Route path="/audit" element={<AuditLookup />} />
           <Route path="/notifications" element={<Notifications />} />
-          {/* Ops subtree: OpsBoundary gates ALL /ops/* (non-ops -> PermissionDenied). */}
+          {/* Ops subtree: OpsBoundary gates ALL /ops/* (non-ops -> PermissionDenied). The Ops
+              Fleet screen was removed; the legacy quarantine/audit redirects remain. */}
           <Route path="/ops" element={<OpsBoundary />}>
-            <Route path="fleet" element={<OpsFleet />} />
             {/* T9: the separate fleet Quarantine/Audit routes are retired. Quarantine and Audit
                 are now ONE scope-aware screen each at /quarantine and /audit (the component
                 branches on isOps into fleet mode for ops). These redirects keep old fleet links
