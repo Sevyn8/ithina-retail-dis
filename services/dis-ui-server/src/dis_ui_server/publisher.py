@@ -54,6 +54,7 @@ class CsvReceivedEnvelope(BaseModel):
     received_ts: datetime
     tenant_display_code: str | None = None
     store_code: str | None = None
+    delimiter: str = Field(default=",", min_length=1, max_length=1)
 
     def to_bytes(self) -> bytes:
         """Serialise for the wire; optional fields without a value are OMITTED
