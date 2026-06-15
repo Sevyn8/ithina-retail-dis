@@ -635,6 +635,8 @@ def test_concurrent_patches_converge_to_one_draft(
     import json as jsonlib
 
     from dis_rls import create_rls_engine, rls_session
+    from dis_ui_server.auth.identity import UserType
+    from dis_ui_server.auth.scope import ReadScope
     from dis_ui_server.repos.mapping_templates import get_template_rows, patch_template
 
     created = _seed_draft(admin_engine, scratch_source)
@@ -682,10 +684,13 @@ def test_concurrent_patches_converge_to_one_draft(
                     template_name=None,
                     mapping_rules=patched_rules,
                     created_by_user_id=None,
+                    user_type=UserType.TENANT,
                 )
 
             await asyncio.gather(txn1(), txn2())
-            return list(await get_template_rows(engine, tenant, template_id))
+            return list(
+                await get_template_rows(engine, ReadScope(is_platform=False, tenant_id=tenant), template_id)
+            )
         finally:
             await engine.dispose()
 
@@ -780,3 +785,99 @@ def test_no_endpoint_can_mint_active_or_staged(
     )
     detail = live_client.get(f"/api/v1/mapping-templates/{template_id}", headers=headers).json()
     assert {v["status"] for v in detail["versions"]} == {"draft"}
+
+
+# -- Slice 17b: PLATFORM impersonation write + the reject paths, over the real HTTP path ---
+
+
+def _impersonation_body(source_id: str, *, acting_for: str | None = None) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "source_id": source_id,
+        "template_name": f"impersonation-{source_id}",
+        "template_type": "snapshot",
+        "columns": _snapshot_columns(),
+    }
+    if acting_for is not None:
+        body["acting_for_tenant_id"] = acting_for
+    return body
+
+
+def test_platform_impersonation_post_and_patch_target_tenant_a(
+    live_client: TestClient,
+    mint_token: Callable[..., str],
+    admin_engine: Engine,
+    scratch_source: str,
+) -> None:
+    # PLATFORM+dis:ops with acting_for_tenant_id=A: POST then PATCH land for tenant A, and the
+    # PERSISTED row's tenant_id IS A (admin read). Proves require_write_scope ->
+    # resolve_acted_for -> write_session -> rls_platform_session over HTTP. The handler only
+    # ever writes the RESOLVED acted-for tenant, so an impersonation can affect no other
+    # tenant's rows; the WITH CHECK cross-tenant-write refusal is proven at the DB layer in
+    # tests/integration/test_migration_0011.py.
+    platform = _bearer(mint_token(user_type="PLATFORM", tenant_id=None, roles=("dis:ops", "dis:read")))
+
+    created = live_client.post(
+        "/api/v1/mapping-templates",
+        headers=platform,
+        json=_impersonation_body(scratch_source, acting_for=TENANT_A),
+    )
+    assert created.status_code == 201, created.text
+    template_id = created.json()["template_id"]
+
+    patched = live_client.patch(
+        f"/api/v1/mapping-templates/{template_id}",
+        headers=platform,
+        json={"template_name": "impersonation-renamed", "acting_for_tenant_id": TENANT_A},
+    )
+    assert patched.status_code == 200, patched.text
+
+    with admin_engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT tenant_id, template_name FROM config.source_mappings WHERE source_id = :sid"),
+            {"sid": scratch_source},
+        ).all()
+    assert rows, "impersonation POST persisted no row"
+    assert all(str(r.tenant_id) == TENANT_A for r in rows), (
+        f"a row landed for a tenant other than the acted-for A: {[str(r.tenant_id) for r in rows]}"
+    )
+    assert any(r.template_name == "impersonation-renamed" for r in rows), (
+        "impersonation PATCH did not land for A"
+    )
+
+
+def test_tenant_token_carrying_acting_for_is_rejected(
+    live_client: TestClient,
+    mint_token: Callable[..., str],
+    admin_engine: Engine,
+    scratch_source: str,
+) -> None:
+    # Criterion 9 over HTTP: a TENANT request that names an acted-for tenant is REJECTED
+    # (403), never silently ignored -- and nothing persists.
+    token = _bearer(mint_token(tenant_id=TENANT_A))  # default user_type=TENANT
+    resp = live_client.post(
+        "/api/v1/mapping-templates",
+        headers=token,
+        json=_impersonation_body(scratch_source, acting_for=TENANT_B),
+    )
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["code"] == "tenant_scope"
+    with admin_engine.connect() as conn:
+        n = conn.execute(
+            text("SELECT count(*) FROM config.source_mappings WHERE source_id = :sid"),
+            {"sid": scratch_source},
+        ).scalar_one()
+    assert n == 0, "a rejected TENANT-acting-for request still persisted a row"
+
+
+def test_platform_write_without_acting_for_is_rejected(
+    live_client: TestClient,
+    mint_token: Callable[..., str],
+    scratch_source: str,
+) -> None:
+    # A PLATFORM write must NAME its acted-for tenant; omitting it is a clean 403 at the door.
+    platform = _bearer(mint_token(user_type="PLATFORM", tenant_id=None, roles=("dis:ops",)))
+    resp = live_client.post(
+        "/api/v1/mapping-templates", headers=platform, json=_impersonation_body(scratch_source)
+    )
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["code"] == "tenant_scope"

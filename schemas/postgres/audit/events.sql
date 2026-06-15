@@ -231,8 +231,9 @@ ALTER TABLE audit.events FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_audit_events_tenant
     ON audit.events
     USING (
-        tenant_id = current_setting('app.tenant_id', true)::UUID
+        tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
         OR tenant_id IS NULL
+        OR current_setting('app.user_type', true) = 'PLATFORM'
     );
 
 

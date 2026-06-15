@@ -24,7 +24,7 @@ def _bearer(token: str) -> dict[str, str]:
 def test_tenantless_token_is_403_despite_tenant_in_every_other_channel(
     client: TestClient, mint_token: Callable[..., str]
 ) -> None:
-    token = mint_token(tenant_id=None, roles=("dis:read",))
+    token = mint_token(tenant_id=None, roles=("dis:read",), user_type="PLATFORM")
     response = client.post(
         f"/api/v1/probe/tenant-echo?tenant_id={TENANT_B}",
         headers={**_bearer(token), "X-Tenant-Id": TENANT_B},

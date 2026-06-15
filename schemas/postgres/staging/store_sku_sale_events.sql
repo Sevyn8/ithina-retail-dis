@@ -293,8 +293,11 @@ CREATE POLICY tenant_isolation
     AS PERMISSIVE
     FOR ALL
     TO PUBLIC
-    USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+    USING (
+        tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+        OR current_setting('app.user_type', true) = 'PLATFORM'
+    )
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 
 -- ----------------------------------------------------------------------------

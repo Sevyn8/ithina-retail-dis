@@ -50,17 +50,17 @@ For the EPE block (purpose, entry, process, exit), file structure, and operation
   miscall, no identity map, no autoflush, and is fully typed via `Mapped[...]`.
   This is the reusable data-access pattern for every later API slice; repos
   (`repos/`) are the only modules that build statements against the ORM models.
-- **The auth seam is the sole source of `tenant_id`.** `auth/scope.py` dependencies
-  (`get_current_identity`, `require_tenant`, `require_ops`) read the verified token
-  only — never a body, query param, or unverified header — and are the only path by
-  which a tenant scope reaches `rls_session`. `auth/verifier.py` is the single swap
-  point for the 13b JWKS verifier; nothing outside it inspects a token.
-- **DIS-side RLS is single-GUC** (`app.tenant_id` only, live-introspected 13a): there
-  is no `app.user_type` discriminator and NO platform see-all posture on the DIS
-  database. The PLATFORM cross-tenant read (ops fleet/quarantine) requires BOTH a
-  dis-rls session variant AND a DIS policy migration — owned by the first ops-read
-  slice, not improvised here. The CM-replica two-GUC pattern
-  (`docs/ithina_master_db_read_access.md`) is Customer-Master-only.
+- **The auth seam is the sole source of `tenant_id`.** `auth/scope.py` dependencies read
+  the verified token only — never a body, query param, or unverified header — and are the
+  only path by which a tenant scope reaches a session. Sole exception (Slice 17b, D92): a
+  PLATFORM impersonation write reads its acted-for tenant from the request body, honoured
+  ONLY on a verified `user_type=PLATFORM` token (a TENANT naming one is rejected 403).
+  `auth/verifier.py` is the single swap point for the 13b JWKS verifier.
+- **DIS-side RLS is two-GUC** (`app.user_type` + `app.tenant_id`, Slice 17b / D91): TENANT
+  scopes to its tenant; PLATFORM (with `dis:ops`) reads all tenants and writes only an
+  impersonated tenant. The asymmetry is structural — the PLATFORM branch is in USING only,
+  never WITH CHECK. The CM-replica two-GUC pattern
+  (`docs/ithina_master_db_read_access.md`) is a separate, Customer-Master-only path.
 
 ## References
 

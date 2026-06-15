@@ -55,16 +55,20 @@ def test_endpoints_require_a_token(client: TestClient) -> None:
     )
 
 
-def test_platform_token_is_refused_on_tenant_endpoints(
+def test_platform_token_is_refused_where_it_must_be(
     client: TestClient, mint_token: Callable[..., str]
 ) -> None:
-    ops = _bearer(mint_token(tenant_id=None, roles=("dis:ops",)))
+    # Slice 17b: GET /mapping-templates now SERVES a PLATFORM+dis:ops token (see-all,
+    # proven in the integration suite). What STILL refuses a PLATFORM token, both a clean
+    # 403 tenant_scope: /stores-onboarded (identity_mirror stays tenant-pinned — D70 not
+    # reopened, decision 1) and POST /mapping-templates with NO acting_for_tenant_id (a
+    # platform write must name its acted-for tenant).
+    ops = _bearer(mint_token(tenant_id=None, roles=("dis:ops",), user_type="PLATFORM"))
     for response in (
-        client.get("/api/v1/mapping-templates", headers=ops),
         client.get("/api/v1/stores-onboarded", headers=ops),
         client.post("/api/v1/mapping-templates", headers=ops, json=_valid_create_body()),
     ):
-        assert response.status_code == 403
+        assert response.status_code == 403, response.text
         assert response.json()["error"]["code"] == "tenant_scope"
 
 

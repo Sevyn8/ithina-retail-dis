@@ -15,13 +15,14 @@ code-quality convention).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, Request
 
 from dis_core.errors import AuthTokenError, OpsRoleRequiredError, TenantScopeError
-from dis_ui_server.auth.identity import Identity
+from dis_ui_server.auth.identity import Identity, UserType
 from dis_ui_server.auth.verifier import verify_token
 
 OPS_ROLE = "dis:ops"
@@ -83,3 +84,99 @@ def tenant_uuid_of(identity: Identity) -> UUID:
             "token tenant_id is not a valid tenant identifier",
             tenant_id=None,  # never echo the malformed claim value
         ) from exc
+
+
+# ---- Slice 17b: two-GUC read/write scope resolution ----
+
+
+@dataclass(frozen=True)
+class ReadScope:
+    """Resolved read visibility for a request (Slice 17b).
+
+    ``is_platform`` True is PLATFORM see-all: the repo opens ``rls_platform_session(None)``
+    and reads every tenant. Otherwise the read is pinned to ``tenant_id`` and the repo
+    opens ``rls_session(tenant_id)`` — the unchanged TENANT path.
+    """
+
+    is_platform: bool
+    tenant_id: UUID | None
+
+
+@dataclass(frozen=True)
+class WriteScope:
+    """Resolved write posture for a request (Slice 17b). Carries only what the VERIFIED
+    token asserts — so the impersonation discriminator is ``user_type``, never a
+    client-chosen field. The acted-for tenant is applied by :func:`resolve_acted_for`
+    together with the request body.
+    """
+
+    user_type: UserType
+    token_tenant: UUID | None
+    has_ops: bool
+
+
+async def require_read_scope(
+    identity: Annotated[Identity, Depends(get_current_identity)],
+) -> ReadScope:
+    """Resolve read visibility from the verified token (Slice 17b, decision 3).
+
+    PLATFORM see-all requires BOTH ``user_type=PLATFORM`` AND the ``dis:ops`` role
+    (defense in depth: ``user_type`` is the discriminator, ``dis:ops`` the second
+    factor). A PLATFORM token WITHOUT ``dis:ops`` is denied see-all (403). A TENANT
+    identity is pinned to its own tenant regardless of any ``dis:ops`` it also carries.
+    """
+    if identity.user_type is UserType.PLATFORM:
+        if OPS_ROLE not in identity.roles:
+            raise OpsRoleRequiredError(f"{OPS_ROLE} role required for PLATFORM cross-tenant read")
+        return ReadScope(is_platform=True, tenant_id=None)
+    return ReadScope(is_platform=False, tenant_id=tenant_uuid_of(identity))
+
+
+async def require_write_scope(
+    identity: Annotated[Identity, Depends(get_current_identity)],
+) -> WriteScope:
+    """Resolve the write posture from the verified token (Slice 17b).
+
+    A bad/absent token raises here (via ``get_current_identity``) BEFORE the handler
+    runs. The acted-for tenant is applied by :func:`resolve_acted_for` together with the
+    request body, so the discriminator stays the verified ``user_type``.
+    """
+    token_tenant = tenant_uuid_of(identity) if identity.user_type is UserType.TENANT else None
+    return WriteScope(
+        user_type=identity.user_type,
+        token_tenant=token_tenant,
+        has_ops=OPS_ROLE in identity.roles,
+    )
+
+
+def resolve_acted_for(scope: WriteScope, body_tenant_id: UUID | None) -> UUID:
+    """The tenant a write acts on, discriminated by the VERIFIED ``user_type`` — never by
+    a client-chosen field (Slice 17b, register decision 2 / revised 2e).
+
+    - TENANT + body names a tenant -> reject (a tenant request may not name an acted-for
+      tenant; rejected as 403, never silently ignored).
+    - TENANT + absent -> the token tenant (pinned).
+    - PLATFORM without ``dis:ops`` -> 403.
+    - PLATFORM + ``dis:ops`` + acted-for present -> that tenant (impersonation).
+    - PLATFORM + ``dis:ops`` + acted-for absent -> 403 (no see-all writes).
+
+    The policy's tenant-pinned WITH CHECK is the structural backstop behind this resolver.
+    """
+    if scope.user_type is UserType.TENANT:
+        if body_tenant_id is not None:
+            raise TenantScopeError(
+                "a tenant request must not name an acted-for tenant",
+                tenant_id=None,
+            )
+        if scope.token_tenant is None:  # unreachable: a TENANT token always carries a tenant
+            raise TenantScopeError("tenant token carries no tenant scope", tenant_id=None)
+        return scope.token_tenant
+    # PLATFORM
+    if not scope.has_ops:
+        raise OpsRoleRequiredError(f"{OPS_ROLE} role required for a PLATFORM impersonation write")
+    if body_tenant_id is None:
+        raise TenantScopeError(
+            "a PLATFORM write must name the acted-for tenant in the request body",
+            tenant_id=None,
+        )
+    return body_tenant_id

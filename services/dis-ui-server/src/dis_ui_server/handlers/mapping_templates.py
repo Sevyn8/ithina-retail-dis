@@ -24,7 +24,14 @@ from dis_core.errors import ResourceNotFoundError
 from dis_core.ids import new_uuid7
 from dis_mapping import SourceMapping
 from dis_ui_server.auth.identity import Identity
-from dis_ui_server.auth.scope import require_tenant, tenant_uuid_of
+from dis_ui_server.auth.scope import (
+    ReadScope,
+    WriteScope,
+    get_current_identity,
+    require_read_scope,
+    require_write_scope,
+    resolve_acted_for,
+)
 from dis_ui_server.mapping_translation import translate_columns_to_mapping_rules
 from dis_ui_server.mapping_validation import require_template_type, validate_mapping_rules_for_type
 from dis_ui_server.repos.mapping_templates import (
@@ -118,12 +125,13 @@ def _to_detail(rows: Sequence[Row[Any]]) -> MappingTemplateDetail:
 @router.get("/mapping-templates")
 async def list_mapping_templates(
     request: Request,
-    identity: Annotated[Identity, Depends(require_tenant)],
+    scope: Annotated[ReadScope, Depends(require_read_scope)],
     source_id: str | None = None,
 ) -> list[MappingTemplate]:
-    """The tenant's templates (lineage summaries), order (source_id, template_name)."""
+    """Template lineage summaries, order (source_id, template_name). TENANT sees its own;
+    PLATFORM (user_type=PLATFORM + dis:ops) sees every tenant's."""
     engine: AsyncEngine = request.app.state.engine
-    rows = await list_template_rows(engine, tenant_uuid_of(identity), source_id=source_id)
+    rows = await list_template_rows(engine, scope, source_id=source_id)
     by_template: dict[UUID, list[Row[Any]]] = {}
     for row in rows:  # rows arrive lineage-grouped; group defensively anyway
         by_template.setdefault(row.template_id, []).append(row)
@@ -134,19 +142,18 @@ async def list_mapping_templates(
 @router.get("/mapping-templates/{template_id}")
 async def get_mapping_template(
     request: Request,
-    identity: Annotated[Identity, Depends(require_tenant)],
+    scope: Annotated[ReadScope, Depends(require_read_scope)],
     template_id: UUID,
 ) -> MappingTemplateDetail:
     """One template with its full version lineage; 404 throw-style when invisible."""
     engine: AsyncEngine = request.app.state.engine
-    tenant_id = tenant_uuid_of(identity)
-    rows = await get_template_rows(engine, tenant_id, template_id)
+    rows = await get_template_rows(engine, scope, template_id)
     if not rows:
         raise ResourceNotFoundError(
             f"mapping template {template_id} not found",
             resource="mapping_template",
             identifier=str(template_id),
-            tenant_id=str(tenant_id),
+            tenant_id=str(scope.tenant_id) if scope.tenant_id is not None else None,
         )
     return _to_detail(rows)
 
@@ -154,7 +161,8 @@ async def get_mapping_template(
 @router.post("/mapping-templates", status_code=201)
 async def create_mapping_template(
     request: Request,
-    identity: Annotated[Identity, Depends(require_tenant)],
+    identity: Annotated[Identity, Depends(get_current_identity)],
+    write_scope: Annotated[WriteScope, Depends(require_write_scope)],
     body: MappingTemplateCreate,
 ) -> MappingTemplateDetail:
     """Create a template (Slice 16c: translate -> validate -> ACTIVE write).
@@ -175,25 +183,29 @@ async def create_mapping_template(
     with nothing persisted. Returns the real ``MappingTemplateDetail`` off the row.
     """
     engine: AsyncEngine = request.app.state.engine
-    tenant_id = tenant_uuid_of(identity)  # 401/403 at the auth seam (malformed claim -> 403)
-    require_template_type(body.template_type, tenant_id=str(tenant_id))  # 400 if outside vocab
-    raw_rules = translate_columns_to_mapping_rules(body, tenant_id=str(tenant_id))  # 400 on bad token
+    # Acted-for tenant discriminated by the VERIFIED user_type (Slice 17b): TENANT pins to
+    # its token tenant (a body acting_for is REJECTED 403); PLATFORM+dis:ops writes the
+    # body's acted-for tenant; PLATFORM without dis:ops or without an acted-for tenant -> 403.
+    acted_for = resolve_acted_for(write_scope, body.acting_for_tenant_id)
+    require_template_type(body.template_type, tenant_id=str(acted_for))  # 400 if outside vocab
+    raw_rules = translate_columns_to_mapping_rules(body, tenant_id=str(acted_for))  # 400 on bad token
     # The gate is the LAST step before the write: a semantic failure (bad dest_key,
     # missing mandatory, broken presence pairing) raises here, never persisting. We store
     # the gate's VALIDATED document (its canonical dump — non-decimal casts gain explicit
     # null precision/scale), so the write can never carry un-gated rules.
     source = validate_mapping_rules_for_type(
-        raw_rules, template_type=body.template_type, tenant_id=str(tenant_id)
+        raw_rules, template_type=body.template_type, tenant_id=str(acted_for)
     )
     row = await create_template(
         engine,
-        tenant_id,
+        acted_for,
         template_id=new_uuid7(),  # fresh per create => no prior ACTIVE for the triple
         source_id=body.source_id,
         template_name=body.template_name,
         template_type=body.template_type,
         mapping_rules=source.model_dump(mode="json"),
         created_by_user_id=_created_by_uuid(identity),
+        user_type=write_scope.user_type,
     )
     return _to_detail([row])
 
@@ -201,36 +213,40 @@ async def create_mapping_template(
 @router.patch("/mapping-templates/{template_id}")
 async def patch_mapping_template(
     request: Request,
-    identity: Annotated[Identity, Depends(require_tenant)],
+    identity: Annotated[Identity, Depends(get_current_identity)],
+    write_scope: Annotated[WriteScope, Depends(require_write_scope)],
     template_id: UUID,
     body: MappingTemplatePatch,
 ) -> MappingTemplateDetail:
     """Edit a template per the D17 lifecycle (see the repo's recorded semantics)."""
     engine: AsyncEngine = request.app.state.engine
-    tenant_id = tenant_uuid_of(identity)
+    acted_for = resolve_acted_for(write_scope, body.acting_for_tenant_id)
     rules_dump: dict[str, Any] | None = None
     if body.mapping_rules is not None:
         # template_type is lineage-fixed (set at creation): re-validate the edited
         # rules against the STORED type. The type is immutable, so reading it ahead
-        # of patch_template's locked re-read is safe (nothing can change it).
-        rows = await get_template_rows(engine, tenant_id, template_id)
+        # of patch_template's locked re-read is safe (nothing can change it). Pinned to
+        # the acted-for tenant: a PLATFORM impersonation acts AS that tenant; see-all is
+        # not needed to read the single template being patched.
+        rows = await get_template_rows(engine, ReadScope(is_platform=False, tenant_id=acted_for), template_id)
         if not rows:
             raise ResourceNotFoundError(
                 f"mapping template {template_id} not found",
                 resource="mapping_template",
                 identifier=str(template_id),
-                tenant_id=str(tenant_id),
+                tenant_id=str(acted_for),
             )
         source = validate_mapping_rules_for_type(
-            body.mapping_rules, template_type=rows[0].template_type, tenant_id=str(tenant_id)
+            body.mapping_rules, template_type=rows[0].template_type, tenant_id=str(acted_for)
         )
         rules_dump = source.model_dump(mode="json")
     rows = await patch_template(
         engine,
-        tenant_id,
+        acted_for,
         template_id,
         template_name=body.template_name,
         mapping_rules=rules_dump,
         created_by_user_id=_created_by_uuid(identity),
+        user_type=write_scope.user_type,
     )
     return _to_detail(rows)

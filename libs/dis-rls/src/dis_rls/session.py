@@ -15,6 +15,14 @@ Role posture is **explicit, not assumed** (slice constraint): RLS is silently vo
 for a SUPERUSER or BYPASSRLS role, so the first session opened on an engine verifies
 that the connection reached ``ithina_dis_db`` and that the connected role can NOT
 bypass RLS, raising :class:`RlsContextError` otherwise.
+
+Two session modes (Slice 17b, two-GUC ``app.user_type`` + ``app.tenant_id``):
+:func:`rls_session` is the TENANT path — it sets ``app.user_type='TENANT'``
+(positively, never absent-by-default) plus the tenant scope. :func:`rls_platform_session`
+is the PLATFORM path — ``app.user_type='PLATFORM'`` with an empty (no-tenant, see-all) or
+concrete (impersonation) ``app.tenant_id``. Both route through the SAME first-use posture
+guard (the shared :func:`_verified_transaction` scaffold) so a PLATFORM session can never
+bypass the bypass-role / wrong-database check.
 """
 
 from __future__ import annotations
@@ -106,26 +114,76 @@ async def _verify_target_and_role(conn: AsyncConnection) -> None:
 
 
 @asynccontextmanager
-async def rls_session(engine: AsyncEngine, tenant_id: UUID | str) -> AsyncIterator[AsyncConnection]:
-    """Open a tenant-scoped transaction and yield the connection.
+async def _verified_transaction(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
+    """Open a transaction on the DIS engine, verifying target + role posture on the
+    FIRST use of the engine, and yield the connection for the caller to scope.
 
-    On the first use of ``engine`` the target database and role posture are
-    verified. The per-tenant scope is set transaction-locally; the transaction
-    commits on clean exit and rolls back on exception.
+    The shared scaffold for BOTH session modes: TENANT (:func:`rls_session`) and
+    PLATFORM (:func:`rls_platform_session`) route through here, so the PLATFORM path
+    can never open a connection that skips the first-use ``_verify_target_and_role``
+    guard — a guard-bypass would make RLS silently void. The caller sets the
+    per-session GUCs (``app.user_type`` and ``app.tenant_id``) inside the yielded
+    transaction; it commits on clean exit and rolls back on exception.
+    """
+    async with engine.connect() as conn:
+        async with conn.begin():
+            if engine not in _VERIFIED_ENGINES:
+                await _verify_target_and_role(conn)
+                _VERIFIED_ENGINES.add(engine)
+            yield conn
+
+
+@asynccontextmanager
+async def rls_session(engine: AsyncEngine, tenant_id: UUID | str) -> AsyncIterator[AsyncConnection]:
+    """Open a TENANT-scoped transaction and yield the connection.
+
+    On the first use of ``engine`` the target database and role posture are verified
+    (shared scaffold). ``app.user_type='TENANT'`` is set UNCONDITIONALLY (positively,
+    never absent-by-default) alongside the per-tenant scope, both transaction-locally;
+    the transaction commits on clean exit and rolls back on exception.
 
     The caller supplies ``tenant_id`` from authenticated upstream context, never
     from a request body (lib CLAUDE.md rule).
     """
     tid = str(tenant_id)
     log = _log.bind(stage="rls_session", tenant_id=tid)
-    async with engine.connect() as conn:
-        async with conn.begin():
-            if engine not in _VERIFIED_ENGINES:
-                await _verify_target_and_role(conn)
-                _VERIFIED_ENGINES.add(engine)
-            await conn.execute(
-                text("SELECT set_config('app.tenant_id', :tid, true)"),
-                {"tid": tid},
-            )
-            log.debug("rls scope set")
-            yield conn
+    async with _verified_transaction(engine) as conn:
+        await conn.execute(text("SELECT set_config('app.user_type', 'TENANT', true)"))
+        await conn.execute(
+            text("SELECT set_config('app.tenant_id', :tid, true)"),
+            {"tid": tid},
+        )
+        log.debug("rls scope set")
+        yield conn
+
+
+@asynccontextmanager
+async def rls_platform_session(
+    engine: AsyncEngine, tenant_id: UUID | None = None
+) -> AsyncIterator[AsyncConnection]:
+    """Open a PLATFORM-scoped transaction and yield the connection (Slice 17b).
+
+    Sets ``app.user_type='PLATFORM'`` (reads widen to all tenants via the policy USING
+    branch). The acted-for tenant determines write scope, NOT read scope:
+
+    - ``tenant_id=None`` → PLATFORM no-tenant (see-all reads, writes NOTHING): the tenant
+      GUC is set to ``''``; the policy ``NULLIF(..., '')::uuid`` maps it to NULL so it
+      matches no row in WITH CHECK.
+    - concrete ``tenant_id`` → PLATFORM impersonation: see-all reads, writes ONLY that
+      tenant (WITH CHECK pins it).
+
+    Same first-use posture guard as :func:`rls_session` via the shared scaffold — a
+    PLATFORM session never bypasses ``_check_posture``. The caller supplies the PLATFORM
+    posture and (for impersonation) the acted-for tenant from VERIFIED upstream context
+    (the dis-ui-server PLATFORM-gated path), never from an unverified request field.
+    """
+    tid = "" if tenant_id is None else str(tenant_id)
+    log = _log.bind(stage="rls_platform_session", tenant_id=tid or "<see-all>")
+    async with _verified_transaction(engine) as conn:
+        await conn.execute(text("SELECT set_config('app.user_type', 'PLATFORM', true)"))
+        await conn.execute(
+            text("SELECT set_config('app.tenant_id', :tid, true)"),
+            {"tid": tid},
+        )
+        log.debug("platform rls scope set")
+        yield conn

@@ -37,7 +37,7 @@ def test_valid_tenant_token_yields_identity(client: TestClient, mint_token: Call
 
 def test_valid_ops_token_passes_require_ops(client: TestClient, mint_token: Callable[..., str]) -> None:
     # PLATFORM user: no tenant_id claim, dis:ops role (contract §2.1/§2.2).
-    token = mint_token(sub="ops-1", tenant_id=None, roles=("dis:ops",))
+    token = mint_token(sub="ops-1", tenant_id=None, roles=("dis:ops",), user_type="PLATFORM")
     response = client.get("/api/v1/probe/ops", headers=_bearer(token))
     assert response.status_code == 200
     assert response.json() == {"user_id": "ops-1", "tenant_id": None}
@@ -105,7 +105,7 @@ def test_missing_sub_claim_is_401(client: TestClient, mint_token: Callable[..., 
 def test_tenantless_token_on_tenant_endpoint_is_403(
     client: TestClient, mint_token: Callable[..., str]
 ) -> None:
-    token = mint_token(tenant_id=None, roles=("dis:read",))
+    token = mint_token(tenant_id=None, roles=("dis:read",), user_type="PLATFORM")
     response = client.get("/api/v1/probe/tenant", headers=_bearer(token))
     assert response.status_code == 403
     assert _error_code(response.json()) == "tenant_scope"
@@ -120,7 +120,7 @@ def test_missing_ops_role_on_ops_endpoint_is_403(client: TestClient, mint_token:
 
 def test_absent_roles_claim_denies_ops(client: TestClient, mint_token: Callable[..., str]) -> None:
     # roles absent → no roles → deny-by-default at the ops gate.
-    token = mint_token(tenant_id=None, roles=None)
+    token = mint_token(tenant_id=None, roles=None, user_type="PLATFORM")
     response = client.get("/api/v1/probe/ops", headers=_bearer(token))
     assert response.status_code == 403
     assert _error_code(response.json()) == "ops_role_required"

@@ -59,7 +59,7 @@ Customer Master, the Ithina platform's tenant and store system of record, is the
 
 These hold across every service and lib. Violations are bugs, not preferences.
 
-1. **Tenant isolation via Postgres RLS.** All canonical reads and writes go through `libs/dis-rls`'s session helper. The helper opens a transaction, runs `SET LOCAL app.tenant_id = :id`, and runs every subsequent statement scoped. Never call SQLAlchemy directly against canonical schemas — CI lint forbids it.
+1. **Tenant isolation via Postgres RLS (two-GUC, D91).** All canonical reads and writes go through `libs/dis-rls`'s session helper, which opens a transaction and sets `app.user_type` + `app.tenant_id` via `set_config(..., is_local=true)`, scoping every subsequent statement: TENANT reads/writes its own tenant; PLATFORM (with `dis:ops`) reads all tenants and writes only an impersonated tenant. Never call SQLAlchemy directly against canonical schemas — CI lint forbids it.
 
 2. **PII tokenization at receivers.** Phone, email, loyalty_id, PAN, Aadhaar, and tenant-policy fields are tokenized via `libs/dis-pii` before any persistence step. Receivers are the only place this happens. The tokenization is deterministic HMAC with per-tenant KMS keys (decisions.md D24).
 

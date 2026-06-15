@@ -25,8 +25,9 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, Row, Select, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from dis_core.errors import ResourceNotFoundError
-from dis_rls import rls_session
+from dis_core.errors import ResourceNotFoundError, TenantScopeError
+from dis_ui_server.auth.scope import ReadScope
+from dis_ui_server.db import read_session
 from dis_ui_server.models import QuarantinedChunk, QuarantinedRow
 
 # The list-row projection, identical on both tables so the two legs union cleanly.
@@ -36,17 +37,35 @@ _LIST_COLUMNS = ("id", "trace_id", "source_id", "failure_stage", "failure_reason
 _DETAIL_COLUMNS = (*_LIST_COLUMNS, "failure_context", "mapping_version_id")
 
 
+def _tenant_term(
+    model: type[QuarantinedRow] | type[QuarantinedChunk], scope: ReadScope
+) -> list[ColumnElement[bool]]:
+    """The in-query tenant predicate (Slice 17b): applied for a pinned (TENANT) scope,
+    OMITTED for PLATFORM see-all (the RLS USING branch is the see-all isolation).
+
+    Conditioned on ``scope.is_platform``, NEVER on ``tenant_id`` being absent — so a
+    TENANT scope ALWAYS carries the predicate (the catastrophe invariant; criterion 7
+    pins it). These tables are RLS ON+FORCE, so the predicate is defense-in-depth for
+    TENANT; for PLATFORM the policy widens reads and the predicate must not re-pin.
+    """
+    if scope.is_platform:
+        return []
+    if scope.tenant_id is None:  # unreachable: a pinned scope always carries a UUID
+        raise TenantScopeError("a pinned read scope carries no tenant", tenant_id=None)
+    return [model.tenant_id == scope.tenant_id]
+
+
 def _list_filters(
     model: type[QuarantinedRow] | type[QuarantinedChunk],
-    tenant_id: UUID,
+    scope: ReadScope,
     *,
     source: str | None,
     stages: list[str] | None,
     statuses: list[str] | None,
     cutoff: datetime | None,
 ) -> list[ColumnElement[bool]]:
-    """The WHERE terms shared by both union legs (tenant predicate always first)."""
-    terms: list[ColumnElement[bool]] = [model.tenant_id == tenant_id]  # in-query scoping - do not remove
+    """The WHERE terms shared by both union legs (tenant predicate first, when pinned)."""
+    terms: list[ColumnElement[bool]] = _tenant_term(model, scope)
     if source is not None:
         terms.append(model.source_id == source)
     if stages is not None:
@@ -69,7 +88,7 @@ def _leg(
 
 async def list_held_items(
     engine: AsyncEngine,
-    tenant_id: UUID,
+    scope: ReadScope,
     *,
     source: str | None = None,
     stages: list[str] | None = None,
@@ -84,14 +103,14 @@ async def list_held_items(
     producing path), never "no filter".
     """
     row_terms = _list_filters(
-        QuarantinedRow, tenant_id, source=source, stages=stages, statuses=statuses, cutoff=cutoff
+        QuarantinedRow, scope, source=source, stages=stages, statuses=statuses, cutoff=cutoff
     )
     chunk_terms = _list_filters(
-        QuarantinedChunk, tenant_id, source=source, stages=stages, statuses=statuses, cutoff=cutoff
+        QuarantinedChunk, scope, source=source, stages=stages, statuses=statuses, cutoff=cutoff
     )
     row_stmt = _leg(QuarantinedRow, "row", row_terms)
     chunk_stmt = _leg(QuarantinedChunk, "chunk", chunk_terms)
-    async with rls_session(engine, tenant_id) as conn:
+    async with read_session(engine, is_platform=scope.is_platform, tenant_id=scope.tenant_id) as conn:
         rows = list((await conn.execute(row_stmt)).all())
         rows += list((await conn.execute(chunk_stmt)).all())
     # Newest first; id as the stable tie-breaker (UUIDv7 is time-ordered).
@@ -99,25 +118,25 @@ async def list_held_items(
     return rows
 
 
-async def count_open(engine: AsyncEngine, tenant_id: UUID) -> int:
+async def count_open(engine: AsyncEngine, scope: ReadScope) -> int:
     """The header badge: count of OPEN (status=NEW) held items, FILTER-INDEPENDENT.
 
-    Deliberately ignores every list filter - it is the tenant's total open count, not
-    the filtered total. Counts both tables.
+    Deliberately ignores every list filter - it is the tenant's total open count (or the
+    cross-tenant total under a PLATFORM see-all scope). Counts both tables.
     """
 
     def _open_count(model: type[QuarantinedRow] | type[QuarantinedChunk]) -> Select[Any]:
         return (
-            select(func.count()).select_from(model).where(model.tenant_id == tenant_id, model.status == "NEW")
+            select(func.count()).select_from(model).where(*_tenant_term(model, scope), model.status == "NEW")
         )
 
-    async with rls_session(engine, tenant_id) as conn:
+    async with read_session(engine, is_platform=scope.is_platform, tenant_id=scope.tenant_id) as conn:
         rows_open = (await conn.execute(_open_count(QuarantinedRow))).scalar_one()
         chunks_open = (await conn.execute(_open_count(QuarantinedChunk))).scalar_one()
     return int(rows_open) + int(chunks_open)
 
 
-async def get_held_item(engine: AsyncEngine, tenant_id: UUID, *, kind: str, item_id: UUID) -> Row[Any]:
+async def get_held_item(engine: AsyncEngine, scope: ReadScope, *, kind: str, item_id: UUID) -> Row[Any]:
     """One held item by ``kind`` + PK, or a clean 404.
 
     The ``kind`` tag dispatches to exactly one table (no cross-table id ambiguity).
@@ -131,16 +150,16 @@ async def get_held_item(engine: AsyncEngine, tenant_id: UUID, *, kind: str, item
     )
     columns = [getattr(model, name) for name in _DETAIL_COLUMNS]
     statement = select(*columns, literal(kind).label("kind")).where(
-        model.id == item_id, model.tenant_id == tenant_id
+        model.id == item_id, *_tenant_term(model, scope)
     )
-    async with rls_session(engine, tenant_id) as conn:
+    async with read_session(engine, is_platform=scope.is_platform, tenant_id=scope.tenant_id) as conn:
         result = (await conn.execute(statement)).all()
     if not result:
         raise ResourceNotFoundError(
-            f"no quarantined item {kind}:{item_id} for the caller's tenant",
+            f"no quarantined item {kind}:{item_id} for the caller's scope",
             resource="quarantine_item",
             identifier=f"{kind}:{item_id}",
-            tenant_id=str(tenant_id),
+            tenant_id=str(scope.tenant_id) if scope.tenant_id is not None else None,
         )
     return result[0]
 

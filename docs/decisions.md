@@ -1163,9 +1163,9 @@ dis-ui-server `repos/stores.py` + its isolation tests + this entry; no DDL.
 
 **Cross-refs.** D68 (template grain), D71/D74 (consumer lookup, 8a), D72/D73 (upload carry, bronze), D33/D58/D65 (dedup keys, confirmed template-correct), the D68 view-label gap (A2), the promote/reject/shadow slice (owner of A1+A3, fold-in of A2+A4). **Hard rule 10** governs the A1 contract revision.
 
-### D76 DIS has no platform/operator see-all; cross-tenant reads are deferred to the first ops-read slice `OPEN`
+### D76 DIS has no platform/operator see-all; cross-tenant reads are deferred to the first ops-read slice `RESOLVED`
 
-**Status.** `OPEN` (registered while noting the DIS UI serves both tenant and Ithina-operator users). DIS RLS is single-GUC: every policy is `tenant_id = current_setting('app.tenant_id')`. There is no `app.user_type`, no PLATFORM OR-branch, no see-all. The 13a auth seam distinguishes `require_tenant` vs `require_ops` at the HTTP layer, but that stops at the door — it does not translate into any cross-tenant DB read.
+**Status.** `RESOLVED` (Slice 17b realized this — see D91/D92/D93; originally registered `OPEN` while noting the DIS UI serves both tenant and Ithina-operator users). At registration, DIS RLS was single-GUC: every policy was `tenant_id = current_setting('app.tenant_id')`. There is no `app.user_type`, no PLATFORM OR-branch, no see-all. The 13a auth seam distinguishes `require_tenant` vs `require_ops` at the HTTP layer, but that stops at the door — it does not translate into any cross-tenant DB read.
 
 **Why deferred (not a defect).** Every DIS data path has been tenant-scoped, so the two-GUC see-all machinery would have been speculative; 13a and 14b both scoped it out, naming "the first ops-read slice" as the trigger. The two-GUC `app.user_type` pattern exists in DIS only in the test harness modelling Customer Master's DB, not on DIS's own tables.
 
@@ -1173,7 +1173,7 @@ dis-ui-server `repos/stores.py` + its isolation tests + this entry; no DDL.
 
 **Not to be conflated.** `identity_mirror` is RLS-OFF entirely (D41) because it is shared reference data everything FKs against — openly cross-tenant by design, a different thing from a see-all capability (and the reason 14b's store endpoint scopes in-query, the D70 weak link). The DIS tenant tables are strictly single-tenant with no see-all yet.
 
-**Decision.** Single-GUC tenant-only isolation stands for v1; the two-GUC PLATFORM see-all is built in the first ops-read slice, porting Customer Master's pattern. **Cross-refs.** D41, D69, D70, Slice 13a, Slice 14b.
+**Decision.** Single-GUC stood for v1; Slice 17b built the two-GUC PLATFORM see-all (D91) + impersonation-write (D92), porting Customer Master's pattern but ASYMMETRICALLY (PLATFORM in USING only, never WITH CHECK). **Cross-refs.** D41, D69, D70, D91, D92, D93, Slice 13a, Slice 14b, Slice 17b.
 
 ### D77 audit.events de-partitioned to a plain table for beta — the D45 silent write-cliff removed `RESOLVED`
 
@@ -1347,3 +1347,31 @@ _require_subscription now runs against real GCP). Cross-refs D58.
 **Scope.** dis-ui-server only (`schemas/mapping_suggestions.py`, `handlers/mapping_suggestions.py`, API_CONTRACT). No persistence, no create-path change. The frontend (Connect a System CSV branch) passes the chosen `template_type`; the old `/upload` caller keeps sending none.
 
 **Cross-refs.** Slice 14d / D86 / D87 (the per-type catalogs this selects among), D89 / Slice 16a (the create contract the same branch wires alongside this), the LLM mapping-suggestion contract (`docs/slices/llm-mapping-suggestion-contract.md`).
+
+### D91 Tenant isolation moves single-GUC → two-GUC (`app.user_type` + `app.tenant_id`) `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 17b). Realizes D76 and supersedes the single-GUC wording of root CLAUDE.md hard rule 1 and the dis-ui-server "single-GUC / no platform see-all" durable invariant.
+
+**The decision.** All 13 tenant-scoped policies carry an asymmetric two-GUC form: USING = `tenant_id = NULLIF(current_setting('app.tenant_id',true),'')::uuid OR current_setting('app.user_type',true)='PLATFORM'`; WITH CHECK = the NULLIF tenant-match ONLY (no PLATFORM branch — so write-nothing for PLATFORM-no-tenant and write-only-T for impersonation are structural, the deliberate divergence from Customer Master which put PLATFORM in WITH CHECK too). `audit.events` keeps its USING-only outlier (`OR tenant_id IS NULL`, no WITH CHECK) with the PLATFORM branch added to USING. The `NULLIF(..., '')` wrapper lets a PLATFORM-no-tenant session (empty tenant GUC) match no rows instead of erroring on the `::uuid` cast.
+
+**The mechanism.** `dis-rls` sets both GUCs via `set_config(..., is_local=true)`: `rls_session` sets `app.user_type='TENANT'` + `app.tenant_id`; the new `rls_platform_session` sets `'PLATFORM'` with an empty (see-all) or impersonation `app.tenant_id`. Both route through the same first-use `_verified_transaction` posture guard (D93). dis-ui-server reads a REQUIRED `user_type` claim (reject-on-ambiguous); `require_read_scope` gates PLATFORM see-all on `user_type=PLATFORM` AND `dis:ops`; the 6 read methods (mapping-templates ×2, dashboard ×1, quarantine ×3) widen for PLATFORM (stores stays tenant-pinned per D70).
+
+**Fresh == migrated.** Migration `0011` DROP+CREATEs the 13 policies (inline SQL, never `ALTER POLICY`, never edits shipped `0005`/`0007`/`0009`); the 13 `schemas/postgres/*.sql` DDL files carry the same end-state, proven by `test_migration_0011` catalog equality (both directions) + the `tests/contract/test_rls_policy_ddl_text` source-text pin.
+
+**Cross-refs.** D76 (realized), D92 (the request-tenant exception), D93 (the retained lazy guard), D41 (`identity_mirror` RLS-OFF, untouched), D69/D70 (the prior single-GUC posture), hard rule 1 (reconciled). **Scope.** 13 DDL files, migration `0011`, `libs/dis-rls`, dis-ui-server `auth`/`repos`/`handlers`/`schemas`.
+
+### D92 Request-supplied acted-for tenant, PLATFORM-only (controlled exception to tenant-from-token) `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 17b). The one carve-out to "tenant_id is sole-sourced from the verified token" (dis-ui-server durable invariant; root CLAUDE.md hard rule 1).
+
+**The decision.** `POST` / `PATCH /mapping-templates` carry an optional `acting_for_tenant_id` (internal UUID) in the body. `resolve_acted_for` honours it ONLY on a verified `user_type=PLATFORM` token (the impersonation target). A TENANT request that names an acted-for tenant is REJECTED (403), never silently ignored; a PLATFORM write with no acted-for tenant is a 403; a PLATFORM without `dis:ops` is a 403. The discriminator is the verified `user_type`, never a client-chosen body field; the policy's tenant-pinned WITH CHECK is the structural backstop. Standard impersonation pattern: capability in the token, target in the request.
+
+**Cross-refs.** D91 (the two-GUC posture the write runs under), D76. **Scope.** dis-ui-server `auth/scope.py` (`resolve_acted_for`, `require_write_scope`), `handlers/mapping_templates.py`, `schemas/mapping_templates.py`.
+
+### D93 Lazy first-use role guard retained; no Customer Master boot-guard parity `DEFERRED`
+
+**Status.** `DEFERRED` (Slice 17b). DIS verifies the bypass-role / wrong-database posture lazily on first `rls_session` / `rls_platform_session` use (shared `_verified_transaction` → `_check_posture`, raising `RlsContextError`), not at process start as Customer Master's `engine.py` boot guard does.
+
+**Why deferred.** The lazy guard fires before any tenant data is touched and now covers BOTH session entry points (proven by `test_rls_platform_session_guard`); boot-time parity is a cross-service startup change with no isolation gain for this slice. *Trigger: a future cross-service startup-hardening pass, if boot-time refusal is wanted.*
+
+**Cross-refs.** D91 (the guard both entry points share). **Scope.** none (deferral record).

@@ -255,7 +255,7 @@ def test_tenantless_token_is_403(
     mint_token: Any,
 ) -> None:
     client, storage, publisher, _ = harness
-    response = _post(client, mint_token(tenant_id=None))
+    response = _post(client, mint_token(tenant_id=None, user_type="PLATFORM"))
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "tenant_scope"
     assert not storage.uploads and not publisher.published

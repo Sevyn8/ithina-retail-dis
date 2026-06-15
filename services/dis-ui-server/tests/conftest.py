@@ -87,6 +87,7 @@ class TokenMinter(Protocol):
         tenant_id: str | None = ...,
         store_id: str | None = ...,
         roles: tuple[str, ...] | None = ...,
+        user_type: str | None = ...,
         expires_in: int = ...,
         issuer: str = ...,
         audience: str = ...,
@@ -97,7 +98,20 @@ class TokenMinter(Protocol):
 
 @pytest.fixture
 def mint_token() -> TokenMinter:
-    """Mint dev-stub-shaped HS256 tokens, with knobs for every failure mode."""
+    """Mint dev-stub-shaped HS256 tokens, with knobs for every failure mode.
+
+    Slice 17b adds the required ``user_type`` claim (default ``"TENANT"`` so existing
+    callers stay valid under the now-mandatory claim). The 3 interim token personas
+    (token contract; the impersonation TARGET is a request-body field, NOT a claim):
+
+    - TENANT:               mint_token(user_type="TENANT", tenant_id=<uuid>, roles=("dis:read",))
+    - PLATFORM see-all:     mint_token(user_type="PLATFORM", tenant_id=None, roles=("dis:ops", "dis:read"))
+    - PLATFORM impersonate: SAME token as see-all (PLATFORM + dis:ops, no tenant_id); the
+                            acted-for tenant rides the POST/PATCH body ``acting_for_tenant_id``.
+
+    Reject-on-ambiguous knobs: ``user_type=None`` (or ``omit=("user_type",)``) -> absent;
+    ``user_type=""`` -> empty; ``user_type="BOGUS"`` -> unrecognized.
+    """
 
     def _mint(
         *,
@@ -105,6 +119,7 @@ def mint_token() -> TokenMinter:
         tenant_id: str | None = TENANT_A,
         store_id: str | None = None,
         roles: tuple[str, ...] | None = ("dis:read",),
+        user_type: str | None = "TENANT",
         expires_in: int = 3600,
         issuer: str = DEV_STUB_ISSUER,
         audience: str = DEV_STUB_AUDIENCE,
@@ -125,6 +140,8 @@ def mint_token() -> TokenMinter:
             payload["store_id"] = store_id
         if roles is not None:
             payload["roles"] = list(roles)
+        if user_type is not None:  # Slice 17b required claim; None/""/"BOGUS" exercise reject-on-ambiguous
+            payload["user_type"] = user_type
         for claim in omit:
             payload.pop(claim, None)
         return jwt.encode(payload, secret, algorithm=DEV_STUB_ALGORITHM)

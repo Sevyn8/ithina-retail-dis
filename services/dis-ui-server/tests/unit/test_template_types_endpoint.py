@@ -32,9 +32,10 @@ def test_template_types_identical_across_callers_no_tenant_context(
     b = client.get(
         "/api/v1/template-types", headers={"Authorization": f"Bearer {mint_token(tenant_id=TENANT_B)}"}
     )
+    ops_token = mint_token(tenant_id=None, roles=("dis:ops",), user_type="PLATFORM")
     ops = client.get(
         "/api/v1/template-types",
-        headers={"Authorization": f"Bearer {mint_token(tenant_id=None, roles=('dis:ops',))}"},
+        headers={"Authorization": f"Bearer {ops_token}"},
     )
     assert a.status_code == b.status_code == ops.status_code == 200
     assert a.content == b.content == ops.content

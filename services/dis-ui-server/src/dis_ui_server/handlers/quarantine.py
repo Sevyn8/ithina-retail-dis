@@ -31,8 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from dis_core.errors import ResourceNotFoundError
 from dis_core.timestamps import now_utc
-from dis_ui_server.auth.identity import Identity
-from dis_ui_server.auth.scope import require_tenant, tenant_uuid_of
+from dis_ui_server.auth.scope import ReadScope, require_read_scope
 from dis_ui_server.repos.quarantine import count_open, get_held_item, list_held_items
 from dis_ui_server.schemas.quarantine import (
     Kind,
@@ -151,35 +150,34 @@ def _to_detail(row: Row[Any]) -> QuarantineDetail:
 @router.get("/quarantine")
 async def list_quarantine(
     request: Request,
-    identity: Annotated[Identity, Depends(require_tenant)],
+    scope: Annotated[ReadScope, Depends(require_read_scope)],
     source: Annotated[str | None, Query()] = None,
     error_type: Annotated[StageWire | None, Query()] = None,
     status: Annotated[StatusWire | None, Query()] = None,
     window: Annotated[WindowWire | None, Query()] = None,
 ) -> QuarantineListResponse:
-    """The tenant's held items (newest first) + the filter-independent open count."""
+    """Held items (newest first) + filter-independent open count. TENANT sees its own;
+    PLATFORM (user_type=PLATFORM + dis:ops) sees cross-tenant."""
     engine: AsyncEngine = request.app.state.engine
-    tenant_id = tenant_uuid_of(identity)
     # Translate wire filters -> DB vocabulary via the single crosswalk; the repo is DB-only.
     stages = stage_db_values_for(error_type) if error_type is not None else None
     statuses = status_db_values_for(status) if status is not None else None
     cutoff = now_utc() - _WINDOW_DELTA[window] if window is not None else None
     items = await list_held_items(
-        engine, tenant_id, source=source, stages=stages, statuses=statuses, cutoff=cutoff
+        engine, scope, source=source, stages=stages, statuses=statuses, cutoff=cutoff
     )
-    open_count = await count_open(engine, tenant_id)
+    open_count = await count_open(engine, scope)
     return QuarantineListResponse(items=[_to_list_row(item) for item in items], open_count=open_count)
 
 
 @router.get("/quarantine/{item_id}")
 async def get_quarantine_item(
     request: Request,
-    identity: Annotated[Identity, Depends(require_tenant)],
+    scope: Annotated[ReadScope, Depends(require_read_scope)],
     item_id: str,
 ) -> QuarantineDetail:
-    """One held item in full by its type-tagged id; unknown/cross-tenant id -> 404."""
+    """One held item in full by its type-tagged id; unknown/out-of-scope id -> 404."""
     engine: AsyncEngine = request.app.state.engine
-    tenant_id = tenant_uuid_of(identity)
     kind, item_uuid = _parse_item_id(item_id)
-    row = await get_held_item(engine, tenant_id, kind=kind, item_id=item_uuid)
+    row = await get_held_item(engine, scope, kind=kind, item_id=item_uuid)
     return _to_detail(row)

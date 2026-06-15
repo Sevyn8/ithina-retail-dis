@@ -263,7 +263,7 @@ def test_catalog_served_per_type_and_identical_for_every_caller(
     url = "/api/v1/template-mapping-fields?template_type=snapshot"
     tenant_a = client.get(url, headers={"Authorization": f"Bearer {mint_token()}"})
     tenant_b = client.get(url, headers={"Authorization": f"Bearer {mint_token(tenant_id=TENANT_B)}"})
-    ops_token = mint_token(tenant_id=None, roles=("dis:ops",))
+    ops_token = mint_token(tenant_id=None, roles=("dis:ops",), user_type="PLATFORM")
     ops = client.get(url, headers={"Authorization": f"Bearer {ops_token}"})
     assert tenant_a.status_code == tenant_b.status_code == ops.status_code == 200
     # Byte-identical bodies; the client's DB is UNREACHABLE, so 200 proves no

@@ -53,6 +53,7 @@ def _token() -> str:
         "iat": now,
         "exp": now + 600,
         "tenant_id": "019e89f9-dbd5-7703-8221-ae6b811599bb",
+        "user_type": "TENANT",
     }
     return jwt.encode(payload, DEV_STUB_SECRET, algorithm=DEV_STUB_ALGORITHM)
 

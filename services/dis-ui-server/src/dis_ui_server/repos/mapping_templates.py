@@ -52,7 +52,9 @@ from dis_core.errors import (
     ResourceNotFoundError,
     TenantScopeError,
 )
-from dis_rls import rls_session
+from dis_ui_server.auth.identity import UserType
+from dis_ui_server.auth.scope import ReadScope
+from dis_ui_server.db import read_session, write_session
 from dis_ui_server.models import SourceMappingRow
 
 _STATUS_DRAFT = "DRAFT"
@@ -71,7 +73,7 @@ def _violates(exc: IntegrityError, constraint: str) -> bool:
 
 
 async def list_template_rows(
-    engine: AsyncEngine, tenant_id: UUID, *, source_id: str | None = None
+    engine: AsyncEngine, scope: ReadScope, *, source_id: str | None = None
 ) -> Sequence[Row[Any]]:
     """Every version row visible to the tenant, lineage-grouped stable order."""
     statement = select(SourceMappingRow).order_by(
@@ -82,18 +84,18 @@ async def list_template_rows(
     )
     if source_id is not None:
         statement = statement.where(SourceMappingRow.source_id == source_id)
-    async with rls_session(engine, tenant_id) as conn:
+    async with read_session(engine, is_platform=scope.is_platform, tenant_id=scope.tenant_id) as conn:
         return (await conn.execute(statement)).all()
 
 
-async def get_template_rows(engine: AsyncEngine, tenant_id: UUID, template_id: UUID) -> Sequence[Row[Any]]:
+async def get_template_rows(engine: AsyncEngine, scope: ReadScope, template_id: UUID) -> Sequence[Row[Any]]:
     """One lineage's version rows (version desc); empty when invisible/absent."""
     statement = (
         select(SourceMappingRow)
         .where(SourceMappingRow.template_id == template_id)
         .order_by(SourceMappingRow.version_seq_per_source.desc())
     )
-    async with rls_session(engine, tenant_id) as conn:
+    async with read_session(engine, is_platform=scope.is_platform, tenant_id=scope.tenant_id) as conn:
         return (await conn.execute(statement)).all()
 
 
@@ -112,7 +114,9 @@ async def resolve_active_template(engine: AsyncEngine, tenant_id: UUID, template
     unique by construction — and it carries the lineage's ``source_id``, which is
     how the upload derives the source (the request never names one).
     """
-    rows = await get_template_rows(engine, tenant_id, template_id)
+    # The upload gate is TENANT-only (POST /csv-uploads is require_tenant); read the
+    # lineage pinned to the caller's own tenant (no PLATFORM see-all on this path).
+    rows = await get_template_rows(engine, ReadScope(is_platform=False, tenant_id=tenant_id), template_id)
     if not rows:
         raise ResourceNotFoundError(
             f"mapping template {template_id} not found",
@@ -144,6 +148,7 @@ async def create_template(
     template_type: str,
     mapping_rules: dict[str, Any],
     created_by_user_id: UUID | None,
+    user_type: UserType,
 ) -> Row[Any]:
     """Insert the lineage's first version: ACTIVE, seq trigger-assigned, no predecessor.
 
@@ -171,7 +176,7 @@ async def create_template(
         )
         .returning(SourceMappingRow)
     )
-    async with rls_session(engine, tenant_id) as conn:
+    async with write_session(engine, is_platform=user_type is UserType.PLATFORM, acted_for=tenant_id) as conn:
         try:
             result = await conn.execute(statement)
         except IntegrityError as exc:
@@ -204,6 +209,7 @@ async def patch_template(
     template_name: str | None,
     mapping_rules: dict[str, Any] | None,
     created_by_user_id: UUID | None,
+    user_type: UserType,
 ) -> Sequence[Row[Any]]:
     """Apply one PATCH atomically; returns the lineage's fresh rows (version desc).
 
@@ -227,7 +233,7 @@ async def patch_template(
         .order_by(SourceMappingRow.version_seq_per_source.desc())
         .with_for_update()
     )
-    async with rls_session(engine, tenant_id) as conn:
+    async with write_session(engine, is_platform=user_type is UserType.PLATFORM, acted_for=tenant_id) as conn:
         await conn.execute(lineage_stmt)  # statement 1: acquire the locks (result unused)
         locked = (await conn.execute(lineage_stmt)).all()  # statement 2: fresh snapshot, decide on this
         if not locked:

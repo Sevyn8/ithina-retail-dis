@@ -387,3 +387,30 @@ def test_detail_cross_tenant_id_is_404(
         f"/api/v1/quarantine/{seed.b_chunk}", headers=_bearer(mint_token(tenant_id=TENANT_A))
     )
     assert response.status_code == 404
+
+
+# -- Slice 17b: PLATFORM see-all + the conjunction gate, over the real HTTP read path ---
+
+
+def test_list_platform_sees_all_tenants(
+    live_client: TestClient, mint_token: Callable[..., str], seed: _Seed
+) -> None:
+    # The full require_read_scope -> read_session -> rls_platform_session seam over HTTP:
+    # a PLATFORM+dis:ops token (no tenant_id) sees BOTH tenants' held items; a TENANT-A
+    # token sees only A's. Proves see-all end to end, not merely the resolver.
+    platform = mint_token(user_type="PLATFORM", tenant_id=None, roles=("dis:ops", "dis:read"))
+    all_ids = _ids(_list(live_client, platform))
+    assert {seed.a_row_canonical, seed.a_chunk_other} <= all_ids, "PLATFORM did not see tenant A's rows"
+    assert seed.b_chunk in all_ids, "PLATFORM did not see tenant B's row -> see-all not wired over HTTP"
+
+    a_only = _ids(_list(live_client, mint_token(tenant_id=TENANT_A)))
+    assert seed.b_chunk not in a_only, "TENANT A saw tenant B's row -> isolation broken"
+
+
+def test_list_platform_without_ops_is_denied(live_client: TestClient, mint_token: Callable[..., str]) -> None:
+    # The conjunction gate over HTTP (decision 3): PLATFORM user_type alone is not enough --
+    # without dis:ops, see-all is refused with a clean 403, no rows.
+    token = mint_token(user_type="PLATFORM", tenant_id=None, roles=("dis:read",))
+    response = live_client.get("/api/v1/quarantine", headers=_bearer(token))
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "ops_role_required"

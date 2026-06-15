@@ -17,10 +17,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
+from dis_core.errors import TenantScopeError
 from dis_core.ids import new_uuid7
+from dis_ui_server.auth.scope import ReadScope
 from dis_ui_server.handlers.quarantine import _compose_context, _iso, _parse_item_id
 from dis_ui_server.models import QuarantinedChunk, QuarantinedRow
-from dis_ui_server.repos.quarantine import _list_filters
+from dis_ui_server.repos.quarantine import _list_filters, _tenant_term
 from dis_ui_server.schemas.quarantine import (
     StageWire,
     stage_db_values_for,
@@ -56,18 +58,47 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("model", [QuarantinedRow, QuarantinedChunk])
-def test_list_filters_always_scopes_by_tenant(
+def test_list_filters_tenant_predicate_is_conditional_on_platform(
     model: type[QuarantinedRow] | type[QuarantinedChunk],
 ) -> None:
-    # Even with NO list filters, the WHERE terms must contain the tenant predicate.
-    # quarantine.* is RLS ON, so a missing predicate would NOT leak at runtime (RLS
-    # backstops) -- this asserts the defense-in-depth predicate structurally, so it
-    # cannot quietly disappear and leave isolation resting on RLS alone.
+    # Slice 17b structural catastrophe guard (criterion 7): the tenant predicate is
+    # PRESENT for a pinned (TENANT) scope and OMITTED for PLATFORM see-all -- conditioned
+    # on is_platform, NEVER on tenant_id being absent. quarantine.* is RLS ON, so this
+    # pins the predicate so it cannot quietly vanish for TENANT (leaving isolation on RLS
+    # alone) nor wrongly persist for PLATFORM (defeating see-all).
     tenant_id = new_uuid7()
-    terms = _list_filters(model, tenant_id, source=None, stages=None, statuses=None, cutoff=None)
-    assert terms, "list filter built no WHERE terms -> the tenant predicate is gone"
-    rendered = [str(term) for term in terms]
-    assert any("tenant_id" in term for term in rendered), f"no tenant predicate in {rendered}"
+    pinned = _list_filters(
+        model,
+        ReadScope(is_platform=False, tenant_id=tenant_id),
+        source=None,
+        stages=None,
+        statuses=None,
+        cutoff=None,
+    )
+    assert any("tenant_id" in str(term) for term in pinned), "pinned (TENANT) scope lost its tenant predicate"
+    platform = _list_filters(
+        model,
+        ReadScope(is_platform=True, tenant_id=None),
+        source=None,
+        stages=None,
+        statuses=None,
+        cutoff=None,
+    )
+    assert not any("tenant_id" in str(term) for term in platform), (
+        "PLATFORM see-all scope still carries a tenant predicate -> see-all defeated"
+    )
+
+
+@pytest.mark.parametrize("model", [QuarantinedRow, QuarantinedChunk])
+def test_tenant_term_refuses_a_pinned_scope_without_a_tenant(
+    model: type[QuarantinedRow] | type[QuarantinedChunk],
+) -> None:
+    # Locks the discriminator as ``scope.is_platform``, NOT tenant-absence: a PINNED
+    # (non-platform) scope that somehow lacks a tenant is REFUSED, never silently left
+    # unscoped. Catches a mutation that keys the predicate on ``scope.tenant_id is None``
+    # (which would drop the predicate for a tenant-less pinned scope instead of raising).
+    with pytest.raises(TenantScopeError):
+        _tenant_term(model, ReadScope(is_platform=False, tenant_id=None))
 
 
 # -- crosswalk: ONE source for display AND filter (the no-drift principle) ----------
@@ -170,10 +201,13 @@ def test_list_requires_a_token(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "auth_token"
 
 
-def test_list_requires_a_tenant_scoped_token(client: TestClient, mint_token: Callable[..., str]) -> None:
-    response = client.get("/api/v1/quarantine", headers=_bearer(mint_token(tenant_id=None)))
+def test_list_denies_platform_without_ops(client: TestClient, mint_token: Callable[..., str]) -> None:
+    # Slice 17b: GET /quarantine serves a PLATFORM+dis:ops token (see-all, integration
+    # suite); a PLATFORM token WITHOUT dis:ops is denied see-all -- a clean 403.
+    token = mint_token(user_type="PLATFORM", tenant_id=None, roles=("dis:read",))
+    response = client.get("/api/v1/quarantine", headers=_bearer(token))
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "tenant_scope"
+    assert response.json()["error"]["code"] == "ops_role_required"
 
 
 @pytest.mark.parametrize(

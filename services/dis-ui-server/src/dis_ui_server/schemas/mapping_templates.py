@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -102,6 +103,11 @@ class MappingTemplateCreate(BaseModel):
     # at creation thereafter.
     template_type: str
     columns: list[MappingColumn] = Field(min_length=1)
+    # PLATFORM impersonation only (Slice 17b): the acted-for tenant (internal UUID).
+    # Honoured ONLY on a verified PLATFORM token via resolve_acted_for(); a TENANT request
+    # carrying it is REJECTED (403), never silently ignored. The discriminator is the
+    # verified token user_type, NOT this field.
+    acting_for_tenant_id: UUID | None = None
 
 
 class MappingTemplatePatch(BaseModel):
@@ -115,6 +121,9 @@ class MappingTemplatePatch(BaseModel):
 
     template_name: str | None = Field(default=None, min_length=1, max_length=200)
     mapping_rules: dict[str, Any] | None = None
+    # PLATFORM impersonation only (Slice 17b); see MappingTemplateCreate. NOT a content
+    # field — it does not satisfy the at-least-one-of (template_name / mapping_rules) rule.
+    acting_for_tenant_id: UUID | None = None
 
     @model_validator(mode="after")
     def _at_least_one(self) -> MappingTemplatePatch:

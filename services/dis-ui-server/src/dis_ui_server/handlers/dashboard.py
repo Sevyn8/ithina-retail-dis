@@ -17,8 +17,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from dis_ui_server.auth.identity import Identity
-from dis_ui_server.auth.scope import require_tenant, tenant_uuid_of
+from dis_ui_server.auth.scope import ReadScope, require_read_scope
 from dis_ui_server.repos.dashboard import fetch_dashboard_metrics
 from dis_ui_server.schemas.dashboard import (
     CanonicalRecords,
@@ -34,11 +33,12 @@ router = APIRouter()
 @router.get("/dashboard/metrics")
 async def get_dashboard_metrics(
     request: Request,
-    identity: Annotated[Identity, Depends(require_tenant)],
+    scope: Annotated[ReadScope, Depends(require_read_scope)],
 ) -> DashboardMetrics:
-    """The token tenant's Dashboard metrics: 24h ingest, quarantine, canonical, flow."""
+    """Dashboard metrics: 24h ingest, quarantine, canonical, flow. TENANT sees its own;
+    PLATFORM (user_type=PLATFORM + dis:ops) sees cross-tenant aggregates."""
     engine: AsyncEngine = request.app.state.engine
-    data = await fetch_dashboard_metrics(engine, tenant_uuid_of(identity))
+    data = await fetch_dashboard_metrics(engine, scope)
 
     received = data.rows_ingested_24h
     quarantined = data.quarantined_rows_24h
@@ -55,8 +55,7 @@ async def get_dashboard_metrics(
         records_in_canonical=CanonicalRecords(
             total=sum(count for _, count in data.canonical_by_table),
             by_table=[
-                CanonicalTableCount(table=table, count=count)
-                for table, count in data.canonical_by_table
+                CanonicalTableCount(table=table, count=count) for table, count in data.canonical_by_table
             ],
         ),
         flow=[

@@ -18,12 +18,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from dis_rls import rls_session
+from dis_ui_server.auth.scope import ReadScope
+from dis_ui_server.db import read_session
 
 # The canonical tables that hold mapping-produced ingest rows. store_sku_signal_history
 # is daily-compute DERIVED output (not ingested records), so it is deliberately excluded.
@@ -82,13 +82,14 @@ class DashboardMetricsData:
     flow: list[FlowAggRow]
 
 
-async def fetch_dashboard_metrics(engine: AsyncEngine, tenant_id: UUID) -> DashboardMetricsData:
-    """Read every Dashboard metric for ``tenant_id`` in one tenant-scoped session.
+async def fetch_dashboard_metrics(engine: AsyncEngine, scope: ReadScope) -> DashboardMetricsData:
+    """Read every Dashboard metric in one scoped session (Slice 17b).
 
-    ``tenant_id`` MUST come from the verified token (``tenant_uuid_of``); the auth
-    seam is the only producer. All reads are scoped by ``app.tenant_id`` via RLS.
+    ``scope`` comes from ``require_read_scope`` (verified token only): a TENANT scope
+    pins ``app.tenant_id``; a PLATFORM scope reads see-all (aggregates span every tenant)
+    via the policy USING branch. All reads are scoped by RLS — no in-query predicate.
     """
-    async with rls_session(engine, tenant_id) as conn:
+    async with read_session(engine, is_platform=scope.is_platform, tenant_id=scope.tenant_id) as conn:
         rows_ingested = int((await conn.execute(_ROWS_INGESTED_24H)).scalar_one())
         quarantined = int((await conn.execute(_QUARANTINED_24H)).scalar_one())
 

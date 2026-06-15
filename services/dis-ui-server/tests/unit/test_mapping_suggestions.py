@@ -11,7 +11,7 @@ a clean response parses to ``source="llm"``, and a non-catalog target is nulled.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import cast
 
 import anyio
@@ -112,7 +112,7 @@ def test_handler_rejects_a_non_tenant_token(suggest_client: TestClient, mint_tok
     resp = suggest_client.post(
         "/api/v1/mapping-suggestions",
         json=_BODY,
-        headers={"Authorization": f"Bearer {mint_token(tenant_id=None)}"},
+        headers={"Authorization": f"Bearer {mint_token(user_type='PLATFORM', tenant_id=None)}"},
     )
     assert resp.status_code == 403
 
@@ -143,7 +143,7 @@ class _RecordingSuggester:
 
 def test_handler_scopes_to_the_per_type_catalog_when_template_type_is_present(
     suggest_client: TestClient,
-    mint_token,  # type: ignore[no-untyped-def]
+    mint_token: Callable[..., str],
 ) -> None:
     # A valid template_type selects THAT type's per-type catalog (snapshot included).
     fake = _RecordingSuggester()
@@ -160,7 +160,7 @@ def test_handler_scopes_to_the_per_type_catalog_when_template_type_is_present(
 
 def test_handler_falls_back_to_the_union_catalog_when_template_type_is_absent(
     suggest_client: TestClient,
-    mint_token,  # type: ignore[no-untyped-def]
+    mint_token: Callable[..., str],
 ) -> None:
     # No template_type -> today's sales+inventory_change union (the /upload flow is unchanged).
     fake = _RecordingSuggester()

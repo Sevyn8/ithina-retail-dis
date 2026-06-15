@@ -12,6 +12,6 @@ loop-scoped engine fixture.
 
 from __future__ import annotations
 
-from dis_rls.session import create_rls_engine, rls_session
+from dis_rls.session import create_rls_engine, rls_platform_session, rls_session
 
-__all__ = ["create_rls_engine", "rls_session"]
+__all__ = ["create_rls_engine", "rls_platform_session", "rls_session"]
