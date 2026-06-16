@@ -42,6 +42,8 @@ from types import ModuleType
 from uuid import UUID
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 
@@ -139,6 +141,15 @@ def admin_engine(admin_url: str) -> Iterator[Engine]:
         yield engine
     finally:
         engine.dispose()
+
+
+def _alembic_head() -> str:
+    """The current head revision of the migration chain (file-derived, never stale)."""
+    cfg = Config(str(_REPO_ROOT / "alembic.ini"))
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    if head is None:
+        raise AssertionError("alembic migration chain has no head revision")
+    return head
 
 
 def _alembic(*args: str, env_overrides: dict[str, str] | None = None) -> None:
@@ -437,7 +448,7 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         # six canonical/staging parents from the SAME manifest files 0001
         # applied — shape-identical on a manifest-fresh database, and it never
         # touches config.source_mappings).
-        assert head == "0010"
+        assert head == _alembic_head()
 
         # 0005 must be a TRUE NO-OP on a manifest-fresh database. Without this,
         # a drifted manifest could bootstrap the WRONG shape and 0005's

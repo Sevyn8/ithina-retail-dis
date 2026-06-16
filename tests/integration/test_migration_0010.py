@@ -28,6 +28,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 
@@ -208,6 +210,15 @@ def test_downgrade_then_upgrade_restores_the_column_and_view(admin_engine: Engin
 # ---------------------------------------------------------------------------
 
 
+def _alembic_head() -> str:
+    """The current head revision of the migration chain (file-derived, never stale)."""
+    cfg = Config(str(_REPO_ROOT / "alembic.ini"))
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    if head is None:
+        raise AssertionError("alembic migration chain has no head revision")
+    return head
+
+
 def _alembic(*args: str, env_overrides: dict[str, str] | None = None) -> None:
     env = dict(os.environ)
     if env_overrides:
@@ -315,7 +326,7 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0010"
+        assert head == _alembic_head()
 
         # Convergence on what 0010 changes (and the whole table/view, so any drift surfaces).
         assert _table_shape(scratch_engine, _TABLE) == _table_shape(admin_engine, _TABLE), (

@@ -51,6 +51,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -206,6 +208,15 @@ def mapping_version_id(admin_url: str, admin_engine: Engine) -> int:
                 {"t": str(fx.PRIMARY_TENANT.uuid), "s": fx.DEFAULT_SOURCE_ID},
             ).scalar_one()
         )
+
+
+def _alembic_head() -> str:
+    """The current head revision of the migration chain (file-derived, never stale)."""
+    cfg = Config(str(_REPO_ROOT / "alembic.ini"))
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    if head is None:
+        raise AssertionError("alembic migration chain has no head revision")
+    return head
 
 
 def _alembic(*args: str, env_overrides: dict[str, str] | None = None) -> None:
@@ -728,7 +739,7 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0010"
+        assert head == _alembic_head()
         assert _all_shapes(scratch_engine) == manifest_shapes, (
             "migration 0009 CHANGED a manifest-fresh database — the manifest "
             "no longer carries its end state (drift self-healed)"
