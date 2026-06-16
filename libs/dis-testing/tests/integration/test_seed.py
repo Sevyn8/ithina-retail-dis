@@ -7,12 +7,14 @@ state, so they hold whether or not rows pre-existed from an earlier run.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
 from sqlalchemy import Engine, text
 
 from dis_testing import fixtures as fx
+from dis_testing.errors import SeedError
 from dis_testing.seed import seed_default_fixtures
 
 pytestmark = pytest.mark.integration
@@ -86,3 +88,21 @@ def test_seeded_tenant_uuid_matches_fixture_bridge(dis_engine: Engine) -> None:
     assert row is not None
     assert row.name == fx.PRIMARY_TENANT.name
     assert row.status == fx.PRIMARY_TENANT.status
+
+
+def test_seeder_raises_seed_error_on_orphan_store(
+    dis_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The orphan-store guard: a fixture store whose tenant is absent from fx.TENANTS
+    # is unreachable by the per-tenant loop (stores_for_tenant never yields it), so
+    # seeded_stores falls short of len(fx.STORES). The seeder must RAISE, not silently
+    # drop it (the pre-17c flat loop would have written it relying on the FK).
+    orphan = replace(
+        fx.STORES[0],
+        uuid=UUID("019e89f9-dbd5-7703-8221-aaaaaaaaaaaa"),
+        store_code="ORPHAN-1",
+        tenant_display_code="no-such-tenant",  # not in fx.TENANTS
+    )
+    monkeypatch.setattr(fx, "STORES", (*fx.STORES, orphan))
+    with pytest.raises(SeedError):
+        seed_default_fixtures(engine=dis_engine)
