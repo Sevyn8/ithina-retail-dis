@@ -326,7 +326,9 @@ def _csm_shape(engine: Engine) -> dict[str, object]:
     return shape
 
 
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_migration_cycle_backfills_and_flips_rls(admin_engine: Engine) -> None:
+    # apply-to-head/fresh-bootstrap stays covered by test_fresh_bootstrap_converges_with_delta_path.
     # The downgrade restores (tenant, source)-grained keys, which only hold if
     # no source carries multiple templates or multiple ACTIVE rows. Guard
     # BEFORE any downgrade — error loudly (never skip, never strand).

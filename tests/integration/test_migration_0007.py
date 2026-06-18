@@ -431,7 +431,9 @@ async def test_rls_isolation_survives_departition(app_engine: AsyncEngine) -> No
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_migration_cycle_departition_and_back(admin_engine: Engine) -> None:
+    # apply-to-head/fresh-bootstrap stays covered by test_fresh_bootstrap_converges_with_delta_path.
     # upgrade head first (idempotent if already at 0007): the plain shape.
     _alembic("upgrade", "head")
     _assert_plain_shape(admin_engine)

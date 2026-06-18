@@ -253,7 +253,10 @@ def test_all_13_carry_the_asymmetric_two_guc_form(admin_engine: Engine) -> None:
     assert _NULLIF in audit_qual, "audit.events USING lost the NULLIF tenant wrapper"
 
 
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_cycle_both_directions_round_trips_exact_text(admin_engine: Engine) -> None:
+    # apply-to-head stays covered by test_all_13_carry_the_asymmetric_two_guc_form +
+    # test_fresh_bootstrap_converges_with_delta_path (both upgrade-only).
     """Criterion 2: head (two-GUC) -> downgrade 0010 (EXACT single-GUC, no NULLIF /
     no PLATFORM) -> head (identical to the first two-GUC capture)."""
     _alembic("upgrade", "head")

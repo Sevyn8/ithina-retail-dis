@@ -172,7 +172,9 @@ def test_backfill_formalises_the_signature_discriminator(admin_engine: Engine) -
 # -- reversible cycle against the live DB -----------------------------------------
 
 
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_downgrade_then_upgrade_restores_the_column_and_view(admin_engine: Engine) -> None:
+    # apply-to-head stays covered by the upgrade-only tests + test_fresh_bootstrap_converges_with_delta_path.
     def _has_column() -> bool:
         with admin_engine.begin() as conn:
             return (

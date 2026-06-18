@@ -1423,3 +1423,13 @@ _require_subscription now runs against real GCP). Cross-refs D58.
 **Event-path status + duplication.** The event models (`StoreSkuSaleEvent`/`StoreSkuChangeEvent`) KEEP `tax_treatment` `consumer_injected` and the event path keeps its fixed-param injection — the deliberate asymmetry (event paths are out of this slice). A temporary duplication therefore exists: `tax_treatment` is lib-resolved on the current-position path and hardcode-injected on the event path. *Removal trigger: when enrichment extends to the event/history tables.*
 
 **Cross-refs.** D94, D95, D39. **Scope.** `dis-validation.provenance` (hot-model reclassification), streaming-consumer `sinks/canonical.py` (catalogue INSERT), `pipeline/validate_post.py` (owned-columns widening).
+
+### D99 Downgrade-reversibility testing deferred until staging `DEFERRED`
+
+**Status.** `DEFERRED` (test-infra only; no migration/schema/service change).
+
+**The decision.** Downgrade-reversibility testing is deferred until staging exists. Pre-staging, staging is provisioned by copying schema+data from dev Cloud SQL, not by replaying migrations, so downgrade has no value yet; the cycle tests also risk stranding the shared local DB at the 0005 multi-template floor (0002/0003/0004 downgrade BELOW 0005 on the shared live DB with no multi-template pre-guard, so a single legitimate multi-template row makes 0005's downgrade refuse mid-cycle and strands the DB at ~0005, poisoning later tests). Upgrade/fresh-bootstrap testing stays. Re-enable the downgrade cycle when staging exists and rollback matters.
+
+**Mechanics.** The downgrade leg in every migration cycle test (0002, 0003, 0004, 0005, 0007, 0008, 0010, 0011) is `@pytest.mark.skip`-ped with the shared, greppable reason `"downgrade-reversibility deferred until staging (D99)"`. 0002/0003 (whose single function mixed both directions) were split so the apply-to-head assertion stays live; the others' upgrade/fresh-bootstrap coverage already lives in sibling tests. 0009 and `test_source_mappings_template_grain` have no downgrade leg.
+
+**Cross-refs.** 0005 downgrade guard (the multi-template floor). **Scope.** `tests/integration/test_migration_000{2,3,4,5,7,8},_001{0,1}.py` (skips + the 0002/0003 split); no migration/schema/service change.

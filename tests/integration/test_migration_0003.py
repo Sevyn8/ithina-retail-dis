@@ -185,6 +185,16 @@ def test_event_tables_empty_precondition(admin_engine: Engine) -> None:
     assert _event_row_counts(admin_engine) == {t: 0 for t in _EVENT_TABLES}
 
 
+def test_upgrade_head_adds_dedup_columns(admin_engine: Engine) -> None:
+    # APPLY-TO-HEAD (kept live; the downgrade leg is split out + skipped per D99).
+    # Upgrade leaves the dedup columns + both indexes present — the only
+    # apply-to-head proof in this file, so it stays live when the cycle is skipped.
+    _alembic("upgrade", "head")
+    assert _dedup_columns(admin_engine) == _EXPECTED_PRESENT
+    assert _dedup_indexes(admin_engine) == set(_DEDUP_INDEXES)
+
+
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_migration_cycle_adds_and_removes_dedup_columns(admin_engine: Engine) -> None:
     # The downgrade/re-upgrade cycle is only safe while the event tables are
     # empty: with rows present, the re-upgrade's NOT NULL adds would abort and

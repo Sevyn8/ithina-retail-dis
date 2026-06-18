@@ -124,6 +124,18 @@ def _code_columns(engine: Engine) -> dict[tuple[str, str], str]:
     return {(r.table_name, r.column_name): r.is_nullable for r in rows}
 
 
+def test_upgrade_head_adds_the_code_columns(admin_engine: Engine) -> None:
+    # APPLY-TO-HEAD (kept live; the downgrade leg is split out + skipped per D99).
+    # Upgrade leaves both code columns present — the only apply-to-head proof in
+    # this file, so it must stay live when the cycle below is skipped.
+    _alembic("upgrade", "head")
+    assert _code_columns(admin_engine) == {
+        ("tenants", "display_code"): "YES",
+        ("stores", "store_code"): "YES",
+    }
+
+
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_migration_cycle_adds_and_removes_the_code_columns(admin_engine: Engine) -> None:
     # upgrade head: both columns present, nullable (live introspection, not the DDL files).
     _alembic("upgrade", "head")

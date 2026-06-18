@@ -241,7 +241,9 @@ def _audit_shape(engine: Engine) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_migration_cycle_additive_and_reversible(admin_engine: Engine) -> None:
+    # apply-to-head stays covered by the upgrade-only assertion tests in this file.
     # upgrade head (idempotent if already there): the 0008 shape — additive.
     _alembic("upgrade", "head")
     assert _column_present(admin_engine) == ("uuid", "YES")
@@ -260,6 +262,7 @@ def test_migration_cycle_additive_and_reversible(admin_engine: Engine) -> None:
     assert _audit_shape(admin_engine) == head_shape
 
 
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_downgrade_refuses_loudly_with_duplicate_rows(admin_engine: Engine) -> None:
     """The 0005 precedent: a downgrade that would orphan DUPLICATE_* rows under
     the restored 4-value CHECK fails LOUD, never silently mutates audit rows."""

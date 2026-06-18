@@ -163,7 +163,9 @@ def _assert_upgraded_invariant(state: dict[str, bool]) -> None:
     assert state["old_constraint"] is False
 
 
+@pytest.mark.skip(reason="downgrade-reversibility deferred until staging (D99)")
 def test_cycle_precondition_teeth_and_coexistence(admin_engine: Engine) -> None:
+    # apply-to-head stays covered by test_arbitration_matrix_and_sentinel (upgrade-only).
     # upgrade head: index + CHECKs present, NND constraint gone (co-existence leg 1).
     _alembic("upgrade", "head")
     _assert_upgraded_invariant(_state(admin_engine))
