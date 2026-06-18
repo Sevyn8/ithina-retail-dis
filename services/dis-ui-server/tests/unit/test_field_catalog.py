@@ -19,7 +19,7 @@ from dis_ui_server.catalog.labels import LABELS, SNAPSHOT_LABELS, CatalogueField
 from dis_ui_server.mapping_validation import mandatory_mapping_produced
 from dis_validation import INVENTORY_CHANGE, SALES, SNAPSHOT, mapping_produced_columns
 
-TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"
+TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"
 
 # The uniform object shape (Slice 14d), in wire order.
 _SHAPE = (

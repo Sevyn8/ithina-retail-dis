@@ -55,7 +55,7 @@ def _body(*parts: bytes) -> bytes:
 def _good_body(file_payload: bytes = b"sku,qty\nA-1,5\n") -> bytes:
     return _body(
         _part("template_id", b"019e98c9-df80-7649-98cd-83fb6293777a"),
-        _part("store_code", b"AC-001"),
+        _part("store_code", b"TX-101"),
         _part("file", file_payload, filename="sales.csv"),
     )
 
@@ -80,16 +80,16 @@ async def test_well_formed_upload_parses() -> None:
     assert parsed.filename == "sales.csv"
     assert parsed.fields == {
         "template_id": "019e98c9-df80-7649-98cd-83fb6293777a",
-        "store_code": "AC-001",
+        "store_code": "TX-101",
     }
 
 
 async def test_smuggled_unknown_part_is_drained_and_ignored() -> None:
     # The foundation rule, at the parser layer: a body tenant_id never surfaces.
     body = _body(
-        _part("tenant_id", b"019e89f9-dbd5-7703-8221-ae707db9b918"),  # smuggled
+        _part("tenant_id", b"019e5e3c-b5d6-7eed-93f9-3778a7a7a160"),  # smuggled
         _part("template_id", b"019e98c9-df80-7649-98cd-83fb6293777a"),
-        _part("store_code", b"AC-001"),
+        _part("store_code", b"TX-101"),
         _part("file", b"sku,qty\nA-1,5\n"),
     )
     parsed = await _read(_FakeRequest([body]))
@@ -151,7 +151,7 @@ async def test_non_multipart_content_type_rejected() -> None:
 async def test_missing_required_part_rejected_by_name(missing: str) -> None:
     parts = {
         "template_id": _part("template_id", b"019e98c9-df80-7649-98cd-83fb6293777a"),
-        "store_code": _part("store_code", b"AC-001"),
+        "store_code": _part("store_code", b"TX-101"),
         "file": _part("file", b"sku,qty\nA-1,5\n"),
     }
     del parts[missing]
@@ -164,7 +164,7 @@ async def test_missing_required_part_rejected_by_name(missing: str) -> None:
 async def test_repeated_file_part_rejected() -> None:
     body = _body(
         _part("template_id", b"019e98c9-df80-7649-98cd-83fb6293777a"),
-        _part("store_code", b"AC-001"),
+        _part("store_code", b"TX-101"),
         _part("file", b"a,b\n1,2\n"),
         _part("file", b"c,d\n3,4\n"),
     )
@@ -176,7 +176,7 @@ async def test_repeated_file_part_rejected() -> None:
 async def test_oversized_text_field_rejected_as_request_error() -> None:
     body = _body(
         _part("template_id", b"x" * 5_000),  # a text field has no business this large
-        _part("store_code", b"AC-001"),
+        _part("store_code", b"TX-101"),
         _part("file", b"a,b\n1,2\n"),
     )
     with pytest.raises(UploadRequestError) as exc_info:
@@ -188,7 +188,7 @@ async def test_error_never_echoes_field_values() -> None:
     secret = b"PII-LADEN-VALUE-MUST-NOT-ECHO"
     body = _body(
         _part("template_id", secret + b"-" + b"x" * 5_000),
-        _part("store_code", b"AC-001"),
+        _part("store_code", b"TX-101"),
         _part("file", b"a,b\n1,2\n"),
     )
     with pytest.raises(UploadRequestError) as exc_info:

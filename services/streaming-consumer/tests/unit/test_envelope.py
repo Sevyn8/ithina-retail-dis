@@ -29,18 +29,18 @@ def _good_payload() -> dict[str, object]:
     return {
         "schema_version": 1,
         "trace_id": "019e9508-0000-7000-8000-000000000001",
-        "tenant_id": "019e89f9-dbd5-7703-8221-ae6b811599bb",
-        "store_id": "019e89f9-dbd5-7703-8221-ae8bfa6528bf",
+        "tenant_id": "019e5e3c-b5d3-705f-9002-2451c4ca2626",
+        "store_id": "019e5e3c-b62e-75e6-ad62-529127ae944a",
         "source_id": "sc_pos_v1",
         "template_id": "019e98c9-df80-7649-98cd-83fb6293777a",  # Slice 8 carry (D71)
         "bronze_ref": "019e9508-0000-7000-8000-000000000002",
         "gcs_uri": (
-            "gs://ithina-bronze-raw/tenant/019e89f9-dbd5-7703-8221-ae6b811599bb/"
+            "gs://ithina-bronze-raw/tenant/019e5e3c-b5d3-705f-9002-2451c4ca2626/"
             "source/sc_pos_v1/yyyy=2026/mm=06/dd=05/019e9508-0000-7000-8000-000000000001.csv"
         ),
         "received_ts": "2026-06-05T12:00:00+00:00",
-        "tenant_display_code": "acme-retail",
-        "store_code": "AC-001",
+        "tenant_display_code": "buc-ees",
+        "store_code": "TX-101",
     }
 
 

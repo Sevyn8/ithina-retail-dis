@@ -16,6 +16,9 @@ touched**. This harness is reusable: a later CM-reading slice reuses it rather t
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from uuid import UUID
+
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 
@@ -24,6 +27,13 @@ import dis_testing.fixtures as fx
 # The Customer Master database name (the reader's target assertion expects this; local CM and
 # the cloud read replica share it). Created here inside the 5433 cluster as the test stand-in.
 CM_TEST_DB_NAME = "ithina_platform_db"
+
+# The D55 nullable-store_code edge store. Test-CM-ONLY: it is deliberately NOT in
+# fx.STORES (the baseline is all-coded/ACTIVE) — a scoped edge inserted into the
+# stand-in by test_db_pull so the sync's code-less path runs end to end, then
+# reverted in that test's teardown (HARD REVERT RULE). Parented to buc-ees.
+CODELESS_EDGE_STORE_ID = UUID("019e5e3c-0000-7000-8000-0000000000d5")
+_CODELESS_EDGE_TS = datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC)
 
 # The NOBYPASSRLS service role granted SELECT on the test CM, so RLS actually applies to reads.
 _READER_ROLE = "ithina_dis_user"
@@ -173,6 +183,53 @@ def provision_test_cm(admin_url: str) -> None:
         seed_test_cm(engine)
     finally:
         engine.dispose()
+
+
+_INSERT_CODELESS_EDGE_STORE = text(
+    """
+    INSERT INTO core.stores
+        (id, tenant_id, name, store_code, status, country, timezone, currency, tax_treatment,
+         created_at, updated_at)
+    VALUES
+        (:id, :tenant_id, :name, NULL, :status, :country, :timezone, :currency, :tax_treatment,
+         :created_at, :updated_at)
+    ON CONFLICT (id) DO NOTHING
+    """
+)
+
+
+def insert_codeless_edge_store(engine: Engine) -> None:
+    """Insert the D55 code-less edge store into the test-CM stand-in. Idempotent.
+
+    Test-CM-only (NOT in fx.STORES): an INACTIVE, store_code=NULL store under
+    buc-ees so the sync's nullable-code path runs end to end. Reverted by
+    :func:`delete_codeless_edge_store` in the calling test's teardown.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            _INSERT_CODELESS_EDGE_STORE,
+            {
+                "id": str(CODELESS_EDGE_STORE_ID),
+                "tenant_id": str(fx.PRIMARY_TENANT.uuid),
+                "name": "Edge Codeless (D55)",
+                "status": "INACTIVE",
+                "country": "USA",
+                "timezone": "America/Chicago",
+                "currency": "USD",
+                "tax_treatment": "EXCLUSIVE",
+                "created_at": _CODELESS_EDGE_TS,
+                "updated_at": _CODELESS_EDGE_TS,
+            },
+        )
+
+
+def delete_codeless_edge_store(engine: Engine) -> None:
+    """Remove the D55 code-less edge store from the test-CM stand-in (teardown)."""
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM core.stores WHERE id = :id"),
+            {"id": str(CODELESS_EDGE_STORE_ID)},
+        )
 
 
 def seed_test_cm(engine: Engine) -> None:

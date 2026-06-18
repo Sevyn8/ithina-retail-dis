@@ -52,7 +52,7 @@ def _token() -> str:
         "aud": DEV_STUB_AUDIENCE,
         "iat": now,
         "exp": now + 600,
-        "tenant_id": "019e89f9-dbd5-7703-8221-ae6b811599bb",
+        "tenant_id": "019e5e3c-b5d3-705f-9002-2451c4ca2626",
         "user_type": "TENANT",
     }
     return jwt.encode(payload, DEV_STUB_SECRET, algorithm=DEV_STUB_ALGORITHM)
@@ -64,7 +64,7 @@ def _oversized_multipart_body() -> bytes:
     parts = b""
     for name, value in (
         ("template_id", b"019e98c9-df80-7649-98cd-83fb6293777a"),
-        ("store_code", b"AC-001"),
+        ("store_code", b"TX-101"),
     ):
         parts += (
             f'--{_BOUNDARY}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode()

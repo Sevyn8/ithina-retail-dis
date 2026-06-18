@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from dis_validation import TEMPLATE_TYPES
 
-TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"
+TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"
 
 
 def test_template_types_returns_the_vocabulary(client: TestClient, mint_token: Callable[..., str]) -> None:

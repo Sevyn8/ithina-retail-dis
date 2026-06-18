@@ -1,4 +1,10 @@
-"""Sanity checks on the single source of fixture truth (identity-corrected, Slice 9a)."""
+"""Sanity checks on the single source of fixture truth (identity-corrected, Slice 9a).
+
+Baseline reality (real Customer Master set): 2 tenants (buc-ees, zabka-group) and
+6 stores, ALL coded and ALL ACTIVE. The nullable-store_code (D55) and inactive-store
+edges are NOT in fx.STORES — they live as scoped edge fixtures in test_db_pull /
+test_csv_uploads_live, reverted in teardown.
+"""
 
 from __future__ import annotations
 
@@ -40,33 +46,27 @@ def test_codes_are_unique() -> None:
 
 
 def test_default_set_shape() -> None:
-    # 2 tenants, 2 stores each, one ACTIVE + one INACTIVE per tenant.
+    # New baseline: 2 tenants (buc-ees, zabka-group), 6 stores total, ALL ACTIVE.
     assert len(fx.TENANTS) == 2
+    assert {t.display_code for t in fx.TENANTS} == {"buc-ees", "zabka-group"}
+    assert len(fx.STORES) == 6
     for t in fx.TENANTS:
         stores = fx.stores_for_tenant(t.display_code)
-        assert len(stores) == 2
-        statuses = {s.status for s in stores}
-        assert statuses == {"ACTIVE", "INACTIVE"}
+        assert len(stores) >= 1
+        assert all(s.status == "ACTIVE" for s in stores)
 
 
-def test_exactly_one_store_has_no_code_and_it_is_inactive_non_primary() -> None:
-    # D55: store_code is nullable at source; one fixture exercises that path.
-    uncoded = [s for s in fx.STORES if s.store_code is None]
-    assert len(uncoded) == 1
-    assert uncoded[0].status == "INACTIVE"
-    assert uncoded[0] is not fx.PRIMARY_STORE
-
-
-def test_stores_for_tenant_includes_none_coded_store() -> None:
-    # Named check (Slice 9a): the code-less store stays reachable via the
-    # non-code lookup — it must never be silently unreachable.
-    uncoded = next(s for s in fx.STORES if s.store_code is None)
-    assert uncoded in fx.stores_for_tenant(uncoded.tenant_display_code)
+def test_all_stores_are_coded_and_active() -> None:
+    # New baseline: no code-less store and no inactive store in fx.STORES. The
+    # D55 nullable-store_code edge and the inactive-store edge live as scoped
+    # fixtures in test_db_pull / test_csv_uploads_live, not in this baseline.
+    assert all(s.store_code is not None for s in fx.STORES)
+    assert all(s.status == "ACTIVE" for s in fx.STORES)
 
 
 def test_primary_uses_contract_example_codes() -> None:
-    assert fx.PRIMARY_TENANT.display_code == "acme-retail"
-    assert fx.PRIMARY_STORE.store_code == "AC-001"
+    assert fx.PRIMARY_TENANT.display_code == "buc-ees"
+    assert fx.PRIMARY_STORE.store_code == "TX-101"
     assert fx.PRIMARY_STORE.tenant_display_code == fx.PRIMARY_TENANT.display_code
 
 
@@ -77,8 +77,8 @@ def test_every_store_references_a_known_tenant() -> None:
 
 
 def test_bridge_round_trips() -> None:
-    assert fx.tenant_uuid_for("acme-retail") == fx.PRIMARY_TENANT.uuid
-    assert fx.store_uuid_for("AC-001") == fx.PRIMARY_STORE.uuid
+    assert fx.tenant_uuid_for("buc-ees") == fx.PRIMARY_TENANT.uuid
+    assert fx.store_uuid_for("TX-101") == fx.PRIMARY_STORE.uuid
 
 
 def test_bridge_raises_on_unknown_code() -> None:
@@ -107,17 +107,10 @@ def test_committed_test_keypair_is_a_valid_matching_pair() -> None:
 
 def test_build_claims_carries_codes_never_uuids() -> None:
     claims = fx.build_claims(fx.PRIMARY_TENANT, fx.PRIMARY_STORE, issued_at=1000, expires_at=2000)
-    assert claims["tenant_id"] == "acme-retail"
-    assert claims["store_id"] == "AC-001"
+    assert claims["tenant_id"] == "buc-ees"
+    assert claims["store_id"] == "TX-101"
     # The JWT is external-facing: internal UUIDs never appear in claim values.
     assert str(fx.PRIMARY_TENANT.uuid) not in {str(v) for v in claims.values()}
     assert claims["iss"] == fx.TEST_JWT_ISSUER
     assert claims["aud"] == fx.TEST_JWT_AUDIENCE
     assert claims["roles"] == ["dis:upload"]
-
-
-def test_build_claims_for_code_less_store_yields_null_store_claim() -> None:
-    uncoded = next(s for s in fx.STORES if s.store_code is None)
-    tenant = fx.tenant_by_display_code(uncoded.tenant_display_code)
-    claims = fx.build_claims(tenant, uncoded, issued_at=1000, expires_at=2000)
-    assert claims["store_id"] is None

@@ -1,13 +1,14 @@
 """Seeder integration tests (acceptance criterion 5).
 
-Runs against the live DIS Postgres. Asserts the default set is present and that
-re-running the seeder is a no-op (idempotent). Assertions are on the resulting DB
-state, so they hold whether or not rows pre-existed from an earlier run.
+Runs against the live DIS Postgres. The seeder writes ONLY
+``config.source_mappings`` now — ``identity_mirror`` is owned by mirror-sync, so
+each test syncs it first (the ``seeded_identity`` plugin fixture does the
+sync-then-seed). Assertions are on the resulting DB state, so they hold whether
+or not rows pre-existed from an earlier run.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -20,19 +21,18 @@ from dis_testing.seed import seed_default_fixtures
 pytestmark = pytest.mark.integration
 
 
-def test_seed_writes_default_set_and_is_idempotent(dis_engine: Engine) -> None:
-    # First call ensures the set is present (may insert, may be a no-op if pre-seeded).
-    seed_default_fixtures(engine=dis_engine)
+def test_seed_writes_default_mapping_and_is_idempotent(seeded_identity: Engine) -> None:
+    # seeded_identity has already synced identity_mirror and run the seeder once.
+    dis_engine = seeded_identity
 
-    # Second call must insert nothing and must not raise — the idempotency contract.
+    # Re-running the seeder must insert nothing and must not raise — the
+    # idempotency contract (the mapping existence-guard).
     second = seed_default_fixtures(engine=dis_engine)
-    assert second.tenants_inserted == 0
-    assert second.stores_inserted == 0
     assert second.mappings_inserted == 0
 
-    # config.source_mappings is RLS ON (Slice 14a) and dis_engine is the
-    # NOBYPASSRLS service role: the mapping count must read under the fixture
-    # tenant's GUC or it returns zero rows. identity_mirror stays RLS-OFF.
+    # The mirror is populated by the sync, the mapping by the seed. config.source_mappings
+    # is RLS ON (Slice 14a) and dis_engine is the NOBYPASSRLS service role: the mapping
+    # count must read under the fixture tenant's GUC or it returns zero rows.
     primary_uuid = fx.tenant_uuid_for(fx.PRIMARY_TENANT.display_code)
     with dis_engine.begin() as conn:
         tenants = conn.execute(text("SELECT count(*) FROM identity_mirror.tenants")).scalar_one()
@@ -50,8 +50,8 @@ def test_seed_writes_default_set_and_is_idempotent(dis_engine: Engine) -> None:
     assert active >= 1
 
 
-def test_default_mapping_version_seq_is_one(dis_engine: Engine) -> None:
-    seed_default_fixtures(engine=dis_engine)
+def test_default_mapping_version_seq_is_one(seeded_identity: Engine) -> None:
+    dis_engine = seeded_identity
     tenant_uuid = fx.tenant_uuid_for(str(fx.DEFAULT_SOURCE_MAPPING["tenant_display_code"]))
     # RLS ON (Slice 14a): the read must carry the tenant GUC (NOBYPASSRLS role).
     with dis_engine.begin() as conn:
@@ -76,9 +76,9 @@ def test_default_mapping_version_seq_is_one(dis_engine: Engine) -> None:
     assert row.template_name == fx.DEFAULT_TEMPLATE_NAME
 
 
-def test_seeded_tenant_uuid_matches_fixture_bridge(dis_engine: Engine) -> None:
-    # The bridge: a fixture external id maps to the exact UUID row the seeder wrote.
-    seed_default_fixtures(engine=dis_engine)
+def test_seeded_tenant_uuid_matches_fixture_bridge(seeded_identity: Engine) -> None:
+    # The bridge: a fixture external id maps to the exact UUID row mirror-sync wrote.
+    dis_engine = seeded_identity
     primary_uuid = fx.tenant_uuid_for(fx.PRIMARY_TENANT.display_code)
     with dis_engine.connect() as conn:
         row = conn.execute(
@@ -90,19 +90,12 @@ def test_seeded_tenant_uuid_matches_fixture_bridge(dis_engine: Engine) -> None:
     assert row.status == fx.PRIMARY_TENANT.status
 
 
-def test_seeder_raises_seed_error_on_orphan_store(
-    dis_engine: Engine, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The orphan-store guard: a fixture store whose tenant is absent from fx.TENANTS
-    # is unreachable by the per-tenant loop (stores_for_tenant never yields it), so
-    # seeded_stores falls short of len(fx.STORES). The seeder must RAISE, not silently
-    # drop it (the pre-17c flat loop would have written it relying on the FK).
-    orphan = replace(
-        fx.STORES[0],
-        uuid=UUID("019e89f9-dbd5-7703-8221-aaaaaaaaaaaa"),
-        store_code="ORPHAN-1",
-        tenant_display_code="no-such-tenant",  # not in fx.TENANTS
-    )
-    monkeypatch.setattr(fx, "STORES", (*fx.STORES, orphan))
+def test_seeder_raises_when_tenant_not_mirrored(dis_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The FK pre-check: the seeder requires the mapping's tenant FK target to be
+    # mirrored first (mirror-sync owns identity_mirror). Point the default mapping
+    # at a tenant that was never synced and the seeder must RAISE, not fail the
+    # final FK INSERT with an opaque IntegrityError.
+    not_mirrored = UUID("019e5e3c-0000-7000-8000-00000000beef")
+    monkeypatch.setattr(fx, "tenant_uuid_for", lambda _code: not_mirrored)
     with pytest.raises(SeedError):
         seed_default_fixtures(engine=dis_engine)

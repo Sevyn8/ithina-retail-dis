@@ -8,8 +8,8 @@
 #   scripts/run_dis_on_local stop                  stop residents this script started
 #   scripts/run_dis_on_local status                show current resident health
 #
-# In scope: infra+fakes (make run-local), make check gate, seed, mirror-sync
-# batch, csv-ingest-worker, streaming-consumer, dis-ui-server, dis-ui.
+# In scope: infra+fakes (make run-local), make check gate, mirror-sync batch,
+# seed, csv-ingest-worker, streaming-consumer, dis-ui-server, dis-ui.
 # Out of scope (stubs, never started): quarantine-drainer, nightly-batch,
 # daily-compute.
 #
@@ -294,31 +294,17 @@ cmd_start() {
     say "preflight ok: ${passed_line:-Passed line not found, but exit code was 0}"
     add_row "make check" "-" "${passed_line:-exit 0}" "$logf"
 
-    # Step 3: seed (optional)
-    if [[ "$no_seed" == "yes" ]]; then
-        step "3/8 make seed (skipped: --no-seed)"
-        SEED_NOTE="skipped (--no-seed)"
-        CAVEATS+=("seed was skipped (--no-seed)")
-        add_row "seed" "-" "skipped" "-"
-    else
-        step "3/8 make seed (test fixtures)"
-        logf="$RUN_DIR/make-seed.log"
-        if ! make seed >"$logf" 2>&1; then
-            die_with_tail "make seed" "exited non-zero" "$logf"
-        fi
-        say "seed ok"
-        add_row "seed" "-" "ok" "$logf"
-    fi
-
-    # Manual processes from here on need .env in this shell. Only make targets
-    # inherit .env automatically.
+    # Manual processes (and mirror-sync, run below) need .env in this shell. Only
+    # make targets inherit .env automatically.
     set -a
     # shellcheck disable=SC1091
     source "$REPO_ROOT/.env"
     set +a
 
-    # Step 4: mirror-sync batch (run to completion)
-    step "4/8 mirror-sync batch (run to completion)"
+    # Step 3: mirror-sync batch (run to completion). MUST precede the seed:
+    # identity_mirror is owned by mirror-sync, and the seed's config.source_mappings
+    # row FK-references a mirrored tenant — sync first, then seed.
+    step "3/8 mirror-sync batch (run to completion)"
     logf="$RUN_DIR/mirror-sync.log"
     local rc=0
     uv run python -m mirror_sync_consumer.pull.runner >"$logf" 2>&1 || rc=$?
@@ -327,6 +313,23 @@ cmd_start() {
     fi
     say "mirror-sync completed, exit 0"
     add_row "mirror-sync" "batch" "exit 0" "$logf"
+
+    # Step 4: seed (optional). Runs AFTER mirror-sync so its mapping FK target
+    # (the mirrored tenant) already exists.
+    if [[ "$no_seed" == "yes" ]]; then
+        step "4/8 make seed (skipped: --no-seed)"
+        SEED_NOTE="skipped (--no-seed)"
+        CAVEATS+=("seed was skipped (--no-seed)")
+        add_row "seed" "-" "skipped" "-"
+    else
+        step "4/8 make seed (config.source_mappings)"
+        logf="$RUN_DIR/make-seed.log"
+        if ! make seed >"$logf" 2>&1; then
+            die_with_tail "make seed" "exited non-zero" "$logf"
+        fi
+        say "seed ok"
+        add_row "seed" "-" "ok" "$logf"
+    fi
 
     # Step 5: csv-ingest-worker (resident)
     step "5/8 csv-ingest-worker (resident)"

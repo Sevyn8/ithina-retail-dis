@@ -13,8 +13,8 @@ from collections.abc import Callable
 
 from fastapi.testclient import TestClient
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
-TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees
+TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"  # zabka-group
 
 
 def _bearer(token: str) -> dict[str, str]:

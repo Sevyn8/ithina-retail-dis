@@ -59,9 +59,17 @@ def stack_env() -> dict[str, str]:
 
 @pytest.fixture(scope="session")
 def seeded(stack_env: dict[str, str]) -> None:
-    """Seed the Slice 2 test tenants/stores so the bronze identity FKs resolve."""
+    """Sync identity_mirror (mirror-sync owns it) then seed the default mapping.
+
+    identity_mirror is owned by mirror-sync; the seeder only writes
+    config.source_mappings and requires the tenant FK target to already exist,
+    so the sync MUST run first — this is what makes the bronze identity FKs
+    resolve.
+    """
+    from dis_testing.identity_sync import sync_identity_mirror
     from dis_testing.seed import seed_default_fixtures
 
+    sync_identity_mirror(stack_env["POSTGRES_ADMIN_URL"], stack_env["POSTGRES_URL"])
     seed_default_fixtures(url=stack_env["POSTGRES_URL"])
 
 

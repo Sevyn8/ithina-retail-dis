@@ -24,14 +24,14 @@ from dis_core.identity import (
     ValidateResponse,
 )
 
-_TENANT_UUID = "019e89f9-dbd5-7703-8221-ae6b811599bb"
-_STORE_UUID = "019e89f9-dbd5-7703-8221-ae8bfa6528bf"
+_TENANT_UUID = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees
+_STORE_UUID = "019e5e3c-b62e-75e6-ad62-529127ae944a"  # TX-101
 
 IDENTITY_OK = {
     "tenant_id": _TENANT_UUID,
     "store_id": _STORE_UUID,
-    "display_code": "acme-retail",
-    "store_code": "AC-001",
+    "display_code": "buc-ees",
+    "store_code": "TX-101",
     "is_active": True,
     "source": "customer_master",
     "metadata": {"pii_policy_version": "v1"},
@@ -62,8 +62,8 @@ async def test_resolve_from_token_returns_identity() -> None:
     assert identity.tenant_id == UUID(_TENANT_UUID)
     assert identity.store_id == UUID(_STORE_UUID)
     # The authoritative external codes ride alongside (D55).
-    assert identity.display_code == "acme-retail"
-    assert identity.store_code == "AC-001"
+    assert identity.display_code == "buc-ees"
+    assert identity.store_code == "TX-101"
     assert captured["url"].endswith("/v1/resolve_from_token")
     assert captured["body"] == {"jwt": "a.jwt.token"}
 

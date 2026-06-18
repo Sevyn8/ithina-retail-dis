@@ -18,6 +18,11 @@ from sqlalchemy.exc import IntegrityError
 import dis_testing.fixtures as fx
 from dis_core.ids import new_uuid7
 from dis_rls import create_rls_engine, rls_session
+from dis_testing.customer_master_db import (
+    CODELESS_EDGE_STORE_ID,
+    delete_codeless_edge_store,
+    insert_codeless_edge_store,
+)
 from mirror_sync_consumer.pull.runner import EXIT_OK, _run
 
 pytestmark = pytest.mark.integration
@@ -39,55 +44,69 @@ _BRONZE_INSERT = text(
 
 
 async def test_first_load_mirrors_every_cm_record(run_env: None, cm_admin: Engine, dis_admin: Engine) -> None:
-    assert await _run() == EXIT_OK
+    # D55 faithful copy, NULL case: the baseline fixture set is all-coded (it
+    # mirrors real Customer Master), so the nullable-store_code path is exercised
+    # via a SCOPED edge inserted into the test-CM stand-in only — reverted in
+    # teardown so the stand-in returns to its synced baseline (HARD REVERT RULE).
+    insert_codeless_edge_store(cm_admin)
+    try:
+        assert await _run() == EXIT_OK
 
-    cm_t = _by_id(cm_admin, "SELECT id, name, display_code, status FROM core.tenants", "id")
-    mir_t = _by_id(
-        dis_admin,
-        "SELECT tenant_id, name, display_code, status FROM identity_mirror.tenants",
-        "tenant_id",
-    )
-    assert set(cm_t) <= set(mir_t)
-    for tid, row in cm_t.items():
-        assert (mir_t[tid].name, mir_t[tid].display_code, mir_t[tid].status) == (
-            row.name,
-            row.display_code,
-            row.status,
+        cm_t = _by_id(cm_admin, "SELECT id, name, display_code, status FROM core.tenants", "id")
+        mir_t = _by_id(
+            dis_admin,
+            "SELECT tenant_id, name, display_code, status FROM identity_mirror.tenants",
+            "tenant_id",
         )
+        assert set(cm_t) <= set(mir_t)
+        for tid, row in cm_t.items():
+            assert (mir_t[tid].name, mir_t[tid].display_code, mir_t[tid].status) == (
+                row.name,
+                row.display_code,
+                row.status,
+            )
 
-    cm_s = _by_id(
-        cm_admin,
-        "SELECT id, name, store_code, status, country, timezone, currency, tax_treatment FROM core.stores",
-        "id",
-    )
-    mir_s = _by_id(
-        dis_admin,
-        "SELECT store_id, name, store_code, status, country, timezone, currency, tax_treatment "
-        "FROM identity_mirror.stores",
-        "store_id",
-    )
-    assert set(cm_s) <= set(mir_s)
-    for sid, row in cm_s.items():
-        m = mir_s[sid]
-        assert (m.name, m.store_code, m.status, m.country, m.timezone, m.currency, m.tax_treatment) == (
-            row.name,
-            row.store_code,
-            row.status,
-            row.country,
-            row.timezone,
-            row.currency,
-            row.tax_treatment,
+        cm_s = _by_id(
+            cm_admin,
+            "SELECT id, name, store_code, status, country, timezone, currency, "
+            "tax_treatment FROM core.stores",
+            "id",
         )
+        mir_s = _by_id(
+            dis_admin,
+            "SELECT store_id, name, store_code, status, country, timezone, currency, tax_treatment "
+            "FROM identity_mirror.stores",
+            "store_id",
+        )
+        assert set(cm_s) <= set(mir_s)
+        for sid, row in cm_s.items():
+            m = mir_s[sid]
+            assert (m.name, m.store_code, m.status, m.country, m.timezone, m.currency, m.tax_treatment) == (
+                row.name,
+                row.store_code,
+                row.status,
+                row.country,
+                row.timezone,
+                row.currency,
+                row.tax_treatment,
+            )
 
-    # D55 faithful copy, NULL case ASSERTED (never skipped): the fixture set carries
-    # exactly one store with store_code IS NULL; its mirror row must be NULL too.
-    uncoded = next(s for s in fx.STORES if s.store_code is None)
-    assert cm_s[uncoded.uuid].store_code is None, "fixture NULL store_code missing in test CM"
-    assert mir_s[uncoded.uuid].store_code is None
+        # D55 faithful copy, NULL case ASSERTED (never skipped): the scoped edge
+        # store has store_code IS NULL in the stand-in; its mirror row must be NULL too.
+        assert cm_s[CODELESS_EDGE_STORE_ID].store_code is None, "edge NULL store_code missing in test CM"
+        assert mir_s[CODELESS_EDGE_STORE_ID].store_code is None
 
-    # Count match on the CM-returned id set (independent re-read, not the sync's bookkeeping).
-    assert sum(1 for t in mir_t if t in cm_t) == len(cm_t)
-    assert sum(1 for s in mir_s if s in cm_s) == len(cm_s)
+        # Count match on the CM-returned id set (independent re-read, not the sync's bookkeeping).
+        assert sum(1 for t in mir_t if t in cm_t) == len(cm_t)
+        assert sum(1 for s in mir_s if s in cm_s) == len(cm_s)
+    finally:
+        # HARD REVERT: drop the edge from BOTH the mirror and the stand-in baseline.
+        with dis_admin.begin() as conn:
+            conn.execute(
+                text("DELETE FROM identity_mirror.stores WHERE store_id = :id"),
+                {"id": str(CODELESS_EDGE_STORE_ID)},
+            )
+        delete_codeless_edge_store(cm_admin)
 
 
 async def test_existing_rows_without_codes_are_backfilled(
@@ -101,46 +120,64 @@ async def test_existing_rows_without_codes_are_backfilled(
     tenant = fx.PRIMARY_TENANT
     coded_store = fx.PRIMARY_STORE
     # Simulate pre-9a rows: NULL the codes directly (independent admin write).
-    with dis_admin.begin() as conn:
-        conn.execute(
-            text("UPDATE identity_mirror.tenants SET display_code = NULL WHERE tenant_id = :id"),
-            {"id": str(tenant.uuid)},
-        )
-        conn.execute(
-            text("UPDATE identity_mirror.stores SET store_code = NULL WHERE store_id = :id"),
-            {"id": str(coded_store.uuid)},
-        )
+    # Failure-safe (hard revert rule): the NULL-ing + asserts run inside a try whose
+    # finally ALWAYS restores the real codes, so a mid-test raise (or a failing _run)
+    # cannot leave the SHARED primary identity (buc-ees / TX-101) dirty for the rest
+    # of the session. Matches the edge-fixture try/finally pattern. The body's re-sync
+    # also restores; the finally guarantees it even off the happy path.
+    try:
+        with dis_admin.begin() as conn:
+            conn.execute(
+                text("UPDATE identity_mirror.tenants SET display_code = NULL WHERE tenant_id = :id"),
+                {"id": str(tenant.uuid)},
+            )
+            conn.execute(
+                text("UPDATE identity_mirror.stores SET store_code = NULL WHERE store_id = :id"),
+                {"id": str(coded_store.uuid)},
+            )
 
-    assert await _run() == EXIT_OK
+        assert await _run() == EXIT_OK
 
-    with dis_admin.connect() as conn:
-        backfilled_t = conn.execute(
-            text("SELECT display_code FROM identity_mirror.tenants WHERE tenant_id = :id"),
-            {"id": str(tenant.uuid)},
-        ).scalar_one()
-        backfilled_s = conn.execute(
-            text("SELECT store_code FROM identity_mirror.stores WHERE store_id = :id"),
-            {"id": str(coded_store.uuid)},
-        ).scalar_one()
-    assert backfilled_t == tenant.display_code
-    assert backfilled_s == coded_store.store_code
-
-    # Idempotence: the next run rewrites nothing (mirror_synced_at untouched).
-    def synced() -> tuple[object, object]:
         with dis_admin.connect() as conn:
-            t = conn.execute(
-                text("SELECT mirror_synced_at FROM identity_mirror.tenants WHERE tenant_id = :id"),
+            backfilled_t = conn.execute(
+                text("SELECT display_code FROM identity_mirror.tenants WHERE tenant_id = :id"),
                 {"id": str(tenant.uuid)},
             ).scalar_one()
-            s = conn.execute(
-                text("SELECT mirror_synced_at FROM identity_mirror.stores WHERE store_id = :id"),
+            backfilled_s = conn.execute(
+                text("SELECT store_code FROM identity_mirror.stores WHERE store_id = :id"),
                 {"id": str(coded_store.uuid)},
             ).scalar_one()
-        return t, s
+        assert backfilled_t == tenant.display_code
+        assert backfilled_s == coded_store.store_code
 
-    before = synced()
-    assert await _run() == EXIT_OK
-    assert synced() == before
+        # Idempotence: the next run rewrites nothing (mirror_synced_at untouched).
+        def synced() -> tuple[object, object]:
+            with dis_admin.connect() as conn:
+                t = conn.execute(
+                    text("SELECT mirror_synced_at FROM identity_mirror.tenants WHERE tenant_id = :id"),
+                    {"id": str(tenant.uuid)},
+                ).scalar_one()
+                s = conn.execute(
+                    text("SELECT mirror_synced_at FROM identity_mirror.stores WHERE store_id = :id"),
+                    {"id": str(coded_store.uuid)},
+                ).scalar_one()
+            return t, s
+
+        before = synced()
+        assert await _run() == EXIT_OK
+        assert synced() == before
+    finally:
+        # Restore the shared primary's real codes unconditionally (idempotent direct
+        # write); a failure above must not poison buc-ees / TX-101 for later tests.
+        with dis_admin.begin() as conn:
+            conn.execute(
+                text("UPDATE identity_mirror.tenants SET display_code = :c WHERE tenant_id = :id"),
+                {"c": tenant.display_code, "id": str(tenant.uuid)},
+            )
+            conn.execute(
+                text("UPDATE identity_mirror.stores SET store_code = :c WHERE store_id = :id"),
+                {"c": coded_store.store_code, "id": str(coded_store.uuid)},
+            )
 
 
 async def test_rerun_without_change_is_a_noop(run_env: None, cm_admin: Engine, dis_admin: Engine) -> None:

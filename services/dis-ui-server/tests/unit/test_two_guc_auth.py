@@ -23,7 +23,7 @@ from dis_ui_server.auth.scope import (
 )
 from dis_ui_server.auth.verifier import verify_token
 
-_TENANT = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+_TENANT = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees
 
 
 # --- verify_token: required + explicit user_type, reject-on-ambiguous (criterion 6) ---

@@ -15,11 +15,13 @@ This module owns the test identity set used by *all* the fakes and seeders:
 Identity model (D37 RESOLVED, D52/D55): the **internal UUID** is the load-bearing
 identity end to end. Customer Master's authoritative external codes —
 ``display_code`` (tenants, e.g. ``buc-ees``) and ``store_code`` (stores, e.g.
-``TX-102``) — are readability-only and ride alongside. Both code columns are
-nullable at source (D55 as corrected); exactly one fixture store carries
-``store_code=None`` so the nullable path is exercised end to end (mirror faithful
-copy, fake resolution, envelope omission). The invented ``t_*``/``s_*`` form is
-retired.
+``TX-101``) — are readability-only and ride alongside. Both code columns are
+nullable at source (D55 as corrected). The fixture set below mirrors the REAL
+Customer Master identity set — every tenant and store is coded and ACTIVE; the
+nullable-``store_code`` (D55) edge and the INACTIVE-store edge are NOT in this
+baseline. They live as scoped, reverted edge fixtures in the tests that need them
+(the test-CM stand-in code-less store in ``test_db_pull``; the transient inactive
+store in ``test_csv_uploads_live``). The invented ``t_*``/``s_*`` form is retired.
 
 Code uniqueness is load-bearing: the fakes resolve a claim code to exactly one
 entity, so the by-code indexes below raise loudly on a duplicate (a silent dict
@@ -149,54 +151,43 @@ _CREATED = datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC)
 _UPDATED = datetime(2026, 5, 1, 0, 0, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
-# The default fixture set: 2 tenants, 2 stores each (one ACTIVE, one INACTIVE).
-# Codes follow the live Customer Master style (tenant display_code is a kebab
-# slug like 'buc-ees'; store_code a short uppercase code like 'TX-102').
-# Exactly one non-primary INACTIVE store carries store_code=None — the nullable
-# path must actually run, not just be permitted by the column definition.
+# The default fixture set: the REAL Customer Master identity set — 2 tenants
+# (buc-ees, zabka-group) and their 6 stores, ALL coded and ACTIVE. The UUIDs are
+# the actual Customer Master internal UUIDs (load-bearing). The nullable-store_code
+# (D55) and inactive-store edges are NOT in this baseline — they are preserved as
+# scoped, reverted edge fixtures in their respective tests (see module docstring).
+# Codes follow the live Customer Master style (tenant display_code a kebab slug
+# like 'buc-ees'; store_code a short code like 'TX-101').
 # ---------------------------------------------------------------------------
 TENANTS: tuple[TenantFixture, ...] = (
     TenantFixture(
-        display_code="acme-retail",
-        uuid=UUID("019e89f9-dbd5-7703-8221-ae6b811599bb"),
-        name="Acme Retail",
+        display_code="buc-ees",
+        uuid=UUID("019e5e3c-b5d3-705f-9002-2451c4ca2626"),
+        name="Buc-ee's",
         status="ACTIVE",
         pc_created_at=_CREATED,
         pc_updated_at=_UPDATED,
-        metadata={"pii_policy_version": "v1", "region": "us-east"},
+        metadata={"pii_policy_version": "v1", "region": "us-central"},
     ),
     TenantFixture(
-        display_code="globex-stores",
-        uuid=UUID("019e89f9-dbd5-7703-8221-ae707db9b918"),
-        name="Globex Stores",
+        display_code="zabka-group",
+        uuid=UUID("019e5e3c-b5d6-7eed-93f9-3778a7a7a160"),
+        name="Żabka Group",
         status="ACTIVE",
         pc_created_at=_CREATED,
         pc_updated_at=_UPDATED,
-        metadata={"pii_policy_version": "v1", "region": "eu-west"},
+        metadata={"pii_policy_version": "v1", "region": "eu-central"},
     ),
 )
 
 STORES: tuple[StoreFixture, ...] = (
     StoreFixture(
-        store_code="AC-001",
-        uuid=UUID("019e89f9-dbd5-7703-8221-ae8bfa6528bf"),
-        tenant_display_code="acme-retail",
-        name="Acme Downtown #1",
+        store_code="TX-101",
+        uuid=UUID("019e5e3c-b62e-75e6-ad62-529127ae944a"),
+        tenant_display_code="buc-ees",
+        name="Buc-ee's #101 New Braunfels",
         status="ACTIVE",
-        country="US",
-        timezone="America/New_York",
-        currency="USD",
-        tax_treatment="EXCLUSIVE",
-        pc_created_at=_CREATED,
-        pc_updated_at=_UPDATED,
-    ),
-    StoreFixture(
-        store_code="AC-002",
-        uuid=UUID("019e89f9-dbd5-7703-8221-ae9c0f7f63ba"),
-        tenant_display_code="acme-retail",
-        name="Acme Suburb #2 (closed)",
-        status="INACTIVE",
-        country="US",
+        country="USA",
         timezone="America/Chicago",
         currency="USD",
         tax_treatment="EXCLUSIVE",
@@ -204,30 +195,66 @@ STORES: tuple[StoreFixture, ...] = (
         pc_updated_at=_UPDATED,
     ),
     StoreFixture(
-        store_code="GX-001",
-        uuid=UUID("019e89f9-dbd5-7703-8221-aea1bb97d53d"),
-        tenant_display_code="globex-stores",
-        name="Globex Central #1",
+        store_code="TX-102",
+        uuid=UUID("019e5e3c-b630-7530-871d-a05f2b7122b3"),
+        tenant_display_code="buc-ees",
+        name="Buc-ee's #102 Luling",
         status="ACTIVE",
-        country="GB",
-        timezone="Europe/London",
-        currency="GBP",
+        country="USA",
+        timezone="America/Chicago",
+        currency="USD",
+        tax_treatment="EXCLUSIVE",
+        pc_created_at=_CREATED,
+        pc_updated_at=_UPDATED,
+    ),
+    StoreFixture(
+        store_code="FL-201",
+        uuid=UUID("019e5e3c-b632-75d5-a56a-4bf1acb133ce"),
+        tenant_display_code="buc-ees",
+        name="Buc-ee's #201 Daytona",
+        status="ACTIVE",
+        country="USA",
+        timezone="America/Chicago",
+        currency="USD",
+        tax_treatment="EXCLUSIVE",
+        pc_created_at=_CREATED,
+        pc_updated_at=_UPDATED,
+    ),
+    StoreFixture(
+        store_code="K-001",
+        uuid=UUID("019e5e3c-b636-731b-8bdd-46dbb9c02769"),
+        tenant_display_code="zabka-group",
+        name="Żabka K-001 Stare Miasto",
+        status="ACTIVE",
+        country="Poland",
+        timezone="Europe/Warsaw",
+        currency="PLN",
         tax_treatment="INCLUSIVE",
         pc_created_at=_CREATED,
         pc_updated_at=_UPDATED,
     ),
     StoreFixture(
-        # The store_code=None store (D55: nullable at source, copied faithfully).
-        # Non-primary and INACTIVE so happy paths are unaffected; reachable via
-        # stores_for_tenant() and by UUID, never by code.
-        store_code=None,
-        uuid=UUID("019e89f9-dbd5-7703-8221-aeb75beccb78"),
-        tenant_display_code="globex-stores",
-        name="Globex North #2 (closed)",
-        status="INACTIVE",
-        country="GB",
-        timezone="Europe/London",
-        currency="GBP",
+        store_code="W-001",
+        uuid=UUID("019e5e3c-b633-7344-93c7-83fb205285ea"),
+        tenant_display_code="zabka-group",
+        name="Żabka W-001 Mokotów",
+        status="ACTIVE",
+        country="Poland",
+        timezone="Europe/Warsaw",
+        currency="PLN",
+        tax_treatment="INCLUSIVE",
+        pc_created_at=_CREATED,
+        pc_updated_at=_UPDATED,
+    ),
+    StoreFixture(
+        store_code="W-002",
+        uuid=UUID("019e5e3c-b635-7f44-b056-8dbd926f08ab"),
+        tenant_display_code="zabka-group",
+        name="Żabka W-002 Praga",
+        status="ACTIVE",
+        country="Poland",
+        timezone="Europe/Warsaw",
+        currency="PLN",
         tax_treatment="INCLUSIVE",
         pc_created_at=_CREATED,
         pc_updated_at=_UPDATED,

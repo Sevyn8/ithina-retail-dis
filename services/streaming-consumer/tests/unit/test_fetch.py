@@ -26,7 +26,7 @@ from streaming_consumer.pipeline.fetch import BronzeMeta, fetch_chunk, parse_chu
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-_TENANT = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+_TENANT = "019e5e3c-b5d3-705f-9002-2451c4ca2626"
 _TRACE = "019e9508-0000-7000-8000-000000000001"
 
 

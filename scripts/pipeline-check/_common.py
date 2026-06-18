@@ -77,7 +77,7 @@ def seeded_tenant_uuid() -> str:
 
 def seeded_store_code() -> str:
     """The local seeded ACTIVE store code (PRIMARY_STORE)."""
-    assert PRIMARY_STORE.store_code is not None  # PRIMARY_STORE is the ACTIVE AC-001
+    assert PRIMARY_STORE.store_code is not None  # PRIMARY_STORE is the ACTIVE TX-101
     return str(PRIMARY_STORE.store_code)
 
 

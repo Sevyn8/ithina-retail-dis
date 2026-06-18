@@ -20,8 +20,8 @@ from dis_ui_server.publisher import CsvReceivedEnvelope, build_csv_received
 _CONTRACTS = Path(__file__).resolve().parents[3].parent / "contracts" / "pubsub"
 _SCHEMA = json.loads((_CONTRACTS / "csv.received.schema.json").read_text())
 
-_TENANT = UUID("019e89f9-dbd5-7703-8221-ae6b811599bb")
-_STORE = UUID("019e89f9-dbd5-7703-8221-ae8bfa6528bf")
+_TENANT = UUID("019e5e3c-b5d3-705f-9002-2451c4ca2626")
+_STORE = UUID("019e5e3c-b62e-75e6-ad62-529127ae944a")
 _TEMPLATE = UUID("019e98c9-df80-7649-98cd-83fb6293777a")
 _TRACE = UUID("019e9508-0000-7000-8000-000000000001")
 _GCS_URI = f"gs://ithina-bronze-raw/tenant/{_TENANT}/source/sc_pos_v1/yyyy=2026/mm=06/dd=06/{_TRACE}.csv"
@@ -37,8 +37,8 @@ def _build(**overrides: object) -> CsvReceivedEnvelope:
         "upload_session_id": "us_4f1d2b9c03ae",
         "gcs_uri": _GCS_URI,
         "received_ts": datetime(2026, 6, 6, 9, 30, tzinfo=UTC),
-        "tenant_display_code": "acme-retail",
-        "store_code": "AC-001",
+        "tenant_display_code": "buc-ees",
+        "store_code": "TX-101",
     }
     values.update(overrides)
     return build_csv_received(**values)  # type: ignore[arg-type]

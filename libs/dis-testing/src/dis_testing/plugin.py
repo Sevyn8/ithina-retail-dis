@@ -11,6 +11,7 @@ pytest`` stays green; ``make run-local`` + ``make test`` exercises them for real
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING
 
@@ -48,11 +49,61 @@ def dis_engine(dis_postgres_url: str) -> Iterator[Engine]:
     engine.dispose()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _dis_identity_synced() -> None:
+    """Populate identity_mirror once per session via the REAL mirror-sync path.
+
+    identity_mirror is owned by mirror-sync (Slice 7); the seeder no longer writes
+    it. Many tests assume a mirrored tenant/store exists as an FK target (the
+    mapping seed, the migration FK tests, the 3 NOBYPASSRLS user-role tests). This
+    autouse SESSION fixture runs the sync once, before any module/function fixture
+    (so it precedes every ``seed_default_fixtures`` call), uniformly across all test
+    groups — so the user-role tests get their FK targets without holding admin
+    access themselves. Idempotent (upsert): re-running adds nothing and leaves
+    identity_mirror identical. Skip-safe: with no stack env it returns, so a bare
+    ``pytest`` stays green. (Replaces a repo-root tests/integration/conftest.py,
+    which collided with service conftests on the pytest module name.)
+    """
+    admin_url = os.environ.get("POSTGRES_ADMIN_URL")
+    user_url = os.environ.get("POSTGRES_URL")
+    if not (admin_url and user_url):
+        # Both absent = no stack: stay silent so a bare `pytest` collection/run is green.
+        # Partial env (POSTGRES_URL set, POSTGRES_ADMIN_URL missing) is the dangerous case:
+        # the sync is skipped here, but stack-needing tests will still try to seed
+        # config.source_mappings and fail with an obscure fk_csm_tenant error. Surface the
+        # real reason loudly so the failure is self-explaining, not a confusing FK trace.
+        if user_url and not admin_url:
+            warnings.warn(
+                "identity_mirror sync SKIPPED: POSTGRES_ADMIN_URL is not set but POSTGRES_URL is. "
+                "Integration tests that need FK targets (the mapping seed, the user-role tests) "
+                "will fail with a config.source_mappings fk_csm_tenant error. Set "
+                "POSTGRES_ADMIN_URL (e.g. run via `make test`, which exports .env), or unset "
+                "POSTGRES_URL to skip the stack tests cleanly.",
+                stacklevel=2,
+            )
+        return
+    from dis_testing.identity_sync import sync_identity_mirror
+
+    sync_identity_mirror(admin_url, user_url)
+
+
 @pytest.fixture(scope="session")
-def seeded_identity(dis_engine: Engine) -> Engine:
-    """Ensure the default fixture set is present in the DIS database (idempotent)."""
+def seeded_identity(dis_engine: Engine, dis_postgres_url: str) -> Engine:
+    """Sync identity_mirror (mirror-sync owns it) then seed the default mapping.
+
+    identity_mirror is owned by mirror-sync; the seeder only writes
+    config.source_mappings and requires the tenant FK target to already exist.
+    Needs POSTGRES_ADMIN_URL to provision/sync the test-CM stand-in; skip if the
+    full admin stack is absent (a bare run never reaches here anyway).
+    """
+    admin_url = os.environ.get("POSTGRES_ADMIN_URL")
+    if not admin_url:
+        pytest.skip("POSTGRES_ADMIN_URL not set — cannot sync identity_mirror before seeding")
+
+    from dis_testing.identity_sync import sync_identity_mirror
     from dis_testing.seed import seed_default_fixtures
 
+    sync_identity_mirror(admin_url, dis_postgres_url)
     seed_default_fixtures(engine=dis_engine)
     return dis_engine
 

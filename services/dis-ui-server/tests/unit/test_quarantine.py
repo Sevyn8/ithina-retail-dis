@@ -32,7 +32,7 @@ from dis_ui_server.schemas.quarantine import (
 )
 
 # Re-declared locally (the unit suite's convention: no tests package, importlib mode).
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees
 
 # The live CHECK vocabularies (introspected 15a Task 0): the row 6-member subset plus
 # the three chunk-only pre-lookup stages. Every member MUST forward-map (no silent gap).

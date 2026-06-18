@@ -10,7 +10,7 @@ Usage:
       --csv scripts/pipeline-check/local/inputs/snapshot.csv \
       --spec scripts/pipeline-check/local/inputs/snapshot-spec.json \
       [--template scripts/pipeline-check/local/out/template.json | --template-id <uuid>] \
-      [--store-code AC-001] [--tenant <uuid>] [--timeout 30] [--yes] [--no-stack] [--base ...]
+      [--store-code TX-101] [--tenant <uuid>] [--timeout 30] [--yes] [--no-stack] [--base ...]
 """
 
 from __future__ import annotations

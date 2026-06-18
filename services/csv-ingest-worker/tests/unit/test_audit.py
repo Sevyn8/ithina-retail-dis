@@ -11,7 +11,7 @@ import pytest
 from csv_ingest_worker.audit import WorkerAudit
 from dis_audit import AuditEvent, EventScope, Outcome, Stage
 
-_TENANT = UUID("019e89f9-dbd5-7703-8221-ae6b811599bb")
+_TENANT = UUID("019e5e3c-b5d3-705f-9002-2451c4ca2626")  # buc-ees
 _TRACE = UUID("019e8d88-4e76-7911-bb77-d8fcba1808a6")
 _BRONZE = UUID("019e93f0-57ca-7470-9899-ba6532ff15e1")
 

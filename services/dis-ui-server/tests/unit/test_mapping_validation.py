@@ -20,7 +20,7 @@ from dis_ui_server.mapping_validation import (
     validate_mapping_rules_for_type,
 )
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"
 
 
 def _sale_rules() -> dict[str, Any]:

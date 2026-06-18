@@ -41,8 +41,8 @@ pytestmark = pytest.mark.integration
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MIGRATION_PATH = _REPO_ROOT / "alembic" / "versions" / "0004_hot_natural_key_arbitration.py"
 
-_TENANT = "019e89f9-dbd5-7703-8221-ae6b811599bb"  # acme-retail (Slice 2 fixtures)
-_STORE = "019e89f9-dbd5-7703-8221-ae8bfa6528bf"  # AC-001
+_TENANT = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees (Customer Master identity)
+_STORE = "019e5e3c-b62e-75e6-ad62-529127ae944a"  # TX-101
 
 _CHECKS = ("ck_sscp_sku_variant_not_empty", "ck_sscp_sku_lot_batch_not_empty")
 

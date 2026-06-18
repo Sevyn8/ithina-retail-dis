@@ -247,10 +247,11 @@ async def test_published_envelope_carries_bronze_ref_and_codes(
     ("override", "field"),
     [
         # Same shape, different tenant UUID in the path -> tenant_id mismatch.
+        # The example tenant is buc-ees, so the mismatch uses zabka-group's UUID.
         (
             {
                 "gcs_uri": _CSV_EXAMPLE["gcs_uri"].replace(
-                    _CSV_EXAMPLE["tenant_id"], "019e89f9-dbd5-7703-8221-ae6b811599bb"
+                    _CSV_EXAMPLE["tenant_id"], "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"
                 )
             },
             "tenant_id",

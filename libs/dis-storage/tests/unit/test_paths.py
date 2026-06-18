@@ -26,7 +26,7 @@ from dis_storage.paths import (
     split_object_uri,
 )
 
-_TENANT = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+_TENANT = "019e5e3c-b5d3-705f-9002-2451c4ca2626"
 _TRACE = "019e8a00-0000-7000-8000-000000000abc"
 
 # Resolved from libs/dis-storage/tests/unit/ -> repo root (parents[4]) / contracts/pubsub.

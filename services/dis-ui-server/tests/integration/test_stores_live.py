@@ -23,8 +23,8 @@ from dis_ui_server.main import create_app
 
 pytestmark = pytest.mark.integration
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
-TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees
+TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"  # zabka-group
 
 
 def _bearer(token: str) -> dict[str, str]:
@@ -36,6 +36,26 @@ def live_client(stack_env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> I
     monkeypatch.setenv("POSTGRES_URL", stack_env["POSTGRES_URL"])
     with TestClient(create_app()) as client:
         yield client
+
+
+def test_real_cm_currency_tax_values_are_pinned(
+    live_client: TestClient, mint_token: Callable[..., str]
+) -> None:
+    """Pin the REAL CM currency/tax as LITERALS, not a data-driven echo.
+
+    ``test_token_tenant_sees_exactly_its_stores`` compares the API to whatever the
+    mirror holds (faithful-to-mirror, but tautological if the mirror itself were
+    wrong). This asserts the concrete real values — buc-ees = USD/EXCLUSIVE,
+    zabka-group = PLN/INCLUSIVE — so a wrong currency/tax in the synced mirror (or a
+    mis-edited fixture) FAILS here. The API lowercases ``tax_treatment``; ``currency``
+    is served as-is (char(3))."""
+    for tenant, currency, tax in ((TENANT_A, "USD", "exclusive"), (TENANT_B, "PLN", "inclusive")):
+        body = live_client.get(
+            "/api/v1/stores-onboarded", headers=_bearer(mint_token(tenant_id=tenant))
+        ).json()
+        assert body, f"no stores served for tenant {tenant} — run make run-local + sync"
+        assert all(s["currency"] == currency for s in body), f"{tenant} currency != {currency}: {body}"
+        assert all(s["tax_treatment"] == tax for s in body), f"{tenant} tax_treatment != {tax}: {body}"
 
 
 def _mirror_truth(stack_env: dict[str, str], tenant_id: str) -> list[dict[str, Any]]:

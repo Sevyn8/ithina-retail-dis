@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"
 
 
 def _error(body: dict[str, Any]) -> dict[str, Any]:

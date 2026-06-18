@@ -19,7 +19,7 @@ from dis_mapping import MappingResult, SourceMapping
 from dis_validation import mapping_produced_columns
 from streaming_consumer.envelope import IngressReadyEvent
 
-_TENANT = UUID("019e89f9-dbd5-7703-8221-ae6b811599bb")
+_TENANT = UUID("019e5e3c-b5d3-705f-9002-2451c4ca2626")
 _STORE = UUID("019e89f9-dbd5-7703-8221-ae6b81159900")
 _TRACE = UUID("019e89f9-dbd5-7703-8221-ae6b81159911")
 _BRONZE = UUID("019e9508-0000-7000-8000-00000000000b")

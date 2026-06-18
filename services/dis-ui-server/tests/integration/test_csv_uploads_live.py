@@ -8,8 +8,9 @@ against the frozen contract), and the live ``audit.events`` write.
 
 The cross-tenant cases run on REAL seed data: tenant B's token naming tenant A's
 template/store gets a clean 404 — never a resolve, never a 409 that would
-confirm existence. The live INACTIVE store (AC-002) proves the operator's
-ACTIVE-only 409 gate on real mirror rows.
+confirm existence. A TRANSIENT INACTIVE store (the ``inactive_store`` fixture,
+inserted under tenant A and reverted on teardown — the baseline mirror is
+all-ACTIVE) proves the operator's ACTIVE-only 409 gate on real mirror rows.
 
 Loud-error posture (the Slice 4/7 lesson): a missing stack env var ERRORS,
 never skips.
@@ -37,11 +38,13 @@ pytestmark = pytest.mark.integration
 _CONTRACTS = Path(__file__).resolve().parents[3].parent / "contracts" / "pubsub"
 _CSV_SCHEMA = json.loads((_CONTRACTS / "csv.received.schema.json").read_text())
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"  # acme-retail (live seed)
-TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"  # globex-stores (live seed)
-_ACTIVE_STORE_A = "AC-001"  # live seed: ACTIVE store of tenant A
-_INACTIVE_STORE_A = "AC-002"  # live seed: INACTIVE store of tenant A
-_ACTIVE_STORE_B = "GX-001"  # live seed: ACTIVE store of tenant B
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees (live mirror)
+TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"  # zabka-group (live mirror)
+_ACTIVE_STORE_A = "TX-101"  # live mirror: ACTIVE store of tenant A
+_ACTIVE_STORE_B = "K-001"  # live mirror: ACTIVE store of tenant B
+# The INACTIVE store is NOT in the baseline (all mirror rows are ACTIVE); it is a
+# transient row inserted/reverted by the `inactive_store` fixture below.
+_INACTIVE_STORE_ID = uuid.UUID("019e5e3c-0000-7000-8000-00000000409e")
 
 _GOOD_CSV = b"sku,store_section,qty_sold,unit_price\nA-1,front,5,9.99\nB-2,back,3,4.50\n"
 
@@ -101,6 +104,42 @@ def active_template_a(upload_env: dict[str, str]) -> dict[str, str]:
         engine.dispose()
     assert row is not None, "no ACTIVE template seeded for tenant A — run make run-local"
     return {"template_id": str(row.template_id), "source_id": row.source_id}
+
+
+@pytest.fixture
+def inactive_store(upload_env: dict[str, str]) -> Iterator[str]:
+    """A TRANSIENT INACTIVE store under tenant A (the baseline mirror is all-ACTIVE).
+
+    Inserted directly into identity_mirror.stores via admin and DELETED on
+    teardown so the mirror returns identical to its synced baseline (HARD REVERT
+    RULE). Yields the store_code the 409-gate tests use.
+    """
+    engine = create_engine(upload_env["POSTGRES_ADMIN_URL"])
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO identity_mirror.stores "
+                    "(store_id, tenant_id, name, store_code, status, country, timezone, "
+                    " currency, tax_treatment, pc_created_at, pc_updated_at, mirror_synced_at) "
+                    "VALUES (CAST(:sid AS uuid), CAST(:tid AS uuid), :name, :code, 'INACTIVE', "
+                    " 'USA', 'America/Chicago', 'USD', 'EXCLUSIVE', now(), now(), now())"
+                ),
+                {
+                    "sid": str(_INACTIVE_STORE_ID),
+                    "tid": TENANT_A,
+                    "name": "Transient Inactive (409 test)",
+                    "code": "ZZ-INACTIVE",
+                },
+            )
+        yield "ZZ-INACTIVE"
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM identity_mirror.stores WHERE store_id = CAST(:sid AS uuid)"),
+                {"sid": str(_INACTIVE_STORE_ID)},
+            )
+        engine.dispose()
 
 
 @pytest.fixture
@@ -269,9 +308,10 @@ def test_cross_tenant_inactive_store_is_404_never_a_state_leak(
     live_client: TestClient,
     mint_token: Callable[..., str],
     tenant_b_active_template: str,
+    inactive_store: str,
 ) -> None:
-    # The HARDEST no-oracle form: tenant A's AC-002 is REAL and INACTIVE — if the
-    # state gate ever ran before (or instead of) the tenant-scoped resolve, a
+    # The HARDEST no-oracle form: tenant A's transient INACTIVE store is REAL — if
+    # the state gate ever ran before (or instead of) the tenant-scoped resolve, a
     # tenant-B caller would see the 409 and learn both that the store exists AND
     # its lifecycle state. It must be a 404 whose details carry no state at all.
     # Tenant B's own ACTIVE template lets the request pass the template step and
@@ -280,7 +320,7 @@ def test_cross_tenant_inactive_store_is_404_never_a_state_leak(
         live_client,
         mint_token(tenant_id=TENANT_B),
         template_id=tenant_b_active_template,
-        store_code=_INACTIVE_STORE_A,  # tenant A's REAL INACTIVE store
+        store_code=inactive_store,  # tenant A's REAL INACTIVE store (transient)
     )
     assert response.status_code == 404  # never 409: the resolve failed first
     envelope = response.json()["error"]
@@ -316,14 +356,16 @@ def test_own_inactive_store_is_409_after_the_resolve(
     live_client: TestClient,
     mint_token: Callable[..., str],
     active_template_a: dict[str, str],
+    inactive_store: str,
 ) -> None:
-    # The operator's gate on REAL mirror data: AC-002 is tenant A's own INACTIVE
-    # store — resolved fine (it IS the caller's), then refused 409 ACTIVE-only.
+    # The operator's gate on REAL mirror data: the transient INACTIVE store is
+    # tenant A's own — resolved fine (it IS the caller's), then refused 409
+    # ACTIVE-only.
     response = _post(
         live_client,
         mint_token(tenant_id=TENANT_A),
         template_id=active_template_a["template_id"],
-        store_code=_INACTIVE_STORE_A,
+        store_code=inactive_store,
     )
     assert response.status_code == 409
     envelope = response.json()["error"]

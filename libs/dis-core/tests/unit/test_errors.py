@@ -149,7 +149,7 @@ def test_event_path_mismatch_error_preserves_both_values() -> None:
         "tenant segment disagrees",
         field="tenant_id",
         event_value="019e5e3c-b5d3-705f-9002-2451c4ca2626",
-        path_value="019e89f9-dbd5-7703-8221-ae6b811599bb",
+        path_value="019e5e3c-b5d6-7eed-93f9-3778a7a7a160",
         tenant_id="019e5e3c-b5d3-705f-9002-2451c4ca2626",
         trace_id="tr",
     )
@@ -191,9 +191,9 @@ def test_tenant_scope_error_preserves_tenant_id() -> None:
     assert TenantScopeError("token carries no tenant_id").tenant_id is None
     err = TenantScopeError(
         "resource belongs to another tenant",
-        tenant_id="019e89f9-dbd5-7703-8221-ae6b811599bb",
+        tenant_id="019e5e3c-b5d3-705f-9002-2451c4ca2626",
     )
-    assert err.tenant_id == "019e89f9-dbd5-7703-8221-ae6b811599bb"
+    assert err.tenant_id == "019e5e3c-b5d3-705f-9002-2451c4ca2626"
 
 
 def test_ops_role_required_error_message() -> None:

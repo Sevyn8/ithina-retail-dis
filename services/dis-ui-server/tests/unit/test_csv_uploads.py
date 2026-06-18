@@ -30,9 +30,9 @@ from dis_ui_server.main import create_app
 _CONTRACTS = Path(__file__).resolve().parents[3].parent / "contracts" / "pubsub"
 _CSV_SCHEMA = json.loads((_CONTRACTS / "csv.received.schema.json").read_text())
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
-TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"
-_STORE_ID = UUID("019e89f9-dbd5-7703-8221-ae8bfa6528bf")
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"
+TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"
+_STORE_ID = UUID("019e5e3c-b62e-75e6-ad62-529127ae944a")
 _TEMPLATE_ID = "019e98c9-df80-7649-98cd-83fb6293777a"
 _GOOD_CSV = b"sku,qty\nA-1,5\nB-2,3\n"
 
@@ -89,7 +89,7 @@ def harness(
         return SimpleNamespace(store_id=_STORE_ID, store_code=store_code, status="ACTIVE")
 
     async def fake_display_code(engine: Any, tenant_id: UUID) -> str | None:
-        return "acme-retail"
+        return "buc-ees"
 
     monkeypatch.setattr(f"{_HANDLER_MODULE}.resolve_active_template", fake_resolve_template)
     monkeypatch.setattr(f"{_HANDLER_MODULE}.resolve_store_by_code", fake_resolve_store)
@@ -113,7 +113,7 @@ def _post(
     *,
     file_payload: bytes = _GOOD_CSV,
     template_id: str = _TEMPLATE_ID,
-    store_code: str = "AC-001",
+    store_code: str = "TX-101",
     extra_fields: dict[str, str] | None = None,
     omit: frozenset[str] = frozenset(),
 ) -> Any:
@@ -173,8 +173,8 @@ def test_valid_upload_writes_d53_path_publishes_contract_valid_event_and_audits(
     assert wire["template_id"] == _TEMPLATE_ID
     assert wire["trace_id"] == body["trace_id"]
     assert wire["upload_session_id"] == body["upload_id"]
-    assert wire["tenant_display_code"] == "acme-retail"
-    assert wire["store_code"] == "AC-001"
+    assert wire["tenant_display_code"] == "buc-ees"
+    assert wire["store_code"] == "TX-101"
 
     # One SUCCESS audit, receiver-context populated.
     [event] = [e for e in writer.events if e.outcome is Outcome.SUCCESS]
@@ -427,7 +427,7 @@ def test_unresolvable_store_code_is_404(
         )
 
     monkeypatch.setattr(f"{_HANDLER_MODULE}.resolve_store_by_code", not_found)
-    response = _post(client, mint_token(), store_code="GX-001")  # another tenant's code
+    response = _post(client, mint_token(), store_code="K-001")  # another tenant's code
     assert response.status_code == 404  # a 404, NEVER a 409 oracle
     assert response.json()["error"]["code"] == "resource_not_found"
     assert not storage.uploads and not publisher.published
@@ -450,7 +450,7 @@ def test_resolved_but_non_active_store_is_409_after_the_404_gate(
         return SimpleNamespace(store_id=_STORE_ID, store_code=store_code, status=status)
 
     monkeypatch.setattr(f"{_HANDLER_MODULE}.resolve_store_by_code", non_active_store)
-    response = _post(client, mint_token(), store_code="AC-002")
+    response = _post(client, mint_token(), store_code="TX-102")
     assert response.status_code == 409
     envelope = response.json()["error"]
     assert envelope["code"] == "store_state_conflict"

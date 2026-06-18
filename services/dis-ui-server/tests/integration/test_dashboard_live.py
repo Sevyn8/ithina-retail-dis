@@ -22,8 +22,8 @@ from dis_ui_server.main import create_app
 
 pytestmark = pytest.mark.integration
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"  # acme-retail (live seed)
-TENANT_B = "019e89f9-dbd5-7703-8221-ae707db9b918"  # globex-stores (live seed)
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees (live seed)
+TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"  # zabka-group (live seed)
 
 _CANONICAL_TABLES = {
     "store_sku_current_position",
@@ -74,9 +74,7 @@ def _assert_well_shaped(body: dict[str, object]) -> None:
 def test_dashboard_metrics_valid_and_scoped_for_tenant_a(
     live_client: TestClient, mint_token: Callable[..., str]
 ) -> None:
-    resp = live_client.get(
-        "/api/v1/dashboard/metrics", headers=_bearer(mint_token(tenant_id=TENANT_A))
-    )
+    resp = live_client.get("/api/v1/dashboard/metrics", headers=_bearer(mint_token(tenant_id=TENANT_A)))
     assert resp.status_code == 200
     _assert_well_shaped(resp.json())
 
@@ -85,9 +83,7 @@ def test_dashboard_metrics_valid_for_tenant_b(
     live_client: TestClient, mint_token: Callable[..., str]
 ) -> None:
     # A second, distinct tenant: the same reads run under that tenant's RLS scope.
-    resp = live_client.get(
-        "/api/v1/dashboard/metrics", headers=_bearer(mint_token(tenant_id=TENANT_B))
-    )
+    resp = live_client.get("/api/v1/dashboard/metrics", headers=_bearer(mint_token(tenant_id=TENANT_B)))
     assert resp.status_code == 200
     _assert_well_shaped(resp.json())
 

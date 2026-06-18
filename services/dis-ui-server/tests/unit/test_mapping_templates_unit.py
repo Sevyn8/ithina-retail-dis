@@ -19,7 +19,7 @@ from dis_ui_server.mapping_translation import date_token_to_strptime, translate_
 from dis_ui_server.repos.mapping_templates import _violates
 from dis_ui_server.schemas.mapping_templates import MappingTemplateCreate
 
-TENANT_A = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees
 
 
 def _bearer(token: str) -> dict[str, str]:

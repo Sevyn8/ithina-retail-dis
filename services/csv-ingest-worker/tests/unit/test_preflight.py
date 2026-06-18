@@ -16,7 +16,7 @@ from csv_ingest_worker.preflight import PreflightResult, run_preflight
 from dis_core.errors import DisError, PreflightFailedError
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "csvs"
-_TENANT = "019e89f9-dbd5-7703-8221-ae6b811599bb"
+_TENANT = "019e5e3c-b5d3-705f-9002-2451c4ca2626"  # buc-ees
 _TRACE = "019e8d88-4e76-7911-bb77-d8fcba1808a6"
 
 _WELL_FORMED = (_FIXTURES / "well_formed.csv").read_bytes()

@@ -105,7 +105,7 @@ def test_upload_session_404(client: TestClient) -> None:
     [
         ("tenant", fx.PRIMARY_TENANT.display_code, "updated", str(fx.PRIMARY_TENANT.uuid)),
         ("store", fx.PRIMARY_STORE.store_code, "created", str(fx.PRIMARY_STORE.uuid)),
-        ("store", "AC-002", "deactivated", str(fx.store_by_store_code("AC-002").uuid)),
+        ("store", "TX-102", "deactivated", str(fx.store_by_store_code("TX-102").uuid)),
     ],
 )
 def test_identity_changed_validates_against_frozen_schema(

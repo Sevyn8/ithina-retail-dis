@@ -134,11 +134,40 @@ def test_validate_rejects_mismatched_tenant_store_pair(client: TestClient) -> No
     assert body["exists"] is False
 
 
-def test_none_coded_store_reachable_by_uuid_validate(client: TestClient) -> None:
+def _edge_store(monkeypatch: pytest.MonkeyPatch, *, store_code: str | None, status: str) -> fx.StoreFixture:
+    """Build a one-off edge store under the primary tenant and inject it into the
+    fake's view (fx.STORES + the by-code index). The baseline set is all-coded /
+    all-ACTIVE, so code-less and inactive paths are exercised via scoped fixtures
+    constructed here, not via a baseline row.
+    """
+    tenant = fx.PRIMARY_TENANT
+    edge = fx.StoreFixture(
+        store_code=store_code,
+        uuid=UUID("019e5e3c-b6ff-7000-8000-0000000000ed"),
+        tenant_display_code=tenant.display_code,
+        name="Edge store (test-scoped)",
+        status=status,
+        country="USA",
+        timezone="America/Chicago",
+        currency="USD",
+        tax_treatment="EXCLUSIVE",
+        pc_created_at=fx.PRIMARY_STORE.pc_created_at,
+        pc_updated_at=fx.PRIMARY_STORE.pc_updated_at,
+    )
+    monkeypatch.setattr(fx, "STORES", fx.STORES + (edge,))
+    if store_code is not None:
+        monkeypatch.setattr(fx, "_STORES_BY_CODE", {**fx._STORES_BY_CODE, store_code: edge})
+    return edge
+
+
+def test_none_coded_store_reachable_by_uuid_validate(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Named check (Slice 9a): a store with store_code=None cannot be named by
     # code (faithful to the source), but it is never silently unreachable — the
-    # UUID-keyed validate path reaches it.
-    uncoded = next(s for s in fx.STORES if s.store_code is None)
+    # UUID-keyed validate path reaches it. The baseline is all-coded, so the
+    # code-less store is a test-scoped edge fixture.
+    uncoded = _edge_store(monkeypatch, store_code=None, status="INACTIVE")
     tenant = fx.tenant_by_display_code(uncoded.tenant_display_code)
     resp = client.post(
         "/v1/validate",
@@ -147,14 +176,16 @@ def test_none_coded_store_reachable_by_uuid_validate(client: TestClient) -> None
     body = resp.json()
     _assert_valid("ValidateResponse", body)
     assert body["exists"] is True
-    assert body["is_active"] is False  # the None-coded fixture store is INACTIVE
+    assert body["is_active"] is False  # the None-coded edge store is INACTIVE
 
 
-def test_identity_omits_store_code_when_fixture_code_is_none() -> None:
+def test_identity_omits_store_code_when_fixture_code_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Named check (Slice 9a): the fake's identity builder, given the None-coded
     # fixture, carries store_code=None — the envelope's "populate when present"
-    # contract (D55) starts here.
-    uncoded = next(s for s in fx.STORES if s.store_code is None)
+    # contract (D55) starts here. Code-less store is a test-scoped edge fixture.
+    uncoded = _edge_store(monkeypatch, store_code=None, status="INACTIVE")
     identity = _identity_for(uncoded.tenant_display_code, None)
     # Default store resolution picks the tenant's first store; build the identity
     # for the None-coded store explicitly to pin the omission behaviour.
@@ -175,9 +206,13 @@ def test_identity_omits_store_code_when_fixture_code_is_none() -> None:
     assert identity.store_code is not None
 
 
-def test_inactive_store_resolves_with_is_active_false(client: TestClient) -> None:
-    # Acme suburb store is INACTIVE in the fixture set.
-    token = issue_jwt(tenant=fx.PRIMARY_TENANT, store=fx.store_by_store_code("AC-002"))
+def test_inactive_store_resolves_with_is_active_false(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Baseline stores are all ACTIVE; the inactive path is covered by a test-scoped
+    # edge store injected into the fake's view.
+    inactive = _edge_store(monkeypatch, store_code="TX-199", status="INACTIVE")
+    token = issue_jwt(tenant=fx.PRIMARY_TENANT, store=inactive)
     body = client.post("/v1/resolve_from_token", json={"jwt": token}).json()
     _assert_valid("Identity", body)
     assert body["is_active"] is False
