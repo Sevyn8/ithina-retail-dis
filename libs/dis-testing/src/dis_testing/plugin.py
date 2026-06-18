@@ -88,11 +88,56 @@ def _dis_identity_synced() -> None:
 
 
 # NOTE (D100): a suite-level post-suite clean-state assertion was prototyped here and REMOVED —
-# it false-positives because the resident workers (started by run_dis_on_local) consume
-# test-published Pub/Sub messages on shared subscriptions and write bronze/audit/quarantine rows
-# under real trace_ids after the publishing test's teardown (rows no test owns). Enforcement is
-# deferred until tests and residents are isolated (see decisions.md D100). The standing rule
-# stands: a test that mutates the shared DB reverts its own writes (the cleanup idiom).
+# it false-positived because resident workers (started by run_dis_on_local) consumed
+# test-published Pub/Sub messages on shared subscriptions and wrote bronze/audit/quarantine rows
+# under real trace_ids after the publishing test's teardown (rows no test owns).
+#
+# That PRECONDITION is now satisfied by the structural-isolation change: integration tests run on
+# a SEPARATE emulator project (TEST_PUBSUB_PROJECT_ID / pubsub_test_project — see pytest_configure
+# below and the _dis_pubsub_provisioned fixture), while residents stay on local-dis, so a resident
+# subscription can no longer receive a test-published message by construction. The guard itself is
+# DELIBERATELY still removed: re-enabling it is a distinct follow-up with its own baseline-definition
+# risk (the idempotent seed + identity_mirror rows are legitimate residue, not contamination). The
+# standing rule stands: a test that mutates the shared DB reverts its own writes (the cleanup idiom).
+
+
+def pytest_configure() -> None:
+    """Route the pytest process onto the test-scoped Pub/Sub project (D100 isolation).
+
+    Runs before any test module is imported, so module-level project reads and every
+    in-process service config (dis-ui-server's ``create_app``) resolve the test project
+    from ``PUBSUB_PROJECT_ID``. Gated on ``PUBSUB_EMULATOR_HOST``: a bare run with no
+    stack is untouched (unit tests set their own ``PUBSUB_PROJECT_ID``; integration tests
+    skip via their stack-required fixtures). Residents are SEPARATE processes started with
+    ``.env``'s local-dis, so this in-process override cannot reach them — the isolation is
+    structural, not a convention.
+    """
+    if os.environ.get("PUBSUB_EMULATOR_HOST"):
+        from dis_testing.pubsub import TEST_PUBSUB_PROJECT_ID
+
+        # Record the stack project (residents + docker containers, e.g. the CM fake)
+        # BEFORE redirecting in-process test code, so a test that interoperates with a
+        # stack process can still target it (pubsub_stack_project). setdefault keeps it
+        # stable across re-entry.
+        os.environ.setdefault("DIS_STACK_PUBSUB_PROJECT_ID", os.environ.get("PUBSUB_PROJECT_ID", "local-dis"))
+        os.environ["PUBSUB_PROJECT_ID"] = TEST_PUBSUB_PROJECT_ID
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _dis_pubsub_provisioned() -> None:
+    """Provision the test-scoped project's topics + standing subscriptions (D100).
+
+    The same name set tools/local/create_topics.py provisions on local-dis, but on the
+    test project, so the in-process subscribers' startup existence check finds their
+    subscription. Idempotent (AlreadyExists-safe) and skip-safe: with no emulator env it
+    returns, so a bare ``pytest`` stays green.
+    """
+    if not os.environ.get("PUBSUB_EMULATOR_HOST"):
+        return
+    from dis_core.pubsub_names import provision_pubsub
+    from dis_testing.pubsub import TEST_PUBSUB_PROJECT_ID
+
+    provision_pubsub(TEST_PUBSUB_PROJECT_ID)
 
 
 @pytest.fixture(scope="session")

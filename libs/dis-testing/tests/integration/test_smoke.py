@@ -21,6 +21,7 @@ from sqlalchemy import Engine, text
 
 from dis_core.identity import HttpIdentityClient
 from dis_testing import fixtures as fx
+from dis_testing.pubsub import pubsub_stack_project
 
 pytestmark = pytest.mark.integration
 
@@ -75,7 +76,11 @@ def test_identity_changed_published_to_emulator(customer_master_url: str) -> Non
     if not os.environ.get("PUBSUB_EMULATOR_HOST"):
         pytest.skip("PUBSUB_EMULATOR_HOST not set")
 
-    project = os.environ.get("PUBSUB_PROJECT_ID", "local-dis")
+    # The CM fake (a docker container) publishes identity.changed on the STACK
+    # project (local-dis), not the in-process test project — so subscribe there.
+    # Safe: no resident subscribes to identity.changed (D100 isolation is about
+    # csv.received / ingress.ready, which residents do consume).
+    project = pubsub_stack_project()
     subscriber = pubsub_v1.SubscriberClient()
     topic_path = subscriber.topic_path(project, "identity.changed")
     sub_path = subscriber.subscription_path(project, f"smoke-{uuid_utils.uuid7()}")

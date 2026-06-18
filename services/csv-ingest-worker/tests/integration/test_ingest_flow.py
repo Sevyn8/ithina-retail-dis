@@ -29,6 +29,7 @@ from dis_core.timestamps import now_utc
 from dis_storage import build_object_path
 from dis_testing.fakes.pubsub import EmulatorPublisher
 from dis_testing.fixtures import DEFAULT_SOURCE_ID, PRIMARY_STORE, PRIMARY_TENANT
+from dis_testing.pubsub import pubsub_test_project
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 _GOOD_CSV = b"sku,store_section,qty_sold,unit_price\nA-1,front,5,9.99\nB-2,back,3,4.50\n"
-_PROJECT = "local-dis"
+_PROJECT = pubsub_test_project()  # D100: tests run on a project residents never subscribe to
 
 
 def _unique_session_id() -> str:
@@ -227,12 +228,12 @@ async def test_absent_subscription_errors_never_skips(
 
 
 def test_provisioned_subscription_matches_the_frozen_constant() -> None:
-    # The provisioning place (tools/local/create_topics.py) and the worker's
-    # constant must name the SAME subscription, or startup would always fail.
-    from pathlib import Path
+    # The provisioning source of truth (dis_core.pubsub_names, which both
+    # `make topics-create` and the dis-testing harness provision from) and the
+    # worker's constants must name the SAME subscription/topic, or startup would
+    # always fail.
+    from dis_core.pubsub_names import PUBSUB_SUBSCRIPTIONS, PUBSUB_TOPICS
 
-    tools_source = (
-        Path(__file__).resolve().parents[3].parent / "tools" / "local" / "create_topics.py"
-    ).read_text()
-    assert f'"{CSV_RECEIVED_SUBSCRIPTION}"' in tools_source
-    assert f'"{CSV_RECEIVED_TOPIC}"' in tools_source
+    assert CSV_RECEIVED_SUBSCRIPTION in PUBSUB_SUBSCRIPTIONS
+    assert CSV_RECEIVED_TOPIC in PUBSUB_TOPICS
+    assert PUBSUB_SUBSCRIPTIONS[CSV_RECEIVED_SUBSCRIPTION] == CSV_RECEIVED_TOPIC

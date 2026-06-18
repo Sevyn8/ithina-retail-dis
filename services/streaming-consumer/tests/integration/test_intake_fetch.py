@@ -22,6 +22,7 @@ from sqlalchemy import text
 from dis_core.errors import DisError
 from dis_core.ids import new_uuid7
 from dis_testing.fakes.pubsub import EmulatorPublisher
+from dis_testing.pubsub import pubsub_test_project
 from streaming_consumer.clients.pubsub import Subscriber
 from streaming_consumer.config import INGRESS_READY_TOPIC
 from streaming_consumer.orchestrate import ConsumerPipeline
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
-_PROJECT = "local-dis"
+_PROJECT = pubsub_test_project()  # D100: tests run on a project residents never subscribe to
 
 
 async def test_delivery_proof_and_trace_discipline(

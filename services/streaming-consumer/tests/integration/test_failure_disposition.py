@@ -25,6 +25,7 @@ import pytest
 from sqlalchemy import text
 
 from dis_testing.fakes.pubsub import EmulatorPublisher
+from dis_testing.pubsub import pubsub_test_project
 from streaming_consumer.clients.pubsub import Subscriber, process_message
 from streaming_consumer.config import INGRESS_READY_TOPIC
 from streaming_consumer.orchestrate import ConsumerPipeline
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
-_PROJECT = "local-dis"
+_PROJECT = pubsub_test_project()  # D100: tests run on a project residents never subscribe to
 
 # Missing the 'qty' column: fails the pre-mapping gate deterministically with a
 # ROW-LESS failure shape (column-absent), so 11a holds it at CHUNK grain.
