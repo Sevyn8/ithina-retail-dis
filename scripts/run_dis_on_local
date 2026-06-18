@@ -423,6 +423,7 @@ from dis_ui_server.auth import verifier as v
 claims = {
     "sub": "run-dis-on-local-probe",
     "tenant_id": str(fx.TENANTS[0].uuid),
+    "user_type": "TENANT",
     "roles": [],
     "iss": v.DEV_STUB_ISSUER,
     "aud": v.DEV_STUB_AUDIENCE,

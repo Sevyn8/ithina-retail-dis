@@ -28,6 +28,9 @@ docs/scratch/
 # Local dev JWTs — signed tokens, never commit
 scripts/jwt/tokens/
 
+# pipeline-check operator tooling: CSVs, mapping specs, run outputs (never tracked)
+scripts/pipeline-check/local/
+
 # Generated local-DB schema dump (reproducible from migrations)
 docs/schemas/
 
