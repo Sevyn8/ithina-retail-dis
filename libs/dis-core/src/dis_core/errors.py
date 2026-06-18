@@ -351,6 +351,37 @@ class SuiteDriftError(ValidationSuiteError):
     """
 
 
+# -- Enrichment error (Slice 5b) -------------------------------------------------
+# Raised by dis-enrichment (pure lib): a CONFIG/CONTRACT error raised loudly at the
+# call boundary (code-quality rule 4), NOT a per-row data failure. Carries the
+# load-bearing identifiers (rule 5); never a resolved value.
+
+
+class EnrichmentError(DisError):
+    """The enrichment caller-contract was violated — fail loud (slice-5b).
+
+    Raised by ``apply_enrichment`` when the handed-in ``facts`` omit a registered
+    field for the target table: the consumer must resolve every registered field
+    from the authoritative internal source before calling the pure engine. NOT the
+    present-but-blank case (D97, deferred — written through this slice). Carries
+    ``table`` plus optional ``tenant_id`` / ``trace_id``; never a resolved value.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        table: str | None = None,
+        tenant_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.table = table
+        self.tenant_id = tenant_id
+        self.trace_id = trace_id
+
+
 # -- Streaming-consumer canonical-sink errors (Slice 30b) ------------------------
 # Raised by the consumer's dual-write sink. Distinct classes exist where the audit
 # trail needs a stable failure_code (dis-audit FailureCode maps exception type ->

@@ -28,6 +28,7 @@ import pytest
 from pandera import Check
 
 from dis_canonical import StoreSkuSaleEvent
+from dis_enrichment import CURRENT_POSITION, apply_enrichment
 from dis_mapping import SourceMapping, apply_mapping
 from dis_validation import (
     CanonicalShapeSuiteDef,
@@ -170,3 +171,17 @@ def test_full_engine_and_both_suites_run_without_any_io() -> None:
             Decimal("1.500"),
             Decimal("2.000"),
         ]
+
+
+def test_enrichment_runs_without_any_io() -> None:
+    # slice-5b: the enrichment engine is pure too (no DB read — the consumer hands in
+    # the facts). A full apply runs under the tripwire.
+    contribution = pl.DataFrame({"sku_id": ["A", "B"], "currency": ["USD", "USD"]})
+    with _no_io():
+        result = apply_enrichment(
+            contribution,
+            {"currency": "INR", "tax_treatment": "INCLUSIVE"},
+            table=CURRENT_POSITION,
+        )
+    assert result.contribution["currency"].to_list() == ["INR", "INR"]
+    assert result.contribution["tax_treatment"].to_list() == ["INCLUSIVE", "INCLUSIVE"]

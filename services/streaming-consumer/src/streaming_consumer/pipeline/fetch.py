@@ -192,19 +192,34 @@ async def fetch_chunk(
     return FetchedChunk(frame=frame, bronze=bronze)
 
 
-async def read_store_tax_treatment(engine: AsyncEngine, event: IngressReadyEvent) -> str:
-    """Read the store's ``tax_treatment`` from ``identity_mirror.stores``.
+@dataclass(frozen=True)
+class StoreFacts:
+    """The store row's enrichment facts (slice-5b), read once and handed in.
 
-    A data-need read (the consumer denormalizes it onto sale/hot rows per the live
-    column comments), NOT an identity validation — existence enforcement at the
-    write is the composite FK (D39); no Identity Service is called (D28, Slice 13).
-    Reads only the sale path needs; change-event chunks never call this.
+    ``tax_treatment`` feeds the event-path injection (unchanged) AND the
+    current-position enrichment (D98); ``currency`` is current-position enrichment
+    (D95). Both are NOT NULL on ``identity_mirror.stores``.
+    """
+
+    tax_treatment: str
+    currency: str
+
+
+async def read_store_facts(engine: AsyncEngine, event: IngressReadyEvent) -> StoreFacts:
+    """Read the store's enrichment facts from ``identity_mirror.stores`` (one round-trip).
+
+    A data-need read (the consumer denormalizes onto sale/hot rows and enriches the
+    current-position row per D95/D98), NOT an identity validation — existence
+    enforcement at the write is the composite FK (D39); no Identity Service is called
+    (D28, Slice 13). Widened from the former ``tax_treatment``-only read to also
+    return ``currency`` (same key, single round-trip). The store-absent precondition
+    (D96) is unchanged: a missing row fails loud here.
     """
     async with rls_session(engine, event.tenant_id) as conn:
         row = (
             await conn.execute(
                 text(
-                    "SELECT tax_treatment FROM identity_mirror.stores "
+                    "SELECT tax_treatment, currency FROM identity_mirror.stores "
                     "WHERE tenant_id = CAST(:tenant_id AS uuid) AND store_id = CAST(:store_id AS uuid)"
                 ),
                 {"tenant_id": str(event.tenant_id), "store_id": str(event.store_id)},
@@ -213,10 +228,10 @@ async def read_store_tax_treatment(engine: AsyncEngine, event: IngressReadyEvent
     if row is None:
         raise EventContractError(
             f"store {event.store_id} is not in identity_mirror for this tenant; "
-            "the sale path needs its tax_treatment and the write would violate the "
-            "composite store FK (D39) anyway",
+            "the sale/current-position paths need its store facts and the write would "
+            "violate the composite store FK (D39) anyway",
             field="store_id",
             tenant_id=str(event.tenant_id),
             trace_id=str(event.trace_id),
         )
-    return str(row.tax_treatment)
+    return StoreFacts(tax_treatment=str(row.tax_treatment), currency=str(row.currency))

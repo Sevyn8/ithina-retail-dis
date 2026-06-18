@@ -7,8 +7,10 @@ write-time columns (D8, hard rule 5, D22). The line was drawn from the LIVE
 ``ithina_dis_db`` canonical schema (introspected columns + column comments,
 slice-05 plan mode), not from DDL files or docs.
 
-The registry carries an EXPLICIT four-way partition per model (consumer-injected,
-DB-generated, compute-owned, mapping-produced). ``assert_no_drift`` checks the
+The registry carries an EXPLICIT five-way partition per model (consumer-injected,
+DB-generated, compute-owned, mapping-produced, and — slice-5b, D95 —
+enrichment-produced: canonical values written by the dis-enrichment lib from an
+authoritative internal source, NOT the mapping). ``assert_no_drift`` checks the
 partition against ``model_fields`` exactly, BOTH directions — so a canonical
 column added to the model (the Slice 3 live-schema reconciliation forces that)
 cannot silently join any set: it must be classified here or the guard errors.
@@ -42,6 +44,12 @@ class ColumnProvenance:
     db_generated: frozenset[str]
     compute_owned: frozenset[str]
     mapping_produced: frozenset[str]
+    # Enrichment-produced (slice-5b, D95): canonical values the dis-enrichment lib
+    # writes from an authoritative internal source, NOT the mapping. Subject to the
+    # SAME canonical-shape gate as mapping-produced (D94), so the drift guard admits
+    # them as source-owned (canonical_shape.materialize). Default empty: only the
+    # current-position table registers any this slice.
+    enrichment_produced: frozenset[str] = frozenset()
 
 
 # Common to all three mapping-fed tables (introspected evidence inline):
@@ -68,12 +76,6 @@ PROVENANCE: dict[type[BaseModel], ColumnProvenance] = {
         consumer_injected=_COMMON_CONSUMER_INJECTED
         | frozenset(
             {
-                # Live comment: "Whether retail prices on this row are tax-inclusive
-                # or tax-exclusive. Denormalized from store." — the authority is
-                # identity_mirror.stores.tax_treatment; the consumer denormalizes it
-                # at write time. (Reclassified from mapping-produced during the
-                # slice-05 adversarial pass, from this comment evidence.)
-                "tax_treatment",
                 # Live comment: "Comparison reference for the event-time-wins
                 # conditional upsert ... Consumer-injected by the streaming
                 # consumer." (D64, migration 0003.)
@@ -140,6 +142,14 @@ PROVENANCE: dict[type[BaseModel], ColumnProvenance] = {
                 "sku_status",
             }
         ),
+        # Enrichment-produced (slice-5b, D98): tax_treatment migrates from
+        # consumer-injected into the dis-enrichment lib on the current-position
+        # path and becomes canonical-shape-validated (the TaxTreatment enum vocab).
+        # The event models keep tax_treatment consumer-injected (event path out of
+        # scope) — the deliberate D98 asymmetry. currency STAYS mapping-produced:
+        # the lib overrides its VALUE, not the column's origin (the mapping still
+        # produces the column; the lib's value wins, D95).
+        enrichment_produced=frozenset({"tax_treatment"}),
     ),
     StoreSkuSaleEvent: ColumnProvenance(
         consumer_injected=_COMMON_CONSUMER_INJECTED
@@ -282,6 +292,7 @@ def assert_no_drift(model: type[BaseModel]) -> None:
         "db_generated": provenance.db_generated,
         "compute_owned": provenance.compute_owned,
         "mapping_produced": provenance.mapping_produced,
+        "enrichment_produced": provenance.enrichment_produced,
     }
     names = list(sets)
     for i, first in enumerate(names):
@@ -319,3 +330,14 @@ def mapping_produced_columns(model: type[BaseModel]) -> frozenset[str]:
     """The columns the mapping engine may produce for ``model`` (drift-checked)."""
     assert_no_drift(model)
     return PROVENANCE[model].mapping_produced
+
+
+def enrichment_produced_columns(model: type[BaseModel]) -> frozenset[str]:
+    """The columns the dis-enrichment lib may produce for ``model`` (drift-checked, slice-5b).
+
+    These are source-owned for the canonical-shape gate (D94): the suite drift
+    guard admits ``owned ⊆ mapping_produced ∪ enrichment_produced``. Empty for every
+    model except the current-position table this slice (D95/D98).
+    """
+    assert_no_drift(model)
+    return PROVENANCE[model].enrichment_produced

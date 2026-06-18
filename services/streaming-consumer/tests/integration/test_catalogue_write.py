@@ -6,9 +6,9 @@ absent):
 - a catalogue chunk on a ``template_type='snapshot'`` mapping CREATEs a hot row
   with NO pre-seeded row (the complete-path INSERT; the event paths cannot create
   one), writing NOTHING to either event table;
-- ``currency`` is file-supplied (the mapping's ``constant`` derive), and
-  ``tax_treatment`` is consumer-injected store-denormalized — the deliberate
-  file-vs-store asymmetry;
+- ``currency`` and ``tax_treatment`` are STORE-supplied via dis-enrichment (slice-5b,
+  D95/D98): the lib's values WIN over the mapping (currency's file ``constant`` is
+  overridden), both resolved from identity_mirror.stores;
 - ``attribute_staleness_map`` is stamped for exactly the contendable attributes
   the row set, with the snapshot's event-time (the envelope ``received_ts``);
 - the hot row carries the loaded mapping's ``mapping_version_id`` (D22) and the
@@ -111,10 +111,20 @@ async def test_catalogue_chunk_creates_hot_row_no_events(
     assert hot.unit_cost == Decimal("4.0000")
     assert hot.stock_qty == Decimal("42.000")
 
-    # The file-vs-store asymmetry: currency from the file (constant derive),
-    # tax_treatment injected store-denormalized (NOT from the file).
-    assert hot.currency == "EUR"
-    assert hot.tax_treatment is not None
+    # slice-5b (D95/D98): currency AND tax_treatment are STORE-supplied via enrichment
+    # — the lib's values win over the file. Both equal identity_mirror.stores, and the
+    # file's `constant 'EUR'` currency is overridden.
+    with dis_admin.begin() as conn:
+        store = conn.execute(
+            text(
+                "SELECT currency, tax_treatment FROM identity_mirror.stores "
+                "WHERE tenant_id = CAST(:t AS uuid) AND store_id = CAST(:s AS uuid)"
+            ),
+            {"t": str(PRIMARY_TENANT.uuid), "s": str(chunk.event.store_id)},
+        ).one()
+    assert hot.currency == store.currency
+    assert hot.tax_treatment == store.tax_treatment
+    assert store.currency != "EUR", "seed store currency must differ from the file constant to prove override"
 
     # Event-time = the envelope received_ts; staleness stamped for exactly the
     # contendable attributes the row set, each with the event-time value. The row
@@ -128,7 +138,7 @@ async def test_catalogue_chunk_creates_hot_row_no_events(
     assert "product_category" not in stamp  # no event mutates it
 
 
-async def test_catalogue_currency_is_file_supplied_mandatory(
+async def test_catalogue_currency_is_store_supplied_overriding_the_file(
     pipeline: ConsumerPipeline,
     dis_admin: Engine,
     storage: StorageClient,
@@ -136,8 +146,9 @@ async def test_catalogue_currency_is_file_supplied_mandatory(
     stack_env: dict[str, str],
     consumer_mappings: dict[str, int],
 ) -> None:
-    """The mapping's ``constant 'EUR'`` derive produces currency on the hot row —
-    the file-supplied path the slice settled (no consumer currency injection)."""
+    """slice-5b (D95, criterion 2): currency is STORE-supplied via enrichment — the
+    lib's value WINS over the file's ``constant 'EUR'`` derive. Output-wins proven for
+    a mapping-produced column at the integration grain."""
     sku = _unique_sku("CUR")
     cleanup.skus.append(sku)
     chunk = seed_chunk(
@@ -151,14 +162,23 @@ async def test_catalogue_currency_is_file_supplied_mandatory(
     outcome = await pipeline.process(chunk.event)
     assert outcome.disposition == "written"
     with dis_admin.begin() as conn:
-        currency = conn.execute(
+        store_currency = conn.execute(
+            text(
+                "SELECT currency FROM identity_mirror.stores "
+                "WHERE tenant_id = CAST(:t AS uuid) AND store_id = CAST(:s AS uuid)"
+            ),
+            {"t": str(PRIMARY_TENANT.uuid), "s": str(chunk.event.store_id)},
+        ).scalar_one()
+        hot_currency = conn.execute(
             text(
                 "SELECT currency FROM canonical.store_sku_current_position "
                 "WHERE tenant_id = CAST(:tenant AS uuid) AND sku_id = :sku"
             ),
             {"tenant": str(PRIMARY_TENANT.uuid), "sku": sku},
         ).scalar_one()
-    assert currency == "EUR"
+    # The store value wins; the file's constant 'EUR' is overridden (output-wins, D95).
+    assert hot_currency == store_currency
+    assert store_currency != "EUR", "seed store currency must differ from the file constant to prove override"
 
 
 async def test_event_chunks_never_reach_the_catalogue_writer(

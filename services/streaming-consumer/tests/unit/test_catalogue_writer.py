@@ -88,19 +88,24 @@ def test_catalogue_guaranteed_is_identity_projection() -> None:
             "derive": {},
         }
     )
-    # Identity: the mapping-produced targets ARE the hot columns (no registry image).
+    # Identity: the mapping-produced targets ARE the hot columns (no registry image),
+    # PLUS the enrichment-guaranteed fields (currency, tax_treatment) the lib always
+    # supplies on this path (slice-5b, D95).
     assert guaranteed_hot_columns(source, StoreSkuCurrentPosition) == frozenset(
-        {"sku_id", "product_name", "stock_qty"}
+        {"sku_id", "product_name", "stock_qty", "currency", "tax_treatment"}
     )
 
 
 def test_catalogue_guaranteed_follows_the_targets_not_a_hardcoded_set() -> None:
     from streaming_consumer.pipeline.mapping import guaranteed_hot_columns
 
+    # The enrichment-guaranteed fields are always present (slice-5b, D95); the
+    # mapping-driven part still follows the targets exactly.
+    enrichment = frozenset({"currency", "tax_treatment"})
     one = SourceMapping.model_validate(
         {"version": 1, "rename": {"a": "sku_id"}, "normalize": {}, "cast": {}, "derive": {}}
     )
-    assert guaranteed_hot_columns(one, StoreSkuCurrentPosition) == frozenset({"sku_id"})
+    assert guaranteed_hot_columns(one, StoreSkuCurrentPosition) == frozenset({"sku_id"}) | enrichment
     # Add a target and the guaranteed set grows by exactly it (∩ hot columns).
     two = SourceMapping.model_validate(
         {
@@ -111,7 +116,10 @@ def test_catalogue_guaranteed_follows_the_targets_not_a_hardcoded_set() -> None:
             "derive": {},
         }
     )
-    assert guaranteed_hot_columns(two, StoreSkuCurrentPosition) == frozenset({"sku_id", "reorder_point"})
+    assert (
+        guaranteed_hot_columns(two, StoreSkuCurrentPosition)
+        == frozenset({"sku_id", "reorder_point"}) | enrichment
+    )
 
 
 def test_valid_snapshot_classifies_complete_and_incomplete_does_not() -> None:
@@ -138,6 +146,75 @@ def test_valid_snapshot_classifies_complete_and_incomplete_does_not() -> None:
         {"version": 1, "rename": {"a": "sku_id"}, "normalize": {}, "cast": {}, "derive": {}}
     )
     assert classify_hot_completeness(incomplete, StoreSkuCurrentPosition) is False
+
+
+def test_currency_omitted_still_complete_via_enrichment_companion_still_incomplete() -> None:
+    # slice-5b (D95, criterion 4): currency LEFT the mapping-required set (the lib now
+    # guarantees it), so a snapshot mapping that does NOT map currency classifies
+    # COMPLETE — where pre-slice it would NOT (currency was required from the projection).
+    from streaming_consumer.pipeline.mapping import classify_hot_completeness
+
+    no_currency = SourceMapping.model_validate(
+        {
+            "version": 1,
+            "rename": {
+                "a": "sku_id",
+                "b": "product_name",
+                "c": "product_category",
+                "d": "current_retail_price",
+                "e": "unit_cost",
+            },
+            "normalize": {},
+            "cast": {},
+            "derive": {},
+        }
+    )
+    assert classify_hot_completeness(no_currency, StoreSkuCurrentPosition) is True
+    # Companion: a mapping still missing a genuinely-required projected field
+    # (unit_cost) stays INCOMPLETE — the required set narrowed by EXACTLY currency.
+    missing_required = SourceMapping.model_validate(
+        {
+            "version": 1,
+            "rename": {
+                "a": "sku_id",
+                "b": "product_name",
+                "c": "product_category",
+                "d": "current_retail_price",
+            },
+            "normalize": {},
+            "cast": {},
+            "derive": {},
+        }
+    )
+    assert classify_hot_completeness(missing_required, StoreSkuCurrentPosition) is False
+
+
+def test_enriched_value_is_seen_by_post_validation_gate() -> None:
+    # slice-5b (D94, criterion 3): enrichment runs BEFORE post-validation, so the gate
+    # SEES enriched values. A valid store currency is char(3) and can never be invalid,
+    # so the gate's EXISTENCE is proven with a deliberately-invalid handed-in fact — NOT
+    # a production-reachable path (documented so this is not later mistaken for dead code
+    # and removed). The valid companion proves a good enriched value passes.
+    from streaming_consumer.pipeline.mapping import LoadedMapping, apply_loaded_enrichment
+    from streaming_consumer.pipeline.validate_post import run_post_validation
+
+    source = SourceMapping.model_validate(
+        {"version": 1, "rename": {"a": "sku_id"}, "normalize": {}, "cast": {}, "derive": {}}
+    )
+    loaded = LoadedMapping(
+        mapping_version_id=1, source=source, target_model=StoreSkuCurrentPosition, hot_complete=False
+    )
+    base = MappingResult(contribution=pl.DataFrame({"sku_id": ["X"]}), source_row_indices=(0,))
+
+    bad = apply_loaded_enrichment(
+        {"currency": "TOOLONGCUR", "tax_treatment": "INCLUSIVE"}, base, tenant_id="t", trace_id="r"
+    )
+    assert run_post_validation(loaded, bad.contribution, tenant_id="t", trace_id="r").passed is False
+
+    good = apply_loaded_enrichment(
+        {"currency": "USD", "tax_treatment": "INCLUSIVE"}, base, tenant_id="t", trace_id="r"
+    )
+    assert run_post_validation(loaded, good.contribution, tenant_id="t", trace_id="r").passed is True
 
 
 # -- _catalogue_groups: identity projection, natural key, staleness stamp ---------

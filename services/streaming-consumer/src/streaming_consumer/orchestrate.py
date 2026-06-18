@@ -55,11 +55,13 @@ from streaming_consumer.pipeline.fetch import (
     BronzeMeta,
     FetchedChunk,
     ObjectStore,
+    StoreFacts,
     fetch_chunk,
-    read_store_tax_treatment,
+    read_store_facts,
 )
 from streaming_consumer.pipeline.mapping import (
     LoadedMapping,
+    apply_loaded_enrichment,
     apply_loaded_mapping,
     load_active_mapping,
 )
@@ -323,16 +325,15 @@ class ConsumerPipeline:
             },
         )
 
-        # 3. Sale + catalogue paths: the store row's tax_treatment (a data read, not
-        #    identity validation — D39's FK is the enforcement; no Identity Service,
-        #    D28). tax_treatment is consumer-injected store-denormalized for BOTH the
-        #    sale events and the catalogue hot row (Slice 14d: store-level fact, the
-        #    deliberate asymmetry with file-supplied currency).
-        tax_treatment: str | None = None
+        # 3. Sale + catalogue paths: the store row's enrichment facts (a data read,
+        #    not identity validation — D39's FK is the enforcement; no Identity
+        #    Service, D28). One widened read (D95): tax_treatment feeds the event-path
+        #    injection (unchanged) AND the current-position enrichment (D98); currency
+        #    feeds the current-position enrichment (D95).
+        store_facts: StoreFacts | None = None
         if loaded.target_model in (StoreSkuSaleEvent, StoreSkuCurrentPosition):
-            tax_treatment = await self._staged(
-                Stage.MAPPING_LOOKED_UP, read_store_tax_treatment(self.engine, event)
-            )
+            store_facts = await self._staged(Stage.MAPPING_LOOKED_UP, read_store_facts(self.engine, event))
+        tax_treatment = store_facts.tax_treatment if store_facts is not None else None
 
         # 4. Pre-mapping (source-shape) gate — D13: semantic validation lives here.
         pre = run_pre_validation(loaded, fetched.frame, tenant_id=str(tenant_id), trace_id=str(trace_id))
@@ -391,6 +392,19 @@ class ConsumerPipeline:
             duration_ms=ctx.lap(),
         )
 
+        # 5b. Enrichment (D94): the lib's value wins over the mapping for its
+        #     registered fields, applied BEFORE post-validation so enriched values
+        #     pass the canonical-shape gate and count toward completeness. Gated to
+        #     the current-position target — the event path is untouched (D98).
+        if loaded.target_model is StoreSkuCurrentPosition:
+            assert store_facts is not None  # read above for this target (FK-guaranteed)
+            result = apply_loaded_enrichment(
+                {"currency": store_facts.currency, "tax_treatment": store_facts.tax_treatment},
+                result,
+                tenant_id=str(tenant_id),
+                trace_id=str(trace_id),
+            )
+
         # 6. Post-mapping (canonical-shape) gate + the drift guard (ERRORS, never skips).
         post = run_post_validation(
             loaded, result.contribution, tenant_id=str(tenant_id), trace_id=str(trace_id)
@@ -433,7 +447,6 @@ class ConsumerPipeline:
                     loaded,
                     result,
                     dis_channel=fetched.bronze.dis_channel,
-                    tax_treatment=tax_treatment,
                     batch_size=self.batch_size,
                 ),
             )

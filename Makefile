@@ -57,6 +57,7 @@ MYPY_PACKAGES = \
 	libs/dis-audit \
 	libs/dis-canonical \
 	libs/dis-core \
+	libs/dis-enrichment \
 	libs/dis-mapping \
 	libs/dis-pii \
 	libs/dis-quarantine \

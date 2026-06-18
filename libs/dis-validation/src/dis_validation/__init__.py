@@ -25,6 +25,7 @@ from dis_validation.provenance import (
     PROVENANCE,
     ColumnProvenance,
     assert_no_drift,
+    enrichment_produced_columns,
     mapping_produced_columns,
 )
 from dis_validation.runner import (
@@ -65,6 +66,7 @@ __all__ = [
     "SourceShapeResult",
     "SourceShapeSuiteDef",
     "assert_no_drift",
+    "enrichment_produced_columns",
     "is_template_type",
     "mapping_produced_columns",
     "materialize_canonical_shape",

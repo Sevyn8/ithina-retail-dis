@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from dis_core.errors import SuiteDefinitionError, SuiteDriftError
-from dis_validation.provenance import mapping_produced_columns
+from dis_validation.provenance import enrichment_produced_columns, mapping_produced_columns
 
 
 @dataclass(frozen=True)
@@ -164,10 +164,15 @@ def materialize_canonical_shape(definition: CanonicalShapeSuiteDef) -> pa.DataFr
     """Turn a definition into a runnable Pandera schema (pure; no DB, no config read).
 
     Runs the drift guard first: the owned set must be a subset of the model's
-    mapping-produced universe (errors, never skips — criterion 6).
+    source-owned universe — mapping-produced ∪ enrichment-produced (slice-5b,
+    D94/D95) — and STILL rejects consumer-injected / DB-generated / compute-owned
+    columns (errors, never skips — criterion 6).
     """
     model = definition.target_model
-    produced = mapping_produced_columns(model)  # asserts no drift; raises for signal_history
+    # Source-owned for the canonical-shape gate = mapping-produced + enrichment-produced.
+    # Enrichment writes canonical values that pass the SAME gate (D94); widening to admit
+    # them must NOT admit consumer-injected/DB-generated/compute-owned columns.
+    produced = mapping_produced_columns(model) | enrichment_produced_columns(model)
 
     owned = tuple(dict.fromkeys(definition.owned_columns))
     if not owned:
@@ -179,8 +184,8 @@ def materialize_canonical_shape(definition: CanonicalShapeSuiteDef) -> pa.DataFr
     if off_universe:
         raise SuiteDriftError(
             f"{model.__name__}: owned column(s) {off_universe} are not in the model's "
-            "mapping-produced set — consumer-injected/DB-generated/compute-owned columns "
-            "cannot be source-owned",
+            "source-owned set (mapping-produced ∪ enrichment-produced) — consumer-injected/"
+            "DB-generated/compute-owned columns cannot be source-owned",
             model=model.__name__,
             column=off_universe[0],
         )

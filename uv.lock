@@ -14,6 +14,7 @@ members = [
     "dis-audit",
     "dis-canonical",
     "dis-core",
+    "dis-enrichment",
     "dis-mapping",
     "dis-pii",
     "dis-quarantine",
@@ -677,6 +678,21 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "python-json-logger", specifier = ">=2.0,<4.0" },
     { name = "uuid-utils", specifier = ">=0.9" },
+]
+
+[[package]]
+name = "dis-enrichment"
+version = "0.0.0"
+source = { editable = "libs/dis-enrichment" }
+dependencies = [
+    { name = "dis-core" },
+    { name = "polars" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dis-core", editable = "libs/dis-core" },
+    { name = "polars", specifier = ">=1.41,<2.0" },
 ]
 
 [[package]]
@@ -1699,6 +1715,7 @@ dev = [
     { name = "dis-audit" },
     { name = "dis-canonical" },
     { name = "dis-core" },
+    { name = "dis-enrichment" },
     { name = "dis-mapping" },
     { name = "dis-pii" },
     { name = "dis-quarantine" },
@@ -1759,6 +1776,7 @@ dev = [
     { name = "dis-audit", editable = "libs/dis-audit" },
     { name = "dis-canonical", editable = "libs/dis-canonical" },
     { name = "dis-core", editable = "libs/dis-core" },
+    { name = "dis-enrichment", editable = "libs/dis-enrichment" },
     { name = "dis-mapping", editable = "libs/dis-mapping" },
     { name = "dis-pii", editable = "libs/dis-pii" },
     { name = "dis-quarantine", editable = "libs/dis-quarantine" },

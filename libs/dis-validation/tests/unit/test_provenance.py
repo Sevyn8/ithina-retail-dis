@@ -44,7 +44,8 @@ MAPPING_FED_MODELS: list[type[BaseModel]] = [
 @pytest.mark.parametrize("model", MAPPING_FED_MODELS)
 def test_provenance_partitions_every_mapping_fed_model_exactly(model: type[BaseModel]) -> None:
     # Errors-not-skips: assert_no_drift raises on ANY mismatch; a clean pass means
-    # the four sets partition model_fields exactly, both directions.
+    # the FIVE sets partition model_fields exactly, both directions
+    # (enrichment_produced added in slice-5b, D95).
     assert_no_drift(model)
     provenance = PROVENANCE[model]
     union = (
@@ -52,6 +53,7 @@ def test_provenance_partitions_every_mapping_fed_model_exactly(model: type[BaseM
         | provenance.db_generated
         | provenance.compute_owned
         | provenance.mapping_produced
+        | provenance.enrichment_produced
     )
     assert union == frozenset(model.model_fields)
     total = (
@@ -59,6 +61,7 @@ def test_provenance_partitions_every_mapping_fed_model_exactly(model: type[BaseM
         + len(provenance.db_generated)
         + len(provenance.compute_owned)
         + len(provenance.mapping_produced)
+        + len(provenance.enrichment_produced)
     )
     assert total == len(model.model_fields)  # pairwise disjoint
 
@@ -90,9 +93,14 @@ def test_mapping_produced_counts_match_the_introspected_line() -> None:
 
 
 def test_store_denormalized_and_consumer_shortcut_columns_are_not_mapping_produced() -> None:
-    # The two adversarial-pass reclassifications, pinned by name so they cannot
-    # silently revert (evidence: live column comments, cited in provenance.py).
-    assert "tax_treatment" in PROVENANCE[StoreSkuCurrentPosition].consumer_injected
+    # The adversarial-pass reclassifications, pinned by name so they cannot silently
+    # revert (evidence: live column comments, cited in provenance.py). slice-5b (D98):
+    # tax_treatment on the HOT model migrated consumer_injected -> enrichment_produced
+    # (the lib writes it from the store, and it is canonical-shape-validated); the SALE
+    # model KEEPS it consumer_injected (event path out of scope) — the D98 asymmetry.
+    assert "tax_treatment" in PROVENANCE[StoreSkuCurrentPosition].enrichment_produced
+    assert "tax_treatment" not in PROVENANCE[StoreSkuCurrentPosition].consumer_injected
+    assert "tax_treatment" not in mapping_produced_columns(StoreSkuCurrentPosition)
     assert "tax_treatment" in PROVENANCE[StoreSkuSaleEvent].consumer_injected
     for column in ("numeric_value_before", "numeric_value_after", "numeric_change"):
         assert column in PROVENANCE[StoreSkuChangeEvent].consumer_injected

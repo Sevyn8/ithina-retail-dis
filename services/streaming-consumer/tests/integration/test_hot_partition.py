@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import text
 
+from dis_enrichment import CURRENT_POSITION, enrichment_fields
 from streaming_consumer.pipeline.mapping import (
     HOT_CHECK_IMPLICATIONS,
     HOT_REQUIRED_FROM_PROJECTION,
@@ -29,13 +30,18 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 # The consumer-injected side of the partition (the (a) set): id is minted;
-# identity + trace ride the envelope; tax_treatment is read from the store row;
-# mapping_version_id from the loaded mapping; dis_channel from the bronze row.
+# identity + trace ride the envelope; mapping_version_id from the loaded mapping;
+# dis_channel from the bronze row. slice-5b (D98): tax_treatment is NO LONGER here —
+# it migrated to enrichment-produced (see _ENRICHMENT_GUARANTEED below).
 _CONSUMER_INJECTED = frozenset(
-    {"id", "tenant_id", "store_id", "trace_id", "tax_treatment", "mapping_version_id", "dis_channel"}
+    {"id", "tenant_id", "store_id", "trace_id", "mapping_version_id", "dis_channel"}
 )
 # The natural key arrives via every routed mapping by construction.
 _NATURAL_KEY_UNIVERSAL = frozenset({"sku_id"})
+# slice-5b (D95): the enrichment-guaranteed fields (currency, tax_treatment) are
+# supplied by dis-enrichment, NOT the mapping projection — so they leave the
+# required-from-projection set. Registry-driven so this tracks the lib automatically.
+_ENRICHMENT_GUARANTEED = frozenset(enrichment_fields(CURRENT_POSITION))
 
 
 def test_required_from_projection_matches_live_not_null_set(dis_admin: Engine) -> None:
@@ -50,7 +56,7 @@ def test_required_from_projection_matches_live_not_null_set(dis_admin: Engine) -
                 )
             )
         }
-    derived_required = live_not_null - _CONSUMER_INJECTED - _NATURAL_KEY_UNIVERSAL
+    derived_required = live_not_null - _CONSUMER_INJECTED - _NATURAL_KEY_UNIVERSAL - _ENRICHMENT_GUARANTEED
     assert derived_required == HOT_REQUIRED_FROM_PROJECTION, (
         f"live-derived: {sorted(derived_required)} vs "
         f"code constant: {sorted(HOT_REQUIRED_FROM_PROJECTION)} — the classifier is stale"

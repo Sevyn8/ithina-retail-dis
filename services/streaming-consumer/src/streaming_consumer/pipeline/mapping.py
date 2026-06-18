@@ -32,7 +32,8 @@ scopes the lookup.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
 import polars as pl
 from pydantic import BaseModel, ValidationError
@@ -42,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import MappingConfigError, SuiteDefinitionError
 from dis_core.logging import LogContext
+from dis_enrichment import CURRENT_POSITION, apply_enrichment, enrichment_fields
 from dis_mapping import MappingResult, SourceMapping, apply_mapping
 from dis_rls import rls_session
 from dis_validation import SNAPSHOT, mapping_produced_columns
@@ -82,9 +84,14 @@ CHANGE_HOT_PROJECTION: dict[tuple[str, str], str] = {
 #   trace_id (envelope), tax_treatment (store row), mapping_version_id (the
 #   loaded mapping), dis_channel (bronze row); last_updated_at is DB-defaulted.
 # - sku_id arrives via the natural key on every routed mapping by construction.
-# - The discriminating NOT NULL columns that must come from the projection:
+# - The discriminating NOT NULL columns that must come from the MAPPING projection.
+#   currency LEFT this set in slice-5b (D95): it is now enrichment-guaranteed
+#   (dis-enrichment writes it on the current-position path), so it is no longer
+#   required FROM the mapping. tax_treatment was never here (consumer-injected, now
+#   enrichment-produced). guaranteed_hot_columns unions the enrichment fields back in,
+#   so completeness still counts them.
 HOT_REQUIRED_FROM_PROJECTION = frozenset(
-    {"product_name", "product_category", "current_retail_price", "unit_cost", "currency"}
+    {"product_name", "product_category", "current_retail_price", "unit_cost"}
 )
 # Presence-pairing CHECKs (shape-level; value-range CHECKs are runtime data):
 # projecting any column in the trigger set requires every column in the
@@ -125,7 +132,11 @@ def guaranteed_hot_columns(source: SourceMapping, target_model: type[BaseModel])
         # same-named hot column (no projection registry). The completeness gate then
         # checks HOT_REQUIRED_FROM_PROJECTION ⊆ this set — true for a valid snapshot,
         # whose mandatory set the create-time validator already enforced.
-        return frozenset(targets) & mapping_produced_columns(StoreSkuCurrentPosition)
+        # slice-5b (D95): the enrichment-guaranteed fields (currency, tax_treatment)
+        # are unconditionally supplied by dis-enrichment on this path, so they count
+        # toward completeness even when the mapping does not project them.
+        mapped = frozenset(targets) & mapping_produced_columns(StoreSkuCurrentPosition)
+        return mapped | frozenset(enrichment_fields(CURRENT_POSITION))
     if target_model is StoreSkuSaleEvent:
         return frozenset(SALE_HOT_PROJECTION[t] for t in targets if t in SALE_HOT_PROJECTION)
     category = _constant_derive(source, "event_category")
@@ -297,3 +308,28 @@ def apply_loaded_mapping(
         frame,
         log_context=LogContext(tenant_id=tenant_id, trace_id=trace_id),
     )
+
+
+def apply_loaded_enrichment(
+    facts: Mapping[str, object],
+    result: MappingResult,
+    *,
+    tenant_id: str,
+    trace_id: str,
+) -> MappingResult:
+    """Enrich the contribution from the handed-in internal-source facts (slice-5b; D94).
+
+    Wraps the pure ``apply_enrichment`` the way ``apply_loaded_mapping`` wraps
+    ``apply_mapping``: the consumer reads the store facts and hands them in. The
+    enriched contribution REPLACES ``result.contribution`` while reusing the original
+    ``source_row_indices`` and ``failures`` unchanged (column-wise mutation only — the
+    D94 row-alignment contract). The caller gates this to the current-position target;
+    the table token is CURRENT_POSITION (the only wired table this slice).
+    """
+    enriched = apply_enrichment(
+        result.contribution,
+        facts,
+        table=CURRENT_POSITION,
+        log_context=LogContext(tenant_id=tenant_id, trace_id=trace_id),
+    )
+    return replace(result, contribution=enriched.contribution)

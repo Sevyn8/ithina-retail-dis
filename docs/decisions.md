@@ -1375,3 +1375,51 @@ _require_subscription now runs against real GCP). Cross-refs D58.
 **Why deferred.** The lazy guard fires before any tenant data is touched and now covers BOTH session entry points (proven by `test_rls_platform_session_guard`); boot-time parity is a cross-service startup change with no isolation gain for this slice. *Trigger: a future cross-service startup-hardening pass, if boot-time refusal is wanted.*
 
 **Cross-refs.** D91 (the guard both entry points share). **Scope.** none (deferral record).
+
+### D94 Enrichment runs before post-validation (Option A) `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 5b). The placement of the new `libs/dis-enrichment` step in the streaming consumer.
+
+**The decision.** Enrichment is applied AFTER the mapping engine produces its contribution and BEFORE the canonical-shape (post) validation — between `apply_loaded_mapping` and `run_post_validation` in `orchestrate._process`, gated to `target_model is StoreSkuCurrentPosition`. So enriched values are validated by the canonical-shape suite AND participate in hot completeness. The long-term uniform invariant (every canonical value passes the same quality gate regardless of source) is chosen over the short-term simplicity of injecting after validation at the old `tax_treatment` point.
+
+**The mechanism.** A pure lib (`apply_enrichment`, frame-in/frame-out, no I/O — same purity contract + import-linter forbidden-modules contract + subprocess purity test as `dis-mapping`); the consumer reads the internal source (`read_store_facts`) and hands the facts in. `apply_loaded_enrichment` wraps it the way `apply_loaded_mapping` wraps `apply_mapping`, reusing the original `source_row_indices` (row-alignment contract).
+
+**Cross-refs.** D95 (output-wins + completeness), D98 (tax_treatment migration), D8/D63 (the provenance/completeness levers). **Scope.** `libs/dis-enrichment`, streaming-consumer `pipeline/{fetch,mapping,validate_post}.py`, `orchestrate.py`, `sinks/canonical.py`.
+
+### D95 Enrichment output wins; registered fields become lib-guaranteed `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 5b).
+
+**The decision.** For a registered field the lib's resolved value OVERRIDES any mapping-produced value (`with_columns` replaces the same-named column). `currency` becomes lib-guaranteed and LEAVES `HOT_REQUIRED_FROM_PROJECTION` (no longer required from the mapping); `guaranteed_hot_columns(current-position)` unions the registry's `enrichment_fields`, so completeness counts enrichment-guaranteed fields and a snapshot mapping that omits `currency` still classifies complete. The lib's contract is source-agnostic: it resolves from an authoritative internal source (`identity_mirror.stores` is the first source wired, not the lib's identity).
+
+**The mechanism.** A new fifth provenance partition `enrichment_produced` (`dis-validation.provenance`) and a relaxed canonical-shape drift guard (`owned ⊆ mapping_produced ∪ enrichment_produced`) — the guard STILL rejects consumer-injected / DB-generated / compute-owned columns (proven by the §8b guard-integrity tests, which bite RED against an accept-anything guard). `currency` stays `mapping_produced` (the lib overrides its value, not its origin); `tax_treatment` is `enrichment_produced`. The lib registry and the provenance partition are kept consistent by a cross-lib drift test.
+
+**Cross-refs.** D94, D98, D63 (completeness lever), D8 (provenance partition). **Scope.** `dis-validation` `provenance.py`/`canonical_shape.py`, `dis-enrichment` registry, streaming-consumer `pipeline/mapping.py`.
+
+### D96 Missing-internal-source-row precondition (generalized) `DEFERRED`
+
+**Status.** `DEFERRED` (Slice 5b). Largely existing behaviour, generalized to the enrichment layer.
+
+**The decision.** Ingestion fails when the internal source row is absent. Today the composite store FK (D39) and the `read_store_facts` read (raises `EventContractError` on a missing store) already enforce it; this entry ratifies and generalizes the precondition to all enrichment. *Trigger: enrichment extends beyond the store, or the precondition is formalized in the lib's contract.* Not built this slice (the existing behaviour stands).
+
+**Cross-refs.** D39 (the FK), D95. **Scope.** none built (record + the existing `read_store_facts` behaviour).
+
+### D97 Field-blank-on-an-existing-source loud-fail guard `DEFERRED`
+
+**Status.** `DEFERRED` (Slice 5b). New guard, not built.
+
+**The decision.** If a registered enrichment field is unexpectedly blank (`None`/empty) on an EXISTING internal source row, fail loud and early rather than write a silent NULL. This slice relies on the current NOT-NULL-on-source reality (`identity_mirror.stores.currency`/`tax_treatment` are NOT NULL) and writes a present-but-blank value THROUGH as-handed-in (the boundary: a MISSING registered field is a caller-contract `EnrichmentError` now; a present-but-blank value is D97 later). *Trigger: a registered field whose source column is nullable, or a hardening pass.*
+
+**Build together with an `ENRICHED` audit stage.** When D97 is built, also add a `Stage.ENRICHED` audit stage and its migration (widen the live `audit.events` stage CHECK vocab + the BQ `stage` description; fresh==migrated) — one change delivering BOTH the enrichment failure disposition (the loud-fail outcome) AND the enrichment provenance breadcrumb. Enrichment emits no audit stage by design this slice (the trail goes `MAPPING_EXECUTED → POST_MAPPING_VALIDATED`).
+
+**Cross-refs.** D95 (the output-wins write), the `apply_enrichment` missing-vs-blank boundary. **Scope.** none built (record).
+
+### D98 tax_treatment migrates to the lib on the current-position path `RESOLVED`
+
+**Status.** `RESOLVED` (Slice 5b).
+
+**The decision.** Under D94, `tax_treatment` moves from its hardcoded consumer injection into the enrichment lib on the current-position path and BECOMES canonical-shape-validated (the `TaxTreatment` enum vocab `{INCLUSIVE, EXCLUSIVE}`) — a deliberate behaviour change from today's unvalidated injection. It is reclassified `consumer_injected → enrichment_produced` for `StoreSkuCurrentPosition` ONLY; on the catalogue write it flows via the projection (no fixed-param injection there), with the INSERT listing it exactly once.
+
+**Event-path status + duplication.** The event models (`StoreSkuSaleEvent`/`StoreSkuChangeEvent`) KEEP `tax_treatment` `consumer_injected` and the event path keeps its fixed-param injection — the deliberate asymmetry (event paths are out of this slice). A temporary duplication therefore exists: `tax_treatment` is lib-resolved on the current-position path and hardcode-injected on the event path. *Removal trigger: when enrichment extends to the event/history tables.*
+
+**Cross-refs.** D94, D95, D39. **Scope.** `dis-validation.provenance` (hot-model reclassification), streaming-consumer `sinks/canonical.py` (catalogue INSERT), `pipeline/validate_post.py` (owned-columns widening).

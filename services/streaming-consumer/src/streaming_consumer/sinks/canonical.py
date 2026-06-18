@@ -58,6 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import HotPositionMissingError
 from dis_core.ids import new_uuid7
+from dis_enrichment import CURRENT_POSITION, enrichment_fields
 from dis_mapping import MappingResult
 from dis_rls import rls_session
 from dis_validation import mapping_produced_columns
@@ -280,9 +281,14 @@ def _hot_params(
     group: _HotGroup,
     *,
     dis_channel: str,
-    tax_treatment: str | None,
+    tax_treatment: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Shared bind params for both hot paths; returns (params, projected)."""
+    """Shared bind params for both hot paths; returns (params, projected).
+
+    ``tax_treatment`` is the EVENT-path fixed injection (consumer-injected there).
+    On the catalogue path it is enrichment-produced and arrives via ``projected``
+    (slice-5b, D98) — ``**projected`` overrides this default — so the catalogue caller
+    passes nothing; the event path still passes it explicitly."""
     sku_id, sku_variant, sku_lot_batch = group.natural_key
     projected = dict(group.projected)
     params: dict[str, Any] = {
@@ -379,7 +385,11 @@ async def _insert_on_conflict_hot_complete_path(
         "sku_variant",
         "sku_lot_batch",
         *projected.keys(),
-        "tax_treatment",
+        # tax_treatment exactly once (slice-5b): on the catalogue path it is
+        # enrichment-produced and ALREADY in projected; on the (event-driven) complete
+        # path it is the fixed store-injected param and NOT in projected. Listing it
+        # unconditionally alongside projected would duplicate the column.
+        *(() if "tax_treatment" in projected else ("tax_treatment",)),
         "last_source_event_at",
         "mapping_version_id",
         "trace_id",
@@ -453,7 +463,12 @@ def _catalogue_groups(event: IngressReadyEvent, result: MappingResult) -> list[_
     the catalogue file has no per-row timestamp and last_source_event_at is
     consumer-injected). It is upload-time, not capture-time; nothing arbitrates on
     it in this slice (bootstrap-only) — the collision slice's inherited limit."""
-    produced = mapping_produced_columns(StoreSkuCurrentPosition)
+    # slice-5b: include the enrichment-produced fields (tax_treatment) so the lib's
+    # values reach the hot row via ``projected`` (currency is already mapping-produced;
+    # the lib overwrote its value in the contribution upstream).
+    produced = mapping_produced_columns(StoreSkuCurrentPosition) | frozenset(
+        enrichment_fields(CURRENT_POSITION)
+    )
     staleness_cols = catalogue_staleness_columns()
     received_iso = event.received_ts.isoformat()
     groups: list[_HotGroup] = []
@@ -490,24 +505,23 @@ async def write_catalogue_chunk(
     result: MappingResult,
     *,
     dis_channel: str,
-    tax_treatment: str | None,
     batch_size: int,
 ) -> WriteReport:
     """Catalogue bootstrap-CREATE: the complete-path hot upsert per ≤batch group.
 
     No event-table insert, no dedup. Groups are upserted in the same sorted
     natural-key order as write_chunk (deadlock avoidance), each inside the batch's
-    rls_session transaction. ``tax_treatment`` is store-injected by the caller
-    (consumer-injected, the file-vs-store asymmetry with file-supplied currency)."""
+    rls_session transaction. ``tax_treatment`` AND ``currency`` are enrichment-produced
+    (slice-5b, D95/D98): dis-enrichment wrote them into ``result.contribution`` before
+    this sink ran, so they arrive via ``projected`` — there is no fixed-param injection
+    on this path anymore."""
     groups = _catalogue_groups(event, result)
     batches = [groups[i : i + batch_size] for i in range(0, len(groups), batch_size)]
     hot_written = 0
     for batch in batches:
         async with rls_session(engine, event.tenant_id) as conn:
             for group in sorted(batch, key=hot_sort_key):
-                params, projected = _hot_params(
-                    event, loaded, group, dis_channel=dis_channel, tax_treatment=tax_treatment
-                )
+                params, projected = _hot_params(event, loaded, group, dis_channel=dis_channel)
                 await _insert_on_conflict_hot_complete_path(conn, params, projected)
                 hot_written += 1
     return WriteReport(

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import polars as pl
 
+from dis_canonical import StoreSkuCurrentPosition
 from dis_core.logging import LogContext
+from dis_enrichment import CURRENT_POSITION, enrichment_fields
 from dis_validation import (
     CanonicalShapeResult,
     CanonicalShapeSuiteDef,
@@ -38,9 +40,16 @@ def run_post_validation(
 ) -> CanonicalShapeResult:
     """Judge the mapped contribution against the routed model's owned columns."""
     assert_no_drift(loaded.target_model)  # ERRORS, never skips (slice-05 criterion 6)
+    owned = loaded.source.target_columns
+    if loaded.target_model is StoreSkuCurrentPosition:
+        # slice-5b (D94/D98): enrichment writes its registered fields into the
+        # contribution before this gate, so they must be in the owned set or strict
+        # validation rejects them as off-universe. The provenance enrichment_produced
+        # partition is what lets the suite drift guard admit them as source-owned.
+        owned = tuple(dict.fromkeys((*owned, *enrichment_fields(CURRENT_POSITION))))
     suite = CanonicalShapeSuiteDef(
         target_model=loaded.target_model,
-        owned_columns=loaded.source.target_columns,
+        owned_columns=owned,
     )
     return run_canonical_shape(
         suite,

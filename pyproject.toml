@@ -83,6 +83,7 @@ dev = [
   "dis-storage",
   "dis-audit",
   "dis-quarantine",
+  "dis-enrichment",
   "dis-mapping",
   "dis-validation",
   "mirror-sync-consumer",
@@ -114,6 +115,7 @@ known-first-party = [
   "dis_testing",
   "dis_audit",
   "dis_canonical",
+  "dis_enrichment",
   "dis_mapping",
   "dis_quarantine",
   "dis_pii",
@@ -163,7 +165,7 @@ markers = [
 # alone cannot prove the absence of runtime I/O — that is additionally held by
 # the no-I/O contract test (tests/contract/) plus review.
 [tool.importlinter]
-root_packages = ["dis_mapping", "dis_validation"]
+root_packages = ["dis_enrichment", "dis_mapping", "dis_validation"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -171,6 +173,7 @@ name = "dis-mapping is pure: no sibling pipeline lib, no I/O-bearing lib, no DB/
 type = "forbidden"
 source_modules = ["dis_mapping"]
 forbidden_modules = [
+  "dis_enrichment",
   "dis_validation",
   "dis_canonical",
   "dis_rls",
@@ -191,7 +194,29 @@ name = "dis-validation is pure: no sibling pipeline lib, no I/O-bearing lib, no 
 type = "forbidden"
 source_modules = ["dis_validation"]
 forbidden_modules = [
+  "dis_enrichment",
   "dis_mapping",
+  "dis_rls",
+  "dis_pii",
+  "dis_storage",
+  "dis_audit",
+  "dis_quarantine",
+  "dis_testing",
+  "sqlalchemy",
+  "psycopg",
+  "google",
+  "httpx",
+  "redis",
+]
+
+[[tool.importlinter.contracts]]
+name = "dis-enrichment is pure: no sibling pipeline lib, no I/O-bearing lib, no DB/GCP client"
+type = "forbidden"
+source_modules = ["dis_enrichment"]
+forbidden_modules = [
+  "dis_mapping",
+  "dis_validation",
+  "dis_canonical",
   "dis_rls",
   "dis_pii",
   "dis_storage",
@@ -221,6 +246,7 @@ members = [
   "libs/dis-storage",
   "libs/dis-audit",
   "libs/dis-quarantine",
+  "libs/dis-enrichment",
   "libs/dis-mapping",
   "libs/dis-validation",
   "services/mirror-sync-consumer",
@@ -241,6 +267,7 @@ dis-pii = { workspace = true }
 dis-storage = { workspace = true }
 dis-audit = { workspace = true }
 dis-quarantine = { workspace = true }
+dis-enrichment = { workspace = true }
 dis-mapping = { workspace = true }
 dis-validation = { workspace = true }
 mirror-sync-consumer = { workspace = true }
