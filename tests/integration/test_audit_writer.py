@@ -155,32 +155,45 @@ async def test_event_scope_vocab_matches_live_check(engine: AsyncEngine) -> None
     assert {s.value for s in EventScope} == live
 
 
+async def _cleanup_audit_trace(engine: AsyncEngine, tenant_id: str, trace_id: str) -> None:
+    """Revert the audit.events rows a test inserted (the test_quarantine_writer idiom).
+    audit.events is FORCE RLS; the tenant GUC scopes the DELETE. A test that mutates the
+    shared live DB restores it (D100)."""
+    async with engine.connect() as conn:
+        async with conn.begin():
+            await conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_id})
+            await conn.execute(text("DELETE FROM audit.events WHERE trace_id = :tr"), {"tr": trace_id})
+
+
 # ---- AC3: the writer lands a row; verified by independent read-back ----------------------
 async def test_writer_lands_audit_event(engine: AsyncEngine) -> None:
     trace_id = new_uuid7()
-    event = AuditEvent(
-        event_timestamp=now_utc(),
-        trace_id=trace_id,
-        tenant_id=fx.TENANTS[0].uuid,
-        service_name="streaming-consumer",
-        stage=Stage.CANONICAL_WRITTEN,
-        event_scope=EventScope.INGRESS_EVENT,
-        outcome=Outcome.SUCCESS,
-        row_count=5,
-        event_data={"written_to_table": "store_sku_sale_events"},
-    )
-    assert await PostgresAuditWriter(engine).write(event) is True
+    try:
+        event = AuditEvent(
+            event_timestamp=now_utc(),
+            trace_id=trace_id,
+            tenant_id=fx.TENANTS[0].uuid,
+            service_name="streaming-consumer",
+            stage=Stage.CANONICAL_WRITTEN,
+            event_scope=EventScope.INGRESS_EVENT,
+            outcome=Outcome.SUCCESS,
+            row_count=5,
+            event_data={"written_to_table": "store_sku_sale_events"},
+        )
+        assert await PostgresAuditWriter(engine).write(event) is True
 
-    row = await _read_row_by_trace(engine, _TENANT, str(trace_id))
-    assert row is not None, "audit row was not landed"
-    assert row["tenant_id"] == _TENANT
-    assert row["stage"] == "CANONICAL_WRITTEN"
-    assert row["event_scope"] == "INGRESS_EVENT"
-    assert row["outcome"] == "SUCCESS"
-    assert row["row_count"] == 5
-    assert row["event_date"] == event.event_date.isoformat()  # type: ignore[union-attr]
-    # event_data survives the JSON-string -> JSONB -> dict round-trip through the real DB.
-    assert row["event_data"] == {"written_to_table": "store_sku_sale_events"}
+        row = await _read_row_by_trace(engine, _TENANT, str(trace_id))
+        assert row is not None, "audit row was not landed"
+        assert row["tenant_id"] == _TENANT
+        assert row["stage"] == "CANONICAL_WRITTEN"
+        assert row["event_scope"] == "INGRESS_EVENT"
+        assert row["outcome"] == "SUCCESS"
+        assert row["row_count"] == 5
+        assert row["event_date"] == event.event_date.isoformat()  # type: ignore[union-attr]
+        # event_data survives the JSON-string -> JSONB -> dict round-trip through the real DB.
+        assert row["event_data"] == {"written_to_table": "store_sku_sale_events"}
+    finally:
+        await _cleanup_audit_trace(engine, _TENANT, str(trace_id))
 
 
 # ---- AC3 (boundary): event_date derived across the UTC date line passes the live CHECK ----
@@ -190,19 +203,22 @@ async def test_writer_lands_event_crossing_utc_date_boundary(engine: AsyncEngine
     # accept the model's UTC-derived date on a REAL insert (plain table since Slice 30a; any date lands).
     ist = timezone(timedelta(hours=5, minutes=30))
     trace_id = new_uuid7()
-    event = AuditEvent(
-        event_timestamp=datetime(2026, 6, 4, 1, 30, tzinfo=ist),
-        trace_id=trace_id,
-        tenant_id=fx.TENANTS[0].uuid,
-        service_name="streaming-consumer",
-        stage=Stage.MAPPING_EXECUTED,
-        event_scope=EventScope.INGRESS_EVENT,
-        outcome=Outcome.SUCCESS,
-    )
-    assert event.event_date is not None and event.event_date.isoformat() == "2026-06-03"
-    assert await PostgresAuditWriter(engine).write(event) is True, "live CHECK rejected the UTC date"
-    row = await _read_row_by_trace(engine, _TENANT, str(trace_id))
-    assert row is not None and row["event_date"] == "2026-06-03"
+    try:
+        event = AuditEvent(
+            event_timestamp=datetime(2026, 6, 4, 1, 30, tzinfo=ist),
+            trace_id=trace_id,
+            tenant_id=fx.TENANTS[0].uuid,
+            service_name="streaming-consumer",
+            stage=Stage.MAPPING_EXECUTED,
+            event_scope=EventScope.INGRESS_EVENT,
+            outcome=Outcome.SUCCESS,
+        )
+        assert event.event_date is not None and event.event_date.isoformat() == "2026-06-03"
+        assert await PostgresAuditWriter(engine).write(event) is True, "live CHECK rejected the UTC date"
+        row = await _read_row_by_trace(engine, _TENANT, str(trace_id))
+        assert row is not None and row["event_date"] == "2026-06-03"
+    finally:
+        await _cleanup_audit_trace(engine, _TENANT, str(trace_id))
 
 
 # ---- AC4: fire-and-forget proven against a REAL failing backend (non-vacuous) -----------

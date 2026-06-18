@@ -133,36 +133,44 @@ async def test_tenant_isolation_is_symmetric(engine: AsyncEngine) -> None:
     id_a = str(new_uuid7())
     id_b = str(new_uuid7())
 
-    # Write one row per tenant THROUGH the helper (tenant-scoped writes).
-    async with rls_session(engine, _TENANT_A) as conn:
-        await conn.execute(
-            _INSERT,
-            {
-                "id": id_a,
-                "tid": _TENANT_A,
-                "source_id": "manual_csv_upload",
-                "trace_id": str(new_uuid7()),
-                "gcs_uri": "gs://test/a",
-            },
-        )
-    async with rls_session(engine, _TENANT_B) as conn:
-        await conn.execute(
-            _INSERT,
-            {
-                "id": id_b,
-                "tid": _TENANT_B,
-                "source_id": "manual_csv_upload",
-                "trace_id": str(new_uuid7()),
-                "gcs_uri": "gs://test/b",
-            },
-        )
+    try:
+        # Write one row per tenant THROUGH the helper (tenant-scoped writes).
+        async with rls_session(engine, _TENANT_A) as conn:
+            await conn.execute(
+                _INSERT,
+                {
+                    "id": id_a,
+                    "tid": _TENANT_A,
+                    "source_id": "manual_csv_upload",
+                    "trace_id": str(new_uuid7()),
+                    "gcs_uri": "gs://test/a",
+                },
+            )
+        async with rls_session(engine, _TENANT_B) as conn:
+            await conn.execute(
+                _INSERT,
+                {
+                    "id": id_b,
+                    "tid": _TENANT_B,
+                    "source_id": "manual_csv_upload",
+                    "trace_id": str(new_uuid7()),
+                    "gcs_uri": "gs://test/b",
+                },
+            )
 
-    # Symmetric exact-content check via independent raw reads.
-    a_visible = await _visible_ids(engine, _TENANT_A)
-    b_visible = await _visible_ids(engine, _TENANT_B)
+        # Symmetric exact-content check via independent raw reads.
+        a_visible = await _visible_ids(engine, _TENANT_A)
+        b_visible = await _visible_ids(engine, _TENANT_B)
 
-    assert id_a in a_visible and id_b not in a_visible, "tenant A leaked B's row (or lost its own)"
-    assert id_b in b_visible and id_a not in b_visible, "tenant B leaked A's row (or lost its own)"
+        assert id_a in a_visible and id_b not in a_visible, "tenant A leaked B's row (or lost its own)"
+        assert id_b in b_visible and id_a not in b_visible, "tenant B leaked A's row (or lost its own)"
+    finally:
+        # A test that mutates the shared live DB restores it (D100): delete both bronze rows,
+        # each scoped to its tenant (bronze is FORCE RLS).
+        async with rls_session(engine, _TENANT_A) as conn:
+            await conn.execute(text("DELETE FROM bronze.data_ingress_events WHERE id = :id"), {"id": id_a})
+        async with rls_session(engine, _TENANT_B) as conn:
+            await conn.execute(text("DELETE FROM bronze.data_ingress_events WHERE id = :id"), {"id": id_b})
 
 
 async def test_no_tenant_context_reads_zero_rows(engine: AsyncEngine) -> None:

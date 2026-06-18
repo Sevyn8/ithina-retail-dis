@@ -87,6 +87,14 @@ def _dis_identity_synced() -> None:
     sync_identity_mirror(admin_url, user_url)
 
 
+# NOTE (D100): a suite-level post-suite clean-state assertion was prototyped here and REMOVED —
+# it false-positives because the resident workers (started by run_dis_on_local) consume
+# test-published Pub/Sub messages on shared subscriptions and write bronze/audit/quarantine rows
+# under real trace_ids after the publishing test's teardown (rows no test owns). Enforcement is
+# deferred until tests and residents are isolated (see decisions.md D100). The standing rule
+# stands: a test that mutates the shared DB reverts its own writes (the cleanup idiom).
+
+
 @pytest.fixture(scope="session")
 def seeded_identity(dis_engine: Engine, dis_postgres_url: str) -> Engine:
     """Sync identity_mirror (mirror-sync owns it) then seed the default mapping.
