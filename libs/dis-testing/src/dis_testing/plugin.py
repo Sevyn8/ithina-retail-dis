@@ -87,18 +87,14 @@ def _dis_identity_synced() -> None:
     sync_identity_mirror(admin_url, user_url)
 
 
-# NOTE (D100): a suite-level post-suite clean-state assertion was prototyped here and REMOVED —
-# it false-positived because resident workers (started by run_dis_on_local) consumed
-# test-published Pub/Sub messages on shared subscriptions and wrote bronze/audit/quarantine rows
-# under real trace_ids after the publishing test's teardown (rows no test owns).
-#
-# That PRECONDITION is now satisfied by the structural-isolation change: integration tests run on
-# a SEPARATE emulator project (TEST_PUBSUB_PROJECT_ID / pubsub_test_project — see pytest_configure
-# below and the _dis_pubsub_provisioned fixture), while residents stay on local-dis, so a resident
-# subscription can no longer receive a test-published message by construction. The guard itself is
-# DELIBERATELY still removed: re-enabling it is a distinct follow-up with its own baseline-definition
-# risk (the idempotent seed + identity_mirror rows are legitimate residue, not contamination). The
-# standing rule stands: a test that mutates the shared DB reverts its own writes (the cleanup idiom).
+# D100 post-suite clean-state guard: the prototype assertion was removed when resident workers
+# could write rows no test owned (shared Pub/Sub subscriptions); the emulator-project isolation
+# below (pytest_configure + _dis_pubsub_provisioned) closed that. The guard is RE-ENABLED below as
+# ``pytest_sessionfinish`` — see ``_assert_clean_shared_db_after_suite`` and decisions.md D100.
+# ``identity_mirror`` is EXCLUDED from the guard: the resident mirror-sync co-populates it from the
+# REAL Customer Master (a variable, non-test baseline — 7 tenants / 25 stores locally), so it has
+# no test-vs-baseline discriminator. The standing rule holds: a test that mutates the shared DB
+# reverts its own writes (the cleanup idiom); the guard asserts that END state.
 
 
 def pytest_configure() -> None:
@@ -138,6 +134,143 @@ def _dis_pubsub_provisioned() -> None:
     from dis_testing.pubsub import TEST_PUBSUB_PROJECT_ID
 
     provision_pubsub(TEST_PUBSUB_PROJECT_ID)
+
+
+# ---------------------------------------------------------------------------
+# D100 post-suite clean-state guard
+# ---------------------------------------------------------------------------
+# Tables whose post-suite baseline is EMPTY on a freshly-reset stack: any row is
+# residue. All carry ``trace_id`` NOT NULL — the per-ingress discriminator the guard
+# reports so a failure names the leaking flow. ``signal_history`` is daily-compute
+# output with no cleanup fixture (D31/D32); it is intentionally in this set, so the
+# guard fires if a future compute-path test ever writes it unreverted. The four
+# ``staging.*`` tables mirror ``canonical.*`` (migration 0009) and are test-writable
+# (the 0009 de-partition tests write ``staging.store_sku_change_events``); they carry
+# ``trace_id`` too, so the same COUNT==0 + trace_id check covers them verbatim.
+_D100_EMPTY_TABLES: tuple[str, ...] = (
+    "audit.events",
+    "bronze.data_ingress_events",
+    "canonical.store_sku_current_position",
+    "canonical.store_sku_sale_events",
+    "canonical.store_sku_change_events",
+    "canonical.store_sku_signal_history",
+    "staging.store_sku_current_position",
+    "staging.store_sku_sale_events",
+    "staging.store_sku_change_events",
+    "staging.store_sku_signal_history",
+    "quarantine.quarantined_chunks",
+    "quarantine.quarantined_rows",
+)
+
+
+class SuiteResidueError(AssertionError):
+    """A test left residue in the shared dev DB (D100 post-suite clean-state guard)."""
+
+
+def _assert_clean_shared_db_after_suite(admin_url: str) -> None:
+    """Fail loud if the test SUITE left residue in the shared DB (D100, post-suite).
+
+    Contract: this asserts the SUITE leaves no residue *starting from a clean reset*
+    (``make reset-local`` -> ``make run-local`` -> ``make test``). It does NOT police
+    accumulated operator/resident artifacts on a long-lived un-reset box (pipeline-check
+    scripts, manual pipeline runs) — those are not test residue and a reset clears them.
+
+    Reads via the ADMIN engine (``POSTGRES_ADMIN_URL``, role ``ithina_dis_admin`` =
+    superuser), which bypasses FORCE RLS so the guard sees true state across all tenants
+    — a NOBYPASSRLS session would read RLS-empty and pass FALSELY. The seeded-mapping
+    baseline comes from the SAME fixture constants the seeder uses
+    (``fx.DEFAULT_SOURCE_MAPPING``) so guard and seed cannot drift; the mapping is matched
+    by (tenant, source, template), NEVER by ``mapping_version_id`` (an unstable BIGSERIAL).
+
+    ``identity_mirror`` is intentionally NOT checked: the resident mirror-sync co-populates
+    it from the real Customer Master (a variable, non-test baseline — 7 tenants / 25 stores
+    locally), so it has no test-vs-baseline discriminator; test edge-stores are reverted by
+    their own teardowns. Raises :class:`SuiteResidueError` naming every leaker.
+    """
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    from dis_testing import fixtures as fx
+
+    url = make_url(admin_url)
+    # Target safety (mirrors the dis_admin fixture in the service conftests): only ever
+    # read the local DIS dev DB, never a real database.
+    assert url.database == "ithina_dis_db", f"D100 guard: refusing DB {url.database!r}"
+    assert url.port == 5433, f"D100 guard: refusing port {url.port!r}"
+
+    findings: list[str] = []
+    engine = create_engine(admin_url)
+    try:
+        with engine.connect() as conn:
+            # 1. Empty-baseline tables: any row is residue; report trace_ids.
+            for table in _D100_EMPTY_TABLES:
+                total = conn.execute(text(f"SELECT count(*) FROM {table}")).scalar_one()
+                if not total:
+                    continue
+                traces = conn.execute(text(f"SELECT trace_id FROM {table} LIMIT 20")).fetchall()
+                shown = ", ".join(str(row[0]) for row in traces)
+                more = "" if total <= len(traces) else f" (+{total - len(traces)} more)"
+                findings.append(f"{table}: {total} residue row(s); trace_ids=[{shown}]{more}")
+
+            # 2. config.source_mappings: a baseline-COMPLETENESS check — the table must
+            #    contain EXACTLY the seeded baseline and nothing else. Baseline triples are
+            #    derived from the seeder's fixture constant (fx.DEFAULT_SOURCE_MAPPING; one
+            #    row today) so the check tracks the seed if it grows. Matched by
+            #    (tenant, source, template), NEVER mapping_version_id. This is a count-per-
+            #    triple test, not row-membership: a SECOND row sharing a baseline triple
+            #    (extra version_seq / duplicate ACTIVE / DEPRECATED prior) is residue too.
+            seeded = fx.DEFAULT_SOURCE_MAPPING
+            baseline_triples = {
+                (
+                    str(fx.tenant_uuid_for(str(seeded["tenant_display_code"]))),
+                    str(seeded["source_id"]),
+                    str(seeded["template_id"]),
+                )
+            }
+            counts: dict[tuple[str, str, str], int] = {}
+            problems: list[str] = []
+            for row in conn.execute(
+                text("SELECT tenant_id::text, source_id, template_id::text FROM config.source_mappings")
+            ).fetchall():
+                triple = (str(row[0]), str(row[1]), str(row[2]))
+                if triple in baseline_triples:
+                    counts[triple] = counts.get(triple, 0) + 1
+                else:
+                    problems.append(f"source_id={row[1]!r}(tenant {row[0]}) [non-baseline]")
+            for triple, count in counts.items():
+                if count > 1:
+                    problems.append(
+                        f"source_id={triple[1]!r}(tenant {triple[0]}) "
+                        f"[{count} rows share one baseline triple]"
+                    )
+            if problems:
+                findings.append(f"config.source_mappings: {len(problems)} issue(s); " + ", ".join(problems))
+    finally:
+        engine.dispose()
+
+    if findings:
+        report = (
+            "D100 post-suite clean-state guard FAILED — the test suite left residue in the shared "
+            "DB (a test that mutates the shared DB must revert its own writes):\n  " + "\n  ".join(findings)
+        )
+        print(f"\n{report}", flush=True)  # noqa: T201 — surface the report above the raise
+        raise SuiteResidueError(report)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """After the whole suite (post-teardown), assert the suite left no shared-DB residue (D100).
+
+    Gated on ``PUBSUB_EMULATOR_HOST`` (the isolation gate): a bare ``pytest`` with no stack
+    never fires it. Returns silently if ``POSTGRES_ADMIN_URL`` is absent (the stack is not
+    fully configured). Runs at session finish, so every per-test cleanup has already executed
+    — the guard asserts that END state.
+    """
+    if not os.environ.get("PUBSUB_EMULATOR_HOST"):
+        return
+    admin_url = os.environ.get("POSTGRES_ADMIN_URL")
+    if not admin_url:
+        return
+    _assert_clean_shared_db_after_suite(admin_url)
 
 
 @pytest.fixture(scope="session")

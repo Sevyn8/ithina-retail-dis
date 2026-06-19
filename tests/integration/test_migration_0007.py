@@ -367,6 +367,16 @@ async def _read_back(engine: AsyncEngine, tenant_id: str, trace_id: str) -> dict
     return dict(row) if row is not None else None
 
 
+def _delete_audit_trace(admin_engine: Engine, trace_id: str) -> None:
+    """Revert a directly-written audit row (admin bypasses FORCE RLS).
+
+    These cliff-gone proofs write real ``audit.events`` rows; without this they would
+    leak past the suite and the D100 post-suite clean-state guard would (correctly) fail.
+    """
+    with admin_engine.begin() as conn:
+        conn.execute(text("DELETE FROM audit.events WHERE trace_id = :tr"), {"tr": trace_id})
+
+
 @pytest.mark.parametrize(
     ("timestamp", "expected_date"),
     [
@@ -378,7 +388,7 @@ async def _read_back(engine: AsyncEngine, tenant_id: str, trace_id: str) -> dict
     ],
 )
 async def test_write_outside_old_partition_window_lands(
-    app_engine: AsyncEngine, timestamp: datetime, expected_date: str
+    app_engine: AsyncEngine, admin_engine: Engine, timestamp: datetime, expected_date: str
 ) -> None:
     tenant = fx.TENANTS[0].uuid
     trace_id = new_uuid7()
@@ -391,12 +401,15 @@ async def test_write_outside_old_partition_window_lands(
         event_scope=EventScope.INGRESS_EVENT,
         outcome=Outcome.SUCCESS,
     )
-    assert await PostgresAuditWriter(app_engine).write(event) is True, (
-        f"audit write dated {expected_date} (outside the old 2026-06-01..07 window) "
-        "failed — the D45 silent write-cliff is not gone"
-    )
-    row = await _read_back(app_engine, str(tenant), str(trace_id))
-    assert row is not None and row["event_date"] == expected_date
+    try:
+        assert await PostgresAuditWriter(app_engine).write(event) is True, (
+            f"audit write dated {expected_date} (outside the old 2026-06-01..07 window) "
+            "failed — the D45 silent write-cliff is not gone"
+        )
+        row = await _read_back(app_engine, str(tenant), str(trace_id))
+        assert row is not None and row["event_date"] == expected_date
+    finally:
+        _delete_audit_trace(admin_engine, str(trace_id))
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +417,7 @@ async def test_write_outside_old_partition_window_lands(
 # ---------------------------------------------------------------------------
 
 
-async def test_rls_isolation_survives_departition(app_engine: AsyncEngine) -> None:
+async def test_rls_isolation_survives_departition(app_engine: AsyncEngine, admin_engine: Engine) -> None:
     tenant_a, tenant_b = fx.TENANTS[0].uuid, fx.TENANTS[1].uuid
     trace_id = new_uuid7()
     event = AuditEvent(
@@ -416,14 +429,17 @@ async def test_rls_isolation_survives_departition(app_engine: AsyncEngine) -> No
         event_scope=EventScope.INGRESS_EVENT,
         outcome=Outcome.SUCCESS,
     )
-    assert await PostgresAuditWriter(app_engine).write(event) is True
+    try:
+        assert await PostgresAuditWriter(app_engine).write(event) is True
 
-    # Tenant B must NOT see tenant A's audit row; tenant A must.
-    assert await _read_back(app_engine, str(tenant_b), str(trace_id)) is None, (
-        "RLS isolation broke through the de-partition: tenant B can read tenant A's audit row"
-    )
-    visible = await _read_back(app_engine, str(tenant_a), str(trace_id))
-    assert visible is not None and visible["tenant_id"] == str(tenant_a)
+        # Tenant B must NOT see tenant A's audit row; tenant A must.
+        assert await _read_back(app_engine, str(tenant_b), str(trace_id)) is None, (
+            "RLS isolation broke through the de-partition: tenant B can read tenant A's audit row"
+        )
+        visible = await _read_back(app_engine, str(tenant_a), str(trace_id))
+        assert visible is not None and visible["tenant_id"] == str(tenant_a)
+    finally:
+        _delete_audit_trace(admin_engine, str(trace_id))
 
 
 # ---------------------------------------------------------------------------

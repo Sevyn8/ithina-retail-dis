@@ -143,7 +143,7 @@ def admin_engine_session(stack_env: dict[str, str]) -> Iterator[Engine]:
 
 
 @pytest.fixture(scope="session")
-def consumer_mappings(admin_engine_session: Engine, seeded: None) -> dict[str, int]:
+def consumer_mappings(admin_engine_session: Engine, seeded: None) -> Iterator[dict[str, int]]:
     """Seed the consumer-test ACTIVE mappings; returns source_id -> version id.
 
     Test-only upsert by the (tenant, source, seq) natural key so a rules edit in
@@ -191,7 +191,17 @@ def consumer_mappings(admin_engine_session: Engine, seeded: None) -> dict[str, i
             ).first()
             assert row is not None
             versions[source_id] = int(row.mapping_version_id)
-    return versions
+    try:
+        yield versions
+    finally:
+        # Revert the seeded consumer-test mappings at session end so the suite leaves
+        # config.source_mappings at its reset baseline — the D100 post-suite clean-state
+        # guard asserts no non-baseline mapping survives. Admin engine bypasses RLS.
+        with admin_engine_session.begin() as conn:
+            conn.execute(
+                text("DELETE FROM config.source_mappings WHERE source_id = ANY(:sids)"),
+                {"sids": list(_MAPPING_FILES)},
+            )
 
 
 @pytest.fixture
