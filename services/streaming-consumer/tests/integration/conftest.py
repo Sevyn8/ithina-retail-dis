@@ -63,12 +63,16 @@ SALE_SOURCE_ID = "sc_pos_v1"
 CHANGE_SOURCE_ID = "sc_inv_v1"
 BAD_SUBTYPE_SOURCE_ID = "sc_pos_badsub_v1"
 CATALOGUE_SOURCE_ID = "sc_cat_v1"
+# A snapshot that maps NEITHER product_category NOR unit_cost (Slice 16j): both are
+# nullable now, so this still classifies COMPLETE and lands a hot row with both NULL.
+CATALOGUE_MINIMAL_SOURCE_ID = "sc_cat_min_v1"
 
 _MAPPING_FILES = {
     SALE_SOURCE_ID: "sale_pos_v1.json",
     CHANGE_SOURCE_ID: "inventory_count_v1.json",
     BAD_SUBTYPE_SOURCE_ID: "sale_pos_bad_subtype_v1.json",
     CATALOGUE_SOURCE_ID: "catalogue_snapshot_v1.json",
+    CATALOGUE_MINIMAL_SOURCE_ID: "catalogue_snapshot_minimal_v1.json",
 }
 
 # The stored template_type per consumer-test source (Slice 14d): the consumer
@@ -78,6 +82,7 @@ _TEMPLATE_TYPES = {
     CHANGE_SOURCE_ID: "inventory_change",
     BAD_SUBTYPE_SOURCE_ID: "sales",
     CATALOGUE_SOURCE_ID: "snapshot",
+    CATALOGUE_MINIMAL_SOURCE_ID: "snapshot",
 }
 
 # Pinned per-source template ids (Slice 14a grain): the rekeyed
@@ -91,6 +96,7 @@ _TEMPLATE_IDS = {
     CHANGE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a2"),
     BAD_SUBTYPE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a3"),
     CATALOGUE_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a4"),
+    CATALOGUE_MINIMAL_SOURCE_ID: UUID("019e97d0-0000-7000-8000-0000000000a5"),
 }
 
 # All test event timestamps anchor here: today at a mid-day hour, so a ±1-day
@@ -476,6 +482,13 @@ def catalogue_csv(rows: list[tuple[str, str, str, str, str, str]]) -> bytes:
     """code, name, category, price, cost, qty (the snapshot/catalogue shape, Slice 14d)."""
     body = "\n".join(",".join(row) for row in rows)
     return f"code,name,category,price,cost,qty\n{body}\n".encode()
+
+
+def catalogue_minimal_csv(rows: list[tuple[str, str, str, str]]) -> bytes:
+    """code, name, price, qty — the Slice 16j minimal snapshot: NO category, NO cost,
+    so the landed hot row carries product_category and unit_cost as NULL."""
+    body = "\n".join(",".join(row) for row in rows)
+    return f"code,name,price,qty\n{body}\n".encode()
 
 
 def ts(offset_minutes: int = 0, *, day_offset: int = 0) -> str:

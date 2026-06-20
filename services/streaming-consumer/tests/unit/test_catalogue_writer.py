@@ -170,8 +170,10 @@ def test_currency_omitted_still_complete_via_enrichment_companion_still_incomple
         }
     )
     assert classify_hot_completeness(no_currency, StoreSkuCurrentPosition) is True
-    # Companion: a mapping still missing a genuinely-required projected field
-    # (unit_cost) stays INCOMPLETE — the required set narrowed by EXACTLY currency.
+    # Companion: a mapping still missing a genuinely-required projected field stays
+    # INCOMPLETE. The required set narrowed by currency (16i) AND product_category +
+    # unit_cost (16j, now nullable), so the demonstration omits current_retail_price —
+    # which REMAINS required — rather than unit_cost (which would now classify COMPLETE).
     missing_required = SourceMapping.model_validate(
         {
             "version": 1,
@@ -179,7 +181,7 @@ def test_currency_omitted_still_complete_via_enrichment_companion_still_incomple
                 "a": "sku_id",
                 "b": "product_name",
                 "c": "product_category",
-                "d": "current_retail_price",
+                "e": "unit_cost",
             },
             "normalize": {},
             "cast": {},

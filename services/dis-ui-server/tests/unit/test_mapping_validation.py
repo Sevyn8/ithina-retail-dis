@@ -237,12 +237,12 @@ def test_snapshot_omitting_currency_is_accepted_currency_enrichment_guaranteed()
         StoreSkuCurrentPosition, enrichment_guaranteed_for(StoreSkuCurrentPosition)
     )
     assert "currency" not in hot_mandatory
+    # Slice 16j: product_category and unit_cost became nullable, so they too dropped from
+    # the derived mandatory set with no gate edit (the auto-follow this slice relies on).
     assert hot_mandatory == {
         "sku_id",
         "product_name",
-        "product_category",
         "current_retail_price",
-        "unit_cost",
     }
 
 

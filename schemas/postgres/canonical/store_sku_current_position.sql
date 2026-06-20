@@ -85,7 +85,7 @@ CREATE TABLE canonical.store_sku_current_position (
     -- ---------- Catalogue context (denormalized) ----------
     product_name                VARCHAR(128)                        NOT NULL,
     product_description         VARCHAR(128)                        NULL,
-    product_category            VARCHAR(128) COLLATE "C"            NOT NULL,
+    product_category            VARCHAR(128) COLLATE "C"            NULL,
     product_sub_category        VARCHAR(128) COLLATE "C"            NULL,
     product_department          VARCHAR(128) COLLATE "C"            NULL,
     supplier_id                 VARCHAR(128) COLLATE "C"            NULL,
@@ -95,7 +95,7 @@ CREATE TABLE canonical.store_sku_current_position (
 
     -- ---------- Operational state (native to positions) ----------
     current_retail_price        NUMERIC(12, 4)                      NOT NULL,
-    unit_cost                   NUMERIC(12, 4)                      NOT NULL,
+    unit_cost                   NUMERIC(12, 4)                      NULL,
     promo_price                 NUMERIC(12, 4)                      NULL,
     promo_identifier            VARCHAR(128) COLLATE "C"            NULL,
     yesterday_retail_price      NUMERIC(12, 4)                      NULL,

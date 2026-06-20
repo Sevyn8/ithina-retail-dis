@@ -36,6 +36,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
@@ -46,6 +48,20 @@ from dis_core.ids import new_uuid7
 from dis_rls import create_rls_engine
 
 pytestmark = pytest.mark.integration
+
+
+def _alembic_head() -> str:
+    """The current head revision of the migration chain (file-derived, never stale).
+
+    Read dynamically so a later migration chaining on (e.g. 0012) does not break this
+    fresh-bootstrap convergence test — the same idiom as test_migration_0008/0009.
+    """
+    cfg = Config(str(_REPO_ROOT / "alembic.ini"))
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    if head is None:
+        raise AssertionError("alembic migration chain has no head revision")
+    return head
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MIGRATION_PATH = _REPO_ROOT / "alembic" / "versions" / "0011_two_guc_platform_rls.py"
@@ -309,7 +325,7 @@ def test_fresh_bootstrap_converges_with_delta_path(admin_url: str, admin_engine:
         _alembic("upgrade", "head", env_overrides=scratch_env)
         with scratch_engine.connect() as conn:
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert head == "0011"
+        assert head == _alembic_head()
         assert _all_policies(scratch_engine) == delta_head, (
             "fresh bootstrap produced different policy text than the migrated path — "
             "the DDL files and migration 0011 disagree (fresh != migrated)"

@@ -59,7 +59,7 @@ class StoreSkuCurrentPosition(CanonicalModel):
     barcode: Str128 | None = None
     product_name: Str128  # NOT NULL
     product_description: Str128 | None = None
-    product_category: Str128  # NOT NULL
+    product_category: Str128 | None = None  # varchar(128) NULL (16j; was NOT NULL)
     product_sub_category: Str128 | None = None
     product_department: Str128 | None = None
     supplier_id: Str128 | None = None
@@ -69,7 +69,7 @@ class StoreSkuCurrentPosition(CanonicalModel):
 
     # Pricing / cost
     current_retail_price: Numeric12_4  # numeric(12,4) NOT NULL
-    unit_cost: Numeric12_4  # numeric(12,4) NOT NULL
+    unit_cost: Numeric12_4 | None = None  # numeric(12,4) NULL (16j; was NOT NULL)
     promo_price: Numeric12_4 | None = None
     promo_identifier: Str128 | None = None
     yesterday_retail_price: Numeric12_4 | None = None

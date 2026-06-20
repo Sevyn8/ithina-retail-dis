@@ -5,12 +5,16 @@
 (required-in-model ∩ mapping_produced, minus the enrichment value-guaranteed fields),
 the same derivation the create-time gate uses. Two guarantees:
 
-- **No behaviour change (T1):** the derived 5-member set yields IDENTICAL
-  COMPLETE/INCOMPLETE verdicts to the old 4-member literal across the mapping
-  matrix — the difference ({sku_id}) is inert because guaranteed_hot_columns always
-  covers sku_id (in every mapping's targets). Slice 16i subtracted currency from the
-  required set (its value is enrichment-guaranteed); the enrichment union still covers
-  it on the guaranteed side, so verdicts are unchanged either way.
+- **No behaviour change (T1):** the derived set yields IDENTICAL COMPLETE/INCOMPLETE
+  verdicts to the old hand-curated literal across the mapping matrix — the difference
+  ({sku_id}) is inert because guaranteed_hot_columns always covers sku_id (in every
+  mapping's targets). Slice 16i subtracted currency from the required set (its value is
+  enrichment-guaranteed); the enrichment union still covers it on the guaranteed side, so
+  verdicts are unchanged either way. Slice 16j made product_category + unit_cost nullable,
+  which DELIBERATELY changes the verdict for a snapshot omitting them (now COMPLETE) — so
+  that case was retired from this T1 matrix (it is no longer behaviour-preserving against
+  the pre-16h literal); its new behaviour is asserted by the reduced-set test and the
+  catalogue-write e2e instead. The remaining matrix still reproduces the literal exactly.
 - **Hot-model pin (T4):** the set is keyed to the hot/current-position model, NEVER
   the routed target_model — the one real trap, invisible to verdict tests (for events
   the required and guaranteed sets are disjoint, both give False either way), so it is
@@ -50,7 +54,12 @@ def _fixture(name: str) -> SourceMapping:
 def _cases() -> list[tuple[str, SourceMapping, type]]:
     return [
         # snapshot: complete (all 6) / currency-omitted (enrichment covers it) /
-        # missing each genuinely-required projected column.
+        # missing a genuinely-required projected column (product_name). The
+        # "missing unit_cost" case was retired in Slice 16j: unit_cost became
+        # nullable, so omitting it now classifies COMPLETE — a deliberate behaviour
+        # change, not verdict drift, so it can no longer be compared against the
+        # frozen pre-16h literal here (its new behaviour is proven by the
+        # reduced-set test below and the catalogue-write e2e).
         (
             "snapshot_complete",
             _src(
@@ -76,11 +85,6 @@ def _cases() -> list[tuple[str, SourceMapping, type]]:
                     "e": "unit_cost",
                 }
             ),
-            StoreSkuCurrentPosition,
-        ),
-        (
-            "snapshot_missing_unit_cost",
-            _src({"a": "sku_id", "b": "product_name", "c": "product_category", "d": "current_retail_price"}),
             StoreSkuCurrentPosition,
         ),
         (
@@ -141,9 +145,10 @@ def test_required_set_is_the_model_derivation_not_a_literal() -> None:
     assert mapping_module.HOT_REQUIRED_FROM_PROJECTION == mandatory_mapping_produced(
         StoreSkuCurrentPosition, frozenset(enrichment_fields(CURRENT_POSITION))
     )
-    # The concrete 5-member set today (currency subtracted as enrichment-guaranteed).
+    # The concrete 3-member set today: currency subtracted as enrichment-guaranteed
+    # (16i), and product_category + unit_cost dropped once they became nullable (16j).
     assert mapping_module.HOT_REQUIRED_FROM_PROJECTION == frozenset(
-        {"sku_id", "product_name", "product_category", "current_retail_price", "unit_cost"}
+        {"sku_id", "product_name", "current_retail_price"}
     )
 
 

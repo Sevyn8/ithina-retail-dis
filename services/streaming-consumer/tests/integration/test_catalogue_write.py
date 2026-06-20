@@ -27,11 +27,13 @@ from dis_testing.fixtures import PRIMARY_TENANT
 from streaming_consumer.orchestrate import ConsumerPipeline
 
 from .conftest import (
+    CATALOGUE_MINIMAL_SOURCE_ID,
     CATALOGUE_SOURCE_ID,
     CHANGE_SOURCE_ID,
     SALE_SOURCE_ID,
     Cleanup,
     catalogue_csv,
+    catalogue_minimal_csv,
     change_csv,
     sale_csv,
     seed_chunk,
@@ -136,6 +138,58 @@ async def test_catalogue_chunk_creates_hot_row_no_events(
     assert set(stamp) == {"current_retail_price", "unit_cost", "stock_qty", "product_name", "currency"}
     assert set(stamp.values()) == {received_iso}
     assert "product_category" not in stamp  # no event mutates it
+
+
+async def test_catalogue_snapshot_omitting_category_and_cost_lands_nulls(
+    pipeline: ConsumerPipeline,
+    dis_admin: Engine,
+    storage: StorageClient,
+    cleanup: Cleanup,
+    stack_env: dict[str, str],
+    consumer_mappings: dict[str, int],
+) -> None:
+    """Slice 16j headline: a snapshot mapping that omits BOTH unit_cost and
+    product_category still classifies COMPLETE (they are nullable now, so they left the
+    write-gate required set), upserts exactly one hot row, and that row carries both
+    columns as NULL — read back from the DB, not merely classified."""
+    sku = _unique_sku("CATMIN")
+    cleanup.skus.append(sku)
+    # NO pre-seeded hot row: the catalogue complete-path INSERT must create it, even
+    # though the mapping never projects unit_cost or product_category.
+    chunk = seed_chunk(
+        dis_admin,
+        storage,
+        cleanup,
+        csv_data=catalogue_minimal_csv([(sku, "Gadget", "12.50", "7")]),
+        source_id=CATALOGUE_MINIMAL_SOURCE_ID,
+        bronze_bucket=stack_env["GCS_BUCKET_BRONZE"],
+    )
+
+    outcome = await pipeline.process(chunk.event)
+    assert outcome.disposition == "written"  # COMPLETE despite omitting both targets
+    assert outcome.report is not None
+    assert outcome.report.event_rows_written == 0
+    assert outcome.report.hot_rows_upserted == 1
+    assert outcome.report.written_to_table == "canonical.store_sku_current_position"
+
+    with dis_admin.begin() as conn:
+        hot = conn.execute(
+            text(
+                "SELECT product_category, unit_cost, current_retail_price, stock_qty, "
+                "product_name, mapping_version_id "
+                "FROM canonical.store_sku_current_position "
+                "WHERE tenant_id = CAST(:tenant AS uuid) AND sku_id = :sku"
+            ),
+            {"tenant": str(PRIMARY_TENANT.uuid), "sku": sku},
+        ).one()
+
+    # The headline: both omitted columns landed NULL; the mapped columns landed values.
+    assert hot.product_category is None
+    assert hot.unit_cost is None
+    assert hot.current_retail_price == Decimal("12.5000")
+    assert hot.stock_qty == Decimal("7.000")
+    assert hot.product_name == "Gadget"
+    assert hot.mapping_version_id == consumer_mappings[CATALOGUE_MINIMAL_SOURCE_ID]
 
 
 async def test_catalogue_currency_is_store_supplied_overriding_the_file(

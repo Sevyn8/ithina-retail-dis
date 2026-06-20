@@ -73,15 +73,15 @@ def test_snapshot_mandatory_is_the_derived_not_null_set() -> None:
     flagged = {e.key for e in snap if e.mandatory}
     # Slice 16i: the mandatory set subtracts the enrichment value-guaranteed columns,
     # so currency (enrichment-supplied value) is NOT mandatory though tax_treatment was
-    # never mappable. The catalog flag tracks the same derivation the create gate uses.
+    # never mappable. Slice 16j: product_category and unit_cost became nullable, so they
+    # left the required set too (is_required() False). The catalog flag tracks the same
+    # derivation the create gate uses — this equality IS the auto-follow proof.
     hot_enrichment = enrichment_guaranteed_for(StoreSkuCurrentPosition)
     assert flagged == set(mandatory_mapping_produced(StoreSkuCurrentPosition, hot_enrichment))
     assert flagged == {
         "sku_id",
         "product_name",
-        "product_category",
         "current_retail_price",
-        "unit_cost",
     }
 
 
