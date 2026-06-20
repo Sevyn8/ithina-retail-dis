@@ -1,13 +1,16 @@
 """Slice 16h: the write-time completeness required set is MODEL-DERIVED.
 
 ``HOT_REQUIRED_FROM_PROJECTION`` is no longer a hand-curated literal — it is
-``mandatory_mapping_produced(StoreSkuCurrentPosition)`` (required-in-model ∩
-mapping_produced), the same derivation the create-time gate uses. Two guarantees:
+``mandatory_mapping_produced(StoreSkuCurrentPosition, enrichment_guaranteed=…)``
+(required-in-model ∩ mapping_produced, minus the enrichment value-guaranteed fields),
+the same derivation the create-time gate uses. Two guarantees:
 
-- **No behaviour change (T1):** the derived 6-member set yields IDENTICAL
+- **No behaviour change (T1):** the derived 5-member set yields IDENTICAL
   COMPLETE/INCOMPLETE verdicts to the old 4-member literal across the mapping
-  matrix — the difference ({sku_id, currency}) is inert because guaranteed_hot_columns
-  always covers currency (enrichment union) and sku_id (in every mapping's targets).
+  matrix — the difference ({sku_id}) is inert because guaranteed_hot_columns always
+  covers sku_id (in every mapping's targets). Slice 16i subtracted currency from the
+  required set (its value is enrichment-guaranteed); the enrichment union still covers
+  it on the guaranteed side, so verdicts are unchanged either way.
 - **Hot-model pin (T4):** the set is keyed to the hot/current-position model, NEVER
   the routed target_model — the one real trap, invisible to verdict tests (for events
   the required and guaranteed sets are disjoint, both give False either way), so it is
@@ -23,6 +26,7 @@ import pytest
 
 import streaming_consumer.pipeline.mapping as mapping_module
 from dis_canonical import StoreSkuCurrentPosition, StoreSkuSaleEvent
+from dis_enrichment import CURRENT_POSITION, enrichment_fields
 from dis_mapping import SourceMapping
 from dis_validation import mandatory_mapping_produced
 
@@ -131,12 +135,15 @@ def test_derived_set_reproduces_old_literal_verdicts(monkeypatch: pytest.MonkeyP
 
 
 def test_required_set_is_the_model_derivation_not_a_literal() -> None:
-    # T4 (mutation-evident): the constant IS the hot-model derivation. A future model
-    # nullability change (16j) is reflected with no edit here; a re-baked literal breaks this.
-    assert mapping_module.HOT_REQUIRED_FROM_PROJECTION == mandatory_mapping_produced(StoreSkuCurrentPosition)
-    # The concrete 6-member set today, for documentation/regression.
+    # T4 (mutation-evident): the constant IS the hot-model derivation with the enrichment
+    # value-guaranteed fields subtracted (Slice 16i). A future model nullability change
+    # (16j) is reflected with no edit here; a re-baked literal breaks this.
+    assert mapping_module.HOT_REQUIRED_FROM_PROJECTION == mandatory_mapping_produced(
+        StoreSkuCurrentPosition, frozenset(enrichment_fields(CURRENT_POSITION))
+    )
+    # The concrete 5-member set today (currency subtracted as enrichment-guaranteed).
     assert mapping_module.HOT_REQUIRED_FROM_PROJECTION == frozenset(
-        {"sku_id", "product_name", "product_category", "current_retail_price", "unit_cost", "currency"}
+        {"sku_id", "product_name", "product_category", "current_retail_price", "unit_cost"}
     )
 
 

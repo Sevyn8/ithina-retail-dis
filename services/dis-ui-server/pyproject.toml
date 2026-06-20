@@ -31,6 +31,11 @@ dependencies = [
   # Slice 14b: mapping_produced_columns — the drift-guarded provenance
   # partition shared by the catalog AND the create/edit semantic gate.
   "dis-validation",
+  # Slice 16i: enrichment_fields(CURRENT_POSITION) — the value-guaranteed columns
+  # (currency) the create gate + catalog subtract from the mandatory-to-map set
+  # (D95). Pure lib; the consumer imports it too (no purity contract governs the
+  # service->lib edge). Used for the set only, never for runtime enrichment I/O.
+  "dis-enrichment",
   # Slice 8: the canonical GCS object path (D53) + the object write for the
   # synchronous CSV upload — the ONLY sanctioned GCS path (hard rule 9).
   "dis-storage",

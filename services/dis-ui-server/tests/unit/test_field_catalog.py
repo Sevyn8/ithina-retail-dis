@@ -16,6 +16,7 @@ from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSku
 from dis_core.errors import FieldCatalogDriftError
 from dis_ui_server.catalog import build_field_catalogs
 from dis_ui_server.catalog.labels import LABELS, SNAPSHOT_LABELS, CatalogueFieldLabel, FieldLabel
+from dis_ui_server.mapping_validation import enrichment_guaranteed_for
 from dis_validation import (
     INVENTORY_CHANGE,
     SALES,
@@ -70,15 +71,27 @@ def test_consumer_injected_columns_are_never_mappable() -> None:
 def test_snapshot_mandatory_is_the_derived_not_null_set() -> None:
     snap = build_field_catalogs()[SNAPSHOT]
     flagged = {e.key for e in snap if e.mandatory}
-    assert flagged == set(mandatory_mapping_produced(StoreSkuCurrentPosition))
+    # Slice 16i: the mandatory set subtracts the enrichment value-guaranteed columns,
+    # so currency (enrichment-supplied value) is NOT mandatory though tax_treatment was
+    # never mappable. The catalog flag tracks the same derivation the create gate uses.
+    hot_enrichment = enrichment_guaranteed_for(StoreSkuCurrentPosition)
+    assert flagged == set(mandatory_mapping_produced(StoreSkuCurrentPosition, hot_enrichment))
     assert flagged == {
         "sku_id",
         "product_name",
         "product_category",
         "current_retail_price",
         "unit_cost",
-        "currency",
     }
+
+
+def test_snapshot_currency_is_present_but_optional() -> None:
+    # Slice 16i headline: currency is mappable-but-optional (the lib supplies its value),
+    # distinct from tax_treatment which is non-mappable. It must stay a PRESENT catalog
+    # entry with mandatory=false, NOT be dropped like an enrichment-produced column.
+    snap = {e.key: e for e in build_field_catalogs()[SNAPSHOT]}
+    assert "currency" in snap
+    assert snap["currency"].mandatory is False
 
 
 def test_event_mandatory_flags_match_the_live_required_sets() -> None:

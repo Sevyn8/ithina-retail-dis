@@ -44,6 +44,7 @@ from pydantic import BaseModel, ValidationError
 
 from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import InvalidTemplateTypeError, MappingConfigError
+from dis_enrichment import CURRENT_POSITION, enrichment_fields
 from dis_mapping import SourceMapping
 from dis_ui_server.schemas.mapping_fields import FieldSection
 from dis_validation import (
@@ -115,9 +116,25 @@ def _model_label(model: type[BaseModel]) -> str:
     return SECTION_BY_MODEL.get(model, model.__name__)
 
 
+def enrichment_guaranteed_for(model: type[BaseModel]) -> frozenset[str]:
+    """The enrichment value-guaranteed columns for ``model`` (Slice 16i, D95/D98).
+
+    Current-position is the only enriched table, so the hot model returns
+    ``enrichment_fields(CURRENT_POSITION)`` (currency, tax_treatment) and the event
+    models return the empty set (enrichment never runs on the event path — the D98
+    asymmetry), leaving their mandatory sets unchanged. Subtracted from
+    ``mandatory_mapping_produced`` so an enrichment-supplied column is not demanded of
+    the mapping while staying mapping-produced by origin (still legal to MAP, just not
+    required). Mirrors the consumer's ``target_model is StoreSkuCurrentPosition`` gate.
+    """
+    if model is StoreSkuCurrentPosition:
+        return frozenset(enrichment_fields(CURRENT_POSITION))
+    return frozenset()
+
+
 def check_mandatory_coverage(source: SourceMapping, model: type[BaseModel], *, tenant_id: str) -> None:
     """Step 4: every mandatory mapping-produced column is provided by rename or derive."""
-    missing = mandatory_mapping_produced(model) - set(source.target_columns)
+    missing = mandatory_mapping_produced(model, enrichment_guaranteed_for(model)) - set(source.target_columns)
     if missing:
         raise MappingConfigError(
             f"mapping_rules leave mandatory {_model_label(model)} column(s) "

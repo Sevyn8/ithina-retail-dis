@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import text
 
 from dis_canonical import StoreSkuCurrentPosition
+from dis_enrichment import CURRENT_POSITION, enrichment_fields
 from dis_validation import mapping_produced_columns
 from streaming_consumer.pipeline.mapping import (
     HOT_CHECK_IMPLICATIONS,
@@ -33,20 +34,21 @@ pytestmark = pytest.mark.integration
 
 
 def test_required_from_projection_matches_live_not_null_set(dis_admin: Engine) -> None:
-    # Slice 16h: HOT_REQUIRED_FROM_PROJECTION is now MODEL-DERIVED
+    # Slice 16h/16i: HOT_REQUIRED_FROM_PROJECTION is MODEL-DERIVED
     # (mandatory_mapping_produced(StoreSkuCurrentPosition) = required-in-model ∩
-    # mapping_produced). Re-derive the SAME set straight from the live schema and
-    # assert exact agreement, so a hot-schema nullability change cannot silently
-    # leave the gate stale.
+    # mapping_produced, minus the enrichment value-guaranteed fields). Re-derive the
+    # SAME set straight from the live schema and assert exact agreement, so a hot-schema
+    # nullability change cannot silently leave the gate stale.
     #
-    # The principled exclusion is the intersection with mapping_produced (the
-    # provenance partition): it drops consumer-injected columns (tenant_id,
-    # store_id, mapping_version_id, trace_id, dis_channel) AND enrichment-produced
-    # tax_treatment, while KEEPING sku_id and currency (both mapping_produced). That
-    # is exactly the 6-member required set the gate now uses — no hand-curated
-    # subtraction list to drift. A future 16j nullability change flips a column out
-    # of both live NOT-NULL-no-default and model is_required together, so this stays
-    # green; a re-baked literal would break it.
+    # The principled exclusions: intersect with mapping_produced (the provenance
+    # partition) — drops consumer-injected columns (tenant_id, store_id,
+    # mapping_version_id, trace_id, dis_channel) AND enrichment-PRODUCED tax_treatment —
+    # then subtract enrichment_fields(CURRENT_POSITION), which removes the enrichment
+    # value-guaranteed currency (Slice 16i: mapping-produced by origin, but the lib
+    # supplies its value, so it is not required FROM the mapping). That is exactly the
+    # 5-member required set the gate uses — no hand-curated subtraction list to drift. A
+    # future 16j nullability change flips a column out of both live NOT-NULL-no-default
+    # and model is_required together, so this stays green; a re-baked literal breaks it.
     with dis_admin.begin() as conn:
         live_not_null = {
             row.column_name
@@ -58,7 +60,9 @@ def test_required_from_projection_matches_live_not_null_set(dis_admin: Engine) -
                 )
             )
         }
-    derived_required = frozenset(live_not_null) & mapping_produced_columns(StoreSkuCurrentPosition)
+    produced = mapping_produced_columns(StoreSkuCurrentPosition)
+    enrichment_guaranteed = frozenset(enrichment_fields(CURRENT_POSITION))
+    derived_required = (frozenset(live_not_null) & produced) - enrichment_guaranteed
     assert derived_required == HOT_REQUIRED_FROM_PROJECTION, (
         f"live-derived: {sorted(derived_required)} vs "
         f"code constant: {sorted(HOT_REQUIRED_FROM_PROJECTION)} — the gate is stale"

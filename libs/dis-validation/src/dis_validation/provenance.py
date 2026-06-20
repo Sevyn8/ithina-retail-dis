@@ -343,18 +343,28 @@ def enrichment_produced_columns(model: type[BaseModel]) -> frozenset[str]:
     return PROVENANCE[model].enrichment_produced
 
 
-def mandatory_mapping_produced(model: type[BaseModel]) -> frozenset[str]:
-    """The model's required (non-Optional) mapping-produced columns, derived live.
+def mandatory_mapping_produced(
+    model: type[BaseModel], enrichment_guaranteed: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """The columns a mapping MUST supply for ``model``: required (non-Optional) AND
+    mapping-produced, minus any column whose value is enrichment-guaranteed.
 
-    The intersection of pydantic required-ness with the provenance partition —
-    the exact set a template must provide by rename or derive. Never hardcoded:
-    a canonical-model change flows through automatically (and trips the
-    provenance drift guard first if unclassified).
+    The intersection of pydantic required-ness with the provenance partition gives the
+    columns the mapping is the ORIGIN of; subtracting ``enrichment_guaranteed`` (Slice
+    16i, D95) drops the columns the dis-enrichment lib supplies the VALUE for (currency
+    on the current-position path), so they are not demanded of the mapping even though
+    they remain mapping-produced by origin (still legal to map, just not required).
 
-    Promoted here in Slice 16h so a SINGLE derivation feeds both the create-time
-    gate (dis-ui-server ``check_mandatory_coverage``) and the write-time
-    completeness gate (streaming-consumer ``classify_hot_completeness``) — model/DB
-    nullability is the one source of truth; neither side re-bakes a literal.
+    ``enrichment_guaranteed`` is passed IN by the caller (the consumer / dis-ui-server
+    hand in ``enrichment_fields(table)``) so this lib stays pure — it never imports
+    dis-enrichment. Default empty preserves the plain required-∩-mapping-produced set
+    (the sale/change event models, which enrichment does not touch — D98).
+
+    Promoted here in Slice 16h so a SINGLE derivation feeds both the create-time gate
+    (dis-ui-server ``check_mandatory_coverage``) and the write-time completeness gate
+    (streaming-consumer ``classify_hot_completeness``); a canonical-model change flows
+    through automatically (and trips the provenance drift guard first if unclassified).
     """
     produced = mapping_produced_columns(model)
-    return frozenset(name for name, field in model.model_fields.items() if field.is_required()) & produced
+    required = frozenset(name for name, field in model.model_fields.items() if field.is_required())
+    return (required & produced) - enrichment_guaranteed

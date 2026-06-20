@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import FieldCatalogDriftError
 from dis_ui_server.catalog.labels import LABELS, SNAPSHOT_LABELS, FieldLabel
+from dis_ui_server.mapping_validation import enrichment_guaranteed_for
 from dis_ui_server.schemas.mapping_fields import FieldDatatype, FieldSection, TemplateMappingField
 from dis_validation import (
     INVENTORY_CHANGE,
@@ -216,7 +217,11 @@ def _entries(
     the model's single canonical table; ``constraints`` is null in v1.
     """
     produced = mapping_produced_columns(model)  # runs assert_no_drift (provenance guard)
-    mandatory = mandatory_mapping_produced(model)
+    # Slice 16i: enrichment-value-guaranteed columns (currency on the hot path) are
+    # mappable but NOT mandatory — the lib supplies their value, so the picker must not
+    # force the user to map them. The column stays in `produced` (a present catalog
+    # entry); only its `mandatory` flag drops.
+    mandatory = mandatory_mapping_produced(model, enrichment_guaranteed_for(model))
     derived_keys = _assert_no_drift(model, produced, set(labels))
     sink = SINK_BY_MODEL[model]
 

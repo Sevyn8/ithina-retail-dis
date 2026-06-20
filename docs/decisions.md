@@ -1449,3 +1449,7 @@ _require_subscription now runs against real GCP). Cross-refs D58.
 ### D101 Write-time completeness gate derived from the canonical model (Slice 16h) `RESOLVED`
 
 **The decision.** The hardcoded `HOT_REQUIRED_FROM_PROJECTION` literal is replaced by `mandatory_mapping_produced(StoreSkuCurrentPosition)`, promoted to `dis-validation` and shared by the consumer and dis-ui-server, so model/DB nullability is the single source of truth. Pinned to the hot model regardless of routed target; enrichment-supplied fields kept satisfied via the enrichment union (D95). Pure refactor, identical verdicts on all sanctioned paths; the only divergence requires a create-gate-bypassing config row and is strictly safer (INCOMPLETE miss vs a COMPLETE attempt that fails at the DB).
+
+### D102 Enrichment-supplied columns are not mandatory-to-map (Slice 16i) `RESOLVED`
+
+**The decision.** `mandatory_mapping_produced` gains an `enrichment_guaranteed` parameter subtracted from the derived set; callers pass `enrichment_fields(table)` (dis-ui-server gains the dis-enrichment dependency, import-linter-legal). Currency becomes `mandatory=false` at the create gate and field catalog (still present and mappable, not dropped), so the create endpoint no longer 400s when a snapshot omits currency. Closes the create-gate asymmetry deferred from Slice 5b / D95. The partition is unchanged (currency stays mapping_produced; `check_target_legality` still permits mapping it); the write gate is unaffected (currency inert via the guaranteed union).

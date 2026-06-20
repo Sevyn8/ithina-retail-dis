@@ -14,6 +14,7 @@ import pytest
 from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import InvalidTemplateTypeError, MappingConfigError
 from dis_ui_server.mapping_validation import (
+    enrichment_guaranteed_for,
     route_target_model,
     validate_mapping_rules,
     validate_mapping_rules_for_type,
@@ -222,11 +223,27 @@ def test_event_targets_are_rejected_for_the_snapshot_type() -> None:
         validate_mapping_rules_for_type(_sale_rules(), template_type="snapshot", tenant_id=TENANT_A)
 
 
-def test_snapshot_missing_mandatory_currency_is_refused() -> None:
+def test_snapshot_omitting_currency_is_accepted_currency_enrichment_guaranteed() -> None:
+    # Slice 16i (D95): currency's VALUE is enrichment-guaranteed on the current-position
+    # path, so the create gate no longer demands the mapping supply it (pre-16i this was
+    # a 400). currency stays mapping-produced by ORIGIN — still legal to MAP, just not
+    # required.
     rules = _snapshot_rules()
     del rules["derive"]["currency"]
-    with pytest.raises(MappingConfigError, match=r"mandatory .* column\(s\) \['currency'\]"):
-        validate_mapping_rules_for_type(rules, template_type="snapshot", tenant_id=TENANT_A)
+    source = validate_mapping_rules_for_type(rules, template_type="snapshot", tenant_id=TENANT_A)
+    assert "currency" not in source.target_columns
+    # The derived mandatory set for the hot model excludes the enrichment-guaranteed currency.
+    hot_mandatory = mandatory_mapping_produced(
+        StoreSkuCurrentPosition, enrichment_guaranteed_for(StoreSkuCurrentPosition)
+    )
+    assert "currency" not in hot_mandatory
+    assert hot_mandatory == {
+        "sku_id",
+        "product_name",
+        "product_category",
+        "current_retail_price",
+        "unit_cost",
+    }
 
 
 def test_snapshot_promo_identifier_requires_promo_price() -> None:

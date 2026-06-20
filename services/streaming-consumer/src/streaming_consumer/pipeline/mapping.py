@@ -87,17 +87,18 @@ CHANGE_HOT_PROJECTION: dict[tuple[str, str], str] = {
 # routed model only ever feeds guaranteed_hot_columns below.
 #
 # This derived set is {sku_id, product_name, product_category, current_retail_price,
-# unit_cost, currency} (6 members) — a SUPERSET of the old hand-curated 4-member
-# literal {product_name, product_category, current_retail_price, unit_cost}, yet it
-# yields IDENTICAL completeness verdicts:
-# - currency is satisfied unconditionally — guaranteed_hot_columns unions
-#   enrichment_fields(CURRENT_POSITION) = {currency, tax_treatment} back in (D95), so
-#   the lib-guaranteed value counts even when the mapping does not project it.
-# - sku_id is in the mapping's targets for every create-validated mapping (the
-#   create-time gate already requires it), so it is always in guaranteed too.
-# tax_treatment is NEVER demanded of the mapping: it is enrichment-produced (not in
-# mapping_produced), so the intersection excludes it.
-HOT_REQUIRED_FROM_PROJECTION = mandatory_mapping_produced(StoreSkuCurrentPosition)
+# unit_cost} (5 members). The enrichment-guaranteed fields are SUBTRACTED (Slice 16i,
+# D95): currency is mapping-produced by origin but its VALUE is enrichment-guaranteed,
+# so it is not required FROM the mapping (and tax_treatment was never in the set — it
+# is enrichment-produced, not mapping-produced). This matches the old hand-curated
+# literal exactly. Completeness is unaffected by the subtraction: guaranteed_hot_columns
+# still unions enrichment_fields(CURRENT_POSITION) back in (below), so currency counts
+# toward a complete hot row even when the mapping does not project it; sku_id stays in
+# guaranteed for every create-validated mapping. The subtraction set is handed in (the
+# lib stays pure and never imports dis-enrichment).
+HOT_REQUIRED_FROM_PROJECTION = mandatory_mapping_produced(
+    StoreSkuCurrentPosition, enrichment_guaranteed=frozenset(enrichment_fields(CURRENT_POSITION))
+)
 # Presence-pairing CHECKs (shape-level; value-range CHECKs are runtime data):
 # projecting any column in the trigger set requires every column in the
 # companion set (ck_sscp_promo_identifier_requires_price,
