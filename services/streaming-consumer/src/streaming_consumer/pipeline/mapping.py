@@ -46,7 +46,7 @@ from dis_core.logging import LogContext
 from dis_enrichment import CURRENT_POSITION, apply_enrichment, enrichment_fields
 from dis_mapping import MappingResult, SourceMapping, apply_mapping
 from dis_rls import rls_session
-from dis_validation import SNAPSHOT, mapping_produced_columns
+from dis_validation import SNAPSHOT, mandatory_mapping_produced, mapping_produced_columns
 from streaming_consumer.envelope import IngressReadyEvent
 
 # The routing universe: the two event tables of the dual-write (architecture 4.6).
@@ -78,21 +78,26 @@ CHANGE_HOT_PROJECTION: dict[tuple[str, str], str] = {
     ("STATUS", "sku_status"): "sku_status",
 }
 
-# The completeness partition, derived from the LIVE hot schema (NOT NULL +
-# CHECK introspection, service-amendment gate):
-# - consumer-injected regardless of event: id (minted), tenant_id/store_id/
-#   trace_id (envelope), tax_treatment (store row), mapping_version_id (the
-#   loaded mapping), dis_channel (bronze row); last_updated_at is DB-defaulted.
-# - sku_id arrives via the natural key on every routed mapping by construction.
-# - The discriminating NOT NULL columns that must come from the MAPPING projection.
-#   currency LEFT this set in slice-5b (D95): it is now enrichment-guaranteed
-#   (dis-enrichment writes it on the current-position path), so it is no longer
-#   required FROM the mapping. tax_treatment was never here (consumer-injected, now
-#   enrichment-produced). guaranteed_hot_columns unions the enrichment fields back in,
-#   so completeness still counts them.
-HOT_REQUIRED_FROM_PROJECTION = frozenset(
-    {"product_name", "product_category", "current_retail_price", "unit_cost"}
-)
+# The completeness partition, MODEL-DERIVED (Slice 16h) — required-in-model ∩
+# mapping-produced for the HOT model, the same derivation the create-time gate uses
+# (dis-ui-server check_mandatory_coverage). DB/model nullability is the single source
+# of truth: a future NOT NULL <-> NULLABLE change (16j) flows through with no edit
+# here. PINNED to StoreSkuCurrentPosition (the hot/current-position model) — NEVER the
+# routed target_model: the completeness question is always about the hot row, and the
+# routed model only ever feeds guaranteed_hot_columns below.
+#
+# This derived set is {sku_id, product_name, product_category, current_retail_price,
+# unit_cost, currency} (6 members) — a SUPERSET of the old hand-curated 4-member
+# literal {product_name, product_category, current_retail_price, unit_cost}, yet it
+# yields IDENTICAL completeness verdicts:
+# - currency is satisfied unconditionally — guaranteed_hot_columns unions
+#   enrichment_fields(CURRENT_POSITION) = {currency, tax_treatment} back in (D95), so
+#   the lib-guaranteed value counts even when the mapping does not project it.
+# - sku_id is in the mapping's targets for every create-validated mapping (the
+#   create-time gate already requires it), so it is always in guaranteed too.
+# tax_treatment is NEVER demanded of the mapping: it is enrichment-produced (not in
+# mapping_produced), so the intersection excludes it.
+HOT_REQUIRED_FROM_PROJECTION = mandatory_mapping_produced(StoreSkuCurrentPosition)
 # Presence-pairing CHECKs (shape-level; value-range CHECKs are runtime data):
 # projecting any column in the trigger set requires every column in the
 # companion set (ck_sscp_promo_identifier_requires_price,

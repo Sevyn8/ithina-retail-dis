@@ -341,3 +341,20 @@ def enrichment_produced_columns(model: type[BaseModel]) -> frozenset[str]:
     """
     assert_no_drift(model)
     return PROVENANCE[model].enrichment_produced
+
+
+def mandatory_mapping_produced(model: type[BaseModel]) -> frozenset[str]:
+    """The model's required (non-Optional) mapping-produced columns, derived live.
+
+    The intersection of pydantic required-ness with the provenance partition —
+    the exact set a template must provide by rename or derive. Never hardcoded:
+    a canonical-model change flows through automatically (and trips the
+    provenance drift guard first if unclassified).
+
+    Promoted here in Slice 16h so a SINGLE derivation feeds both the create-time
+    gate (dis-ui-server ``check_mandatory_coverage``) and the write-time
+    completeness gate (streaming-consumer ``classify_hot_completeness``) — model/DB
+    nullability is the one source of truth; neither side re-bakes a literal.
+    """
+    produced = mapping_produced_columns(model)
+    return frozenset(name for name, field in model.model_fields.items() if field.is_required()) & produced

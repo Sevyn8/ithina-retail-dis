@@ -49,6 +49,7 @@ from dis_ui_server.schemas.mapping_fields import FieldSection
 from dis_validation import (
     TEMPLATE_TYPES,
     is_template_type,
+    mandatory_mapping_produced,
     mapping_produced_columns,
     model_for_template_type,
 )
@@ -64,18 +65,6 @@ SECTION_BY_MODEL: dict[type[BaseModel], FieldSection] = {
     StoreSkuSaleEvent: "sale_event",
     StoreSkuChangeEvent: "change_event",
 }
-
-
-def mandatory_mapping_produced(model: type[BaseModel]) -> frozenset[str]:
-    """The model's required (non-Optional) mapping-produced columns, derived live.
-
-    The intersection of pydantic required-ness with the provenance partition —
-    the exact set a template must provide by rename or derive. Never hardcoded:
-    a canonical-model change flows through automatically (and trips the
-    provenance drift guard first if unclassified).
-    """
-    produced = mapping_produced_columns(model)
-    return frozenset(name for name, field in model.model_fields.items() if field.is_required()) & produced
 
 
 def parse_mapping_rules(raw: dict[str, Any], *, tenant_id: str) -> SourceMapping:

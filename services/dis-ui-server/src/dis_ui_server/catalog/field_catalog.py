@@ -41,9 +41,14 @@ from pydantic import BaseModel
 from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import FieldCatalogDriftError
 from dis_ui_server.catalog.labels import LABELS, SNAPSHOT_LABELS, FieldLabel
-from dis_ui_server.mapping_validation import mandatory_mapping_produced
 from dis_ui_server.schemas.mapping_fields import FieldDatatype, FieldSection, TemplateMappingField
-from dis_validation import INVENTORY_CHANGE, SALES, SNAPSHOT, mapping_produced_columns
+from dis_validation import (
+    INVENTORY_CHANGE,
+    SALES,
+    SNAPSHOT,
+    mandatory_mapping_produced,
+    mapping_produced_columns,
+)
 
 # The one canonical table each routed model lands in — the ``sink`` value, derived
 # from a single per-model constant (no null fallback; deriving event sinks is clean).

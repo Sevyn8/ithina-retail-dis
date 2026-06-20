@@ -16,8 +16,13 @@ from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSku
 from dis_core.errors import FieldCatalogDriftError
 from dis_ui_server.catalog import build_field_catalogs
 from dis_ui_server.catalog.labels import LABELS, SNAPSHOT_LABELS, CatalogueFieldLabel, FieldLabel
-from dis_ui_server.mapping_validation import mandatory_mapping_produced
-from dis_validation import INVENTORY_CHANGE, SALES, SNAPSHOT, mapping_produced_columns
+from dis_validation import (
+    INVENTORY_CHANGE,
+    SALES,
+    SNAPSHOT,
+    mandatory_mapping_produced,
+    mapping_produced_columns,
+)
 
 TENANT_B = "019e5e3c-b5d6-7eed-93f9-3778a7a7a160"
 

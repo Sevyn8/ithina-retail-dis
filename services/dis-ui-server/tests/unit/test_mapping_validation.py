@@ -14,11 +14,11 @@ import pytest
 from dis_canonical import StoreSkuChangeEvent, StoreSkuCurrentPosition, StoreSkuSaleEvent
 from dis_core.errors import InvalidTemplateTypeError, MappingConfigError
 from dis_ui_server.mapping_validation import (
-    mandatory_mapping_produced,
     route_target_model,
     validate_mapping_rules,
     validate_mapping_rules_for_type,
 )
+from dis_validation import mandatory_mapping_produced
 
 TENANT_A = "019e5e3c-b5d3-705f-9002-2451c4ca2626"
 
