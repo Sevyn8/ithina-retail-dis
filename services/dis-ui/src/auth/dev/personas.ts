@@ -25,11 +25,11 @@ export const PERSONAS: StubPersona[] = [
     roles: ['dis:upload', 'dis:read'],
   },
   {
-    // DEV-ONLY construct: no ops user exists in Sanjeev's fixtures (seed.py seeds
-    // tenants/stores only). Ops is cross-tenant, so tenant_id/store_id are null.
+    // DEV-ONLY platform/superadmin identity, presented as Anjali to match CM's PLATFORM
+    // persona (anjali@ithina.ai). Cross-tenant, so tenant_id/store_id null. id stays 'ops'.
     id: 'ops',
-    label: 'Ops (dev only)',
-    sub: 'u_opsdev0001',
+    label: 'Anjali (Platform)',
+    sub: 'anjali',
     tenant_id: null,
     store_id: null,
     roles: ['dis:ops', 'dis:read', 'dis:mapping_admin'],
