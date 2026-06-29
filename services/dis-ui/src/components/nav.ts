@@ -1,4 +1,4 @@
-import { Bell, Database, FileSearch, LayoutDashboard, Plug, ShieldAlert } from 'lucide-react'
+import { Database, LayoutDashboard, Plug, ShieldAlert } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 // T7: nav items are grouped into labeled sections (Ithina-console look). The section is a
@@ -35,10 +35,10 @@ export const NAV_ITEMS: NavItem[] = [
   // CSV/SFTP branch); the old "Add Source" picker (/connect) and /upload wizard were retired.
   { label: 'Upload Data', to: '/ingest', icon: Database, section: 'DATA' },
   { label: 'Connect a System', to: '/connectors/new', icon: Plug, section: 'DATA' },
-  // MONITORING: Quarantine and Audit are scope-aware (T9): a tenant sees their own tenant
-  // (scope locked, no tenant filter); an ops user sees the fleet-wide view with a tenant
-  // filter, via the SAME route/screen (the component branches on isOps). Always visible.
+  // MONITORING: Quarantine is scope-aware (T9): a tenant sees their own tenant (scope locked,
+  // no tenant filter); an ops user sees the fleet-wide view with a tenant filter, via the SAME
+  // route/screen (the component branches on isOps). Always visible.
+  // Audit (/audit) and Notifications (/notifications) were removed from the sidebar because
+  // their real-mode backends are unbuilt (slice 13); the routes remain but are unsurfaced.
   { label: 'Quarantine', to: '/quarantine', icon: ShieldAlert, section: 'MONITORING' },
-  { label: 'Audit', to: '/audit', icon: FileSearch, section: 'MONITORING' },
-  { label: 'Notifications', to: '/notifications', icon: Bell, section: 'MONITORING' },
 ]
