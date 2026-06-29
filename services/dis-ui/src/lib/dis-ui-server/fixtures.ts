@@ -14,9 +14,9 @@ export const ME_FIXTURES: Record<string, MeResponse> = {
   u_acmeuser0001: {
     user_id: 'u_acmeuser0001',
     email: 'acme.user@example.test',
-    name: 'Acme User',
+    name: 'A. Kowalski',
     tenant_id: 't_acme9k2l1mn4',
-    tenant_name: 'Acme Retail',
+    tenant_name: 'Żabka Group',
   },
   u_opsdev0001: {
     user_id: 'u_opsdev0001',

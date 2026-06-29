@@ -83,9 +83,9 @@ export function submitApiToken(
 
 function stubAccount(connector: ConnectorKey): ConnectorAccount {
   const names: Record<ConnectorKey, string> = {
-    shopify: 'Acme Retail (Shopify)',
-    square: 'Acme Retail (Square)',
-    clover: 'Acme Retail (Clover)',
+    shopify: 'Żabka Group (Shopify)',
+    square: 'Żabka Group (Square)',
+    clover: 'Żabka Group (Clover)',
   }
   return {
     businessName: names[connector],

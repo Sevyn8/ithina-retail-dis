@@ -18,7 +18,7 @@ export const PERSONAS: StubPersona[] = [
   {
     // The real slice-2 fixture identity (libs/dis-testing fixtures.py).
     id: 'tenant',
-    label: 'Tenant user (Acme Retail)',
+    label: 'Tenant user (Żabka)',
     sub: 'u_acmeuser0001',
     tenant_id: 't_acme9k2l1mn4',
     store_id: 's_acme0001a4b7',

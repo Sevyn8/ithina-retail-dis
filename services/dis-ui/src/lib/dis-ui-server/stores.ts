@@ -29,8 +29,8 @@ const STORE_FIXTURES: Record<string, OnboardedStore[]> = {
   t_acme9k2l1mn4: [
     {
       store_id: '0190ac20-6b00-7000-8b00-0000000000c1',
-      name: 'Acme Downtown #1',
-      store_code: 'TX-102',
+      name: 'Żabka Warszawa #1',
+      store_code: 'WAW-102',
       status: 'active',
       country: 'US',
       timezone: 'America/New_York',
@@ -39,7 +39,7 @@ const STORE_FIXTURES: Record<string, OnboardedStore[]> = {
     },
     {
       store_id: '0190ac20-6b00-7000-8b00-0000000000c2',
-      name: 'Acme Uptown #2',
+      name: 'Żabka Kraków #2',
       store_code: null,
       status: 'opening',
       country: 'US',

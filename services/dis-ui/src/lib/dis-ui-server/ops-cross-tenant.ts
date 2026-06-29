@@ -43,7 +43,7 @@ export type CrossTenantAuditTrace = AuditTrace & { tenant_name: string }
 // (ops-fleet.ts). Only t_acme9k2l1mn4 is the real persona tenant; the others are
 // provisional display fixtures (external t_* form; external<->UUID is OPEN, D37).
 const TENANTS = {
-  acme: { id: 't_acme9k2l1mn4', name: 'Acme Retail' },
+  acme: { id: 't_acme9k2l1mn4', name: 'Żabka Group' },
   beta: { id: 't_beta7h2k9m3n', name: 'Beta Stores' },
   delta: { id: 't_delta2s9t5v3', name: 'Delta Foods' },
 } as const
