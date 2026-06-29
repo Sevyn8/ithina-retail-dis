@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router'
 
 import { PERSONAS } from '../auth/dev/personas'
 import { useAuth } from '../auth/useAuth'
-import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 
 // Dev-only login. Logs in the chosen persona with its PRE-SUPPLIED dev-stub token
@@ -56,17 +56,25 @@ export function DevLogin() {
       </p>
       <Card>
         <CardContent>
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col gap-3">
             {PERSONAS.map((persona) => (
               <li key={persona.id}>
-                <Button
+                <button
                   type="button"
-                  variant="outline"
                   onClick={() => void pick(persona.id)}
-                  className="w-full justify-start"
+                  className="flex w-full flex-col items-start gap-2 rounded-md border border-border bg-card p-4 text-left text-card-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 >
-                  {persona.label}
-                </Button>
+                  <span className="text-base font-semibold">{persona.name}</span>
+                  <span className="text-sm text-muted-foreground">{persona.email}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={persona.roleLabel === 'PLATFORM' ? 'default' : 'secondary'}>
+                      {persona.roleLabel}
+                    </Badge>
+                    {persona.tenantName !== null ? (
+                      <Badge variant="outline">{persona.tenantName}</Badge>
+                    ) : null}
+                  </div>
+                </button>
               </li>
             ))}
           </ul>
